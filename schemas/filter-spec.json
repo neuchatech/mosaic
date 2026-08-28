@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Wardrobe Atlas Codex filter",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "description", "root", "sortField", "sortDirection", "limit"],
+  "properties": {
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "root": { "$ref": "#/$defs/node" },
+    "sortField": { "type": "string" },
+    "sortDirection": { "enum": ["asc", "desc"] },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 5000 }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "conjunction", "field", "operator", "valueKind", "stringValues", "numberValues", "booleanValue", "children"],
+      "properties": {
+        "type": { "enum": ["clause", "group", "not"] },
+        "conjunction": { "enum": ["and", "or", "none"] },
+        "field": { "type": "string" },
+        "operator": { "enum": ["eq", "neq", "contains", "not_contains", "in", "not_in", "gte", "lte", "between", "exists", "missing", "none"] },
+        "valueKind": { "enum": ["string", "number", "boolean", "strings", "numbers", "null", "none"] },
+        "stringValues": { "type": "array", "items": { "type": "string" } },
+        "numberValues": { "type": "array", "items": { "type": "number" } },
+        "booleanValue": { "type": "boolean" },
+        "children": { "type": "array", "items": { "$ref": "#/$defs/node" } }
+      }
+    }
+  }
+}

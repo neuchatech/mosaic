@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Wardrobe Atlas visual selection batch",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["batchSummary", "items"],
+  "properties": {
+    "batchSummary": { "type": "string" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["number", "score", "reject", "reason", "signals"],
+        "properties": {
+          "number": { "type": "integer", "minimum": 1, "maximum": 36 },
+          "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "reject": { "type": "boolean" },
+          "reason": { "type": "string" },
+          "signals": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}
