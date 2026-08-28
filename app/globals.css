@@ -128,7 +128,7 @@ button { color: inherit; font: inherit; }
 .productLinkOverlay { -webkit-user-drag: none; }
 .productLinkOverlay:focus-visible { outline: 2px solid #f5efe3; outline-offset: -3px; }
 .spaceMode .productCard { width: 100%; height: 100%; justify-self: center; align-self: center; grid-column: span var(--tile-columns); grid-row: span var(--tile-rows); }
-.spaceMode .productCard:hover { z-index: 8; width: var(--hover-width, 110%); height: var(--hover-height, 110%); transform: translateY(-3px); filter: brightness(1.025); box-shadow: 0 14px 36px #1c17103d; }
+.spaceMode .productCard:hover { z-index: 8; width: var(--hover-width, 100%); height: var(--hover-height, 100%); transform: translateY(-3px); filter: brightness(1.025); box-shadow: 0 14px 36px #1c17103d; }
 .gridMode .productCard:hover { z-index: 8; transform: translateY(-3px) scale(1.08); filter: brightness(1.025); box-shadow: 0 14px 36px #1c17103d; }
 .dragging .productCard:hover { width: 100%; height: 100%; transform: translateZ(0); box-shadow: none; }
 .productImage { height: 100%; min-height: 100%; background-color: #e9e5dc; background-image: url('/seed/reference-board.png'); background-size: 500%; filter: saturate(.8) contrast(.98); }

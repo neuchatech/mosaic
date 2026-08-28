@@ -305,11 +305,13 @@ export default function Home() {
     const card = event.currentTarget;
     const image = card.querySelector("img");
     if (!image?.naturalWidth || !image.naturalHeight) return;
-    const bounds = card.getBoundingClientRect();
+    const baseWidth = card.offsetWidth;
+    const baseHeight = card.offsetHeight;
+    if (!baseWidth || !baseHeight) return;
     const ratio = image.naturalWidth / image.naturalHeight;
-    const currentRatio = bounds.width / bounds.height;
-    const targetWidth = ratio >= currentRatio ? bounds.height * ratio : bounds.width;
-    const targetHeight = ratio >= currentRatio ? bounds.height : bounds.width / ratio;
+    const currentRatio = baseWidth / baseHeight;
+    const targetWidth = ratio >= currentRatio ? baseHeight * ratio : baseWidth;
+    const targetHeight = ratio >= currentRatio ? baseHeight : baseWidth / ratio;
     card.style.setProperty("--hover-width", `${targetWidth}px`);
     card.style.setProperty("--hover-height", `${targetHeight}px`);
   }
