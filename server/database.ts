@@ -5,8 +5,51 @@ import { fileURLToPath } from "node:url";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultPath = resolve(projectRoot, "data/wardrobe-atlas.sqlite");
+const schemaPath = resolve(projectRoot, "server/schema.sql");
 
 let database: Database.Database | undefined;
+
+function tableExists(db: Database.Database, table: string): boolean {
+  return Boolean(db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+  ).get(table));
+}
+
+function addColumnIfMissing(
+  db: Database.Database,
+  table: string,
+  column: string,
+  definition: string,
+): void {
+  if (!tableExists(db, table)) return;
+  const columns = db.pragma(`table_info(${table})`) as { name: string }[];
+  if (!columns.some((candidate) => candidate.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+function addBackwardCompatibleColumns(db: Database.Database): void {
+  addColumnIfMissing(db, "products", "annotations_json", "TEXT NOT NULL DEFAULT '{}'");
+  addColumnIfMissing(db, "products", "stock_status", "TEXT NOT NULL DEFAULT 'unknown'");
+  addColumnIfMissing(db, "products", "stock_checked_at", "TEXT");
+  addColumnIfMissing(db, "products", "price_checked_at", "TEXT");
+  addColumnIfMissing(db, "products", "sizes_checked_at", "TEXT");
+  addColumnIfMissing(db, "visual_jobs", "analysis_mode", "TEXT NOT NULL DEFAULT 'sequential'");
+  addColumnIfMissing(db, "visual_jobs", "reference_images_json", "TEXT NOT NULL DEFAULT '[]'");
+  addColumnIfMissing(db, "visual_jobs", "constraints_json", "TEXT NOT NULL DEFAULT '{}'");
+  addColumnIfMissing(db, "visual_jobs", "candidates_frozen_at", "TEXT");
+}
+
+/** Apply every storage migration safely to both fresh and legacy databases. */
+export function migrateDatabase(db: Database.Database): void {
+  db.pragma("foreign_keys = ON");
+  db.pragma("busy_timeout = 5000");
+  // Index declarations in schema.sql reference the new columns, so legacy tables
+  // must receive those columns before the full idempotent schema is evaluated.
+  addBackwardCompatibleColumns(db);
+  db.exec(readFileSync(schemaPath, "utf8"));
+  addBackwardCompatibleColumns(db);
+}
 
 export function getDatabase(): Database.Database {
   if (database) return database;
@@ -16,15 +59,7 @@ export function getDatabase(): Database.Database {
   mkdirSync(dirname(path), { recursive: true });
   database = new Database(path);
   database.pragma("journal_mode = WAL");
-  database.pragma("foreign_keys = ON");
-  database.exec(readFileSync(resolve(projectRoot, "server/schema.sql"), "utf8"));
-  const visualJobColumns = database.pragma("table_info(visual_jobs)") as { name: string }[];
-  if (!visualJobColumns.some((column) => column.name === "analysis_mode")) {
-    database.exec("ALTER TABLE visual_jobs ADD COLUMN analysis_mode TEXT NOT NULL DEFAULT 'sequential'");
-  }
-  if (!visualJobColumns.some((column) => column.name === "reference_images_json")) {
-    database.exec("ALTER TABLE visual_jobs ADD COLUMN reference_images_json TEXT NOT NULL DEFAULT '[]'");
-  }
+  migrateDatabase(database);
   database.pragma("optimize");
   return database;
 }

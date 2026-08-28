@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import sharpFactory from "sharp";
+import { catalogMediaPath } from "../server/media";
 import type { Product } from "../src/domain/catalog";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -16,6 +18,11 @@ type SharpFactory = (input: Buffer | string | {
   create: { width: number; height: number; channels: 3; background: string };
 }) => SharpPipeline;
 const sharp = sharpFactory as unknown as SharpFactory;
+const imageLoads = new Map<string, Promise<Buffer>>();
+
+function hash(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
 
 function escapeXml(value: string): string {
   return value.replace(/[<>&"']/g, (character) => ({
@@ -28,11 +35,37 @@ export async function loadProductImage(product: Product): Promise<Buffer> {
   if (!source) {
     return sharp({ create: { width: 240, height: 270, channels: 3, background: "#ded9cf" } }).jpeg().toBuffer();
   }
+  if (source.startsWith("/api/media/")) {
+    const [, , , encodedItemId, fileName] = source.split("/");
+    if (!encodedItemId || !fileName) throw new Error("Invalid catalog media URL.");
+    return readFile(catalogMediaPath(decodeURIComponent(encodedItemId), fileName));
+  }
   if (source.startsWith("/")) return readFile(resolve(projectRoot, "public", source.slice(1)));
   if (source.startsWith("file://")) return readFile(new URL(source));
-  const response = await fetch(source, { signal: AbortSignal.timeout(12_000) });
-  if (!response.ok) throw new Error(`Image fetch failed: ${response.status}`);
-  return Buffer.from(await response.arrayBuffer());
+  const dataUrl = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(source);
+  if (dataUrl) return Buffer.from(dataUrl[2], "base64");
+  const existingLoad = imageLoads.get(source);
+  if (existingLoad) return existingLoad;
+  const load = (async () => {
+    const directory = resolve(projectRoot, "data/image-cache");
+    const path = resolve(directory, `${hash(source)}.img`);
+    try {
+      return await readFile(path);
+    } catch {
+      const response = await fetch(source, { signal: AbortSignal.timeout(12_000) });
+      if (!response.ok) throw new Error(`Image fetch failed: ${response.status}`);
+      const buffer = Buffer.from(await response.arrayBuffer());
+      await mkdir(directory, { recursive: true });
+      await writeFile(path, buffer);
+      return buffer;
+    }
+  })();
+  imageLoads.set(source, load);
+  try {
+    return await load;
+  } finally {
+    imageLoads.delete(source);
+  }
 }
 
 async function tile(product: Product, index: number): Promise<Buffer> {
@@ -67,6 +100,15 @@ export async function buildProductPreview(product: Product): Promise<Buffer> {
 export async function buildContactSheet(products: Product[]): Promise<{ buffer: Buffer; path: string }> {
   const columns = Math.min(4, Math.max(products.length, 1));
   const rows = Math.ceil(Math.max(products.length, 1) / columns);
+  const directory = resolve(projectRoot, "data/contact-sheets");
+  await mkdir(directory, { recursive: true });
+  const signature = products.map((product) => `${product.id}:${product.images[0] ?? ""}`).join("|");
+  const path = resolve(directory, `sheet-${hash(`${columns}x${rows}:${signature}`).slice(0, 20)}.jpg`);
+  try {
+    return { buffer: await readFile(path), path };
+  } catch {
+    // Cache miss: render below.
+  }
   const tiles = await Promise.all(products.map(tile));
   const buffer = await sharp({
     create: { width: columns * 240, height: rows * 340, channels: 3, background: "#eeeae1" },
@@ -76,9 +118,6 @@ export async function buildContactSheet(products: Product[]): Promise<{ buffer: 
     top: Math.floor(index / columns) * 340,
   }))).jpeg({ quality: 84 }).toBuffer();
 
-  const directory = resolve(projectRoot, "data/contact-sheets");
-  await mkdir(directory, { recursive: true });
-  const path = resolve(directory, `sheet-${Date.now()}.jpg`);
   await writeFile(path, buffer);
   return { buffer, path };
 }

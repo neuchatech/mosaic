@@ -1,6 +1,8 @@
 import type { Page } from "playwright";
 import type { Product } from "../src/domain/catalog";
 
+export type CollectedStockStatus = "in_stock" | "out_of_stock" | "unknown";
+
 export type RawProduct = {
   sourceId?: string;
   url: string;
@@ -16,9 +18,15 @@ export type RawProduct = {
   fit?: string;
   materials?: string[];
   tags?: string[];
+  /** Labels exactly as exposed by the shop before canonical normalization. */
+  rawSizes?: string[];
   sizes?: string[];
   images?: string[];
   available?: boolean;
+  stockStatus?: CollectedStockStatus;
+  stockCheckedAt?: string | null;
+  priceCheckedAt?: string | null;
+  sizesCheckedAt?: string | null;
   attributes?: Product["attributes"];
 };
 

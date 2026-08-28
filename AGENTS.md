@@ -10,7 +10,8 @@
 ## Preferred agent workflow
 
 - Use the `wardrobe_atlas` MCP tools for catalog statistics, product queries, contact sheets, filter saving, and annotations.
-- For interactive visual search, inspect product images one at a time with `inspect_product_image`, then immediately call `record_visual_assessment` before inspecting another product. Contact sheets remain available for quick manual audits only.
+- For a scoped visual job, start with `get_visual_job_context`, use `inspect_visual_context` only for its frozen wardrobe/reference anchors, then inspect candidates with `inspect_visual_candidate` and immediately call `record_visual_assessment`. Never score a context anchor or an ID outside the frozen candidate set.
+- For an unscoped interactive manual audit, `inspect_product_image` and contact sheets remain available.
 - Translate natural-language filters into the nested FilterSpec DSL. Use `scores.<name>` and `attributes.<name>` for dynamic criteria; never generate raw SQL.
 - Preserve all user decisions (`saved`, `rejected`, `owned`) during imports and projection updates.
 - Add each new shop as a separate adapter under `collector/adapters/`; do not put shop-specific selectors in the collector core.

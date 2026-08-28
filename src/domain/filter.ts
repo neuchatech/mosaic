@@ -48,12 +48,17 @@ function matchesClause(product: Product, clause: FilterClause): boolean {
 
   const actualValues = list(actual);
   const expectedValues = list(expected);
-  const contains = expectedValues.some((needle) =>
+  const substringMatch = expectedValues.some((needle) =>
     actualValues.some((candidate) => candidate.includes(needle)),
   );
+  const exactMatch = expectedValues.some((expectedValue) =>
+    actualValues.some((actualValue) => actualValue === expectedValue),
+  );
 
-  if (clause.operator === "contains" || clause.operator === "in") return contains;
-  return !contains;
+  if (clause.operator === "contains") return substringMatch;
+  if (clause.operator === "not_contains") return !substringMatch;
+  if (clause.operator === "in") return exactMatch;
+  return !exactMatch;
 }
 
 function matchesExpression(product: Product, expression: FilterExpression): boolean {

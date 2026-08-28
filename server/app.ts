@@ -1,18 +1,65 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { filterSpecSchema, productPatchSchema, productSchema } from "../src/domain/catalog";
+import { readFile } from "node:fs/promises";
+import { z } from "zod";
+import { decisionSchema, filterSpecSchema, productPatchSchema, productSchema } from "../src/domain/catalog";
 import { stableProductId } from "../src/domain/ids";
-import { compactProjection } from "../src/projection/compact";
-import { projectProducts } from "../src/projection/pca";
+import { AcquisitionService, acquisitionClientView } from "./acquisition";
+import { catalogMediaPath, catalogMediaType, persistCatalogImages } from "./media";
+import { generateOutfits } from "./outfit-generator";
+import { projectCompactCached } from "./projection-cache";
 import { CatalogRepository } from "./repository";
 import { createFilterWithCodex } from "./codex-bridge";
 import { getVisualSelection, startVisualSelection } from "./visual-selection";
 
-export function createApp(repository = new CatalogRepository()) {
+const catalogItemFieldsSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  images: z.array(z.string().min(1)).min(1).max(6),
+  description: z.string().max(2000).optional(),
+  category: z.string().max(100).optional(),
+  color: z.string().max(100).optional(),
+  colorFamily: z.string().max(100).optional(),
+  fit: z.string().max(100).optional(),
+  tags: z.array(z.string().max(80)).max(40).optional(),
+});
+
+const personalItemSchema = catalogItemFieldsSchema.extend({
+  kind: z.enum(["owned", "reference"]),
+});
+
+const referenceItemSchema = catalogItemFieldsSchema.extend({
+  attributes: z.record(
+    z.string(),
+    z.union([z.string(), z.number(), z.boolean(), z.array(z.string()), z.null()]),
+  ).optional(),
+});
+
+function outfitView(board: ReturnType<CatalogRepository["saveOutfitBoard"]>) {
+  return {
+    ...board,
+    productIds: board.items.map((item) => item.productId),
+  };
+}
+
+export function createApp(
+  repository = new CatalogRepository(),
+  acquisition = new AcquisitionService(repository),
+) {
   const app = new Hono();
   app.use("/api/*", cors({ origin: ["http://localhost:3000", "http://127.0.0.1:3000"] }));
 
   app.get("/health", (context) => context.json({ ok: true }));
+  app.get("/api/media/:itemId/:fileName", async (context) => {
+    try {
+      const fileName = context.req.param("fileName");
+      const bytes = await readFile(catalogMediaPath(context.req.param("itemId"), fileName));
+      context.header("content-type", catalogMediaType(fileName));
+      context.header("cache-control", "private, max-age=31536000, immutable");
+      return context.body(new Uint8Array(bytes));
+    } catch {
+      return context.json({ error: "media not found" }, 404);
+    }
+  });
   app.get("/api/stats", (context) => context.json(repository.stats()));
   app.get("/api/products", (context) => {
     const search = context.req.query("search");
@@ -27,24 +74,23 @@ export function createApp(repository = new CatalogRepository()) {
   app.post("/api/query", async (context) => {
     const filter = filterSpecSchema.parse(await context.req.json());
     const products = repository.listProducts({ filter, limit: filter.limit });
-    return context.json(compactProjection(projectProducts(products)));
+    return context.json(projectCompactCached(products));
   });
   app.post("/api/references", async (context) => {
-    const input = await context.req.json<{
-      name: string;
-      images: string[];
-      description?: string;
-      category?: string;
-      color?: string;
-      colorFamily?: string;
-      fit?: string;
-      tags?: string[];
-      attributes?: Record<string, string | number | boolean | string[] | null>;
-    }>();
+    const parsed = referenceItemSchema.safeParse(await context.req.json());
+    if (!parsed.success) return context.json({ error: "invalid reference", issues: parsed.error.issues }, 400);
+    const input = parsed.data;
     const sourceId = crypto.randomUUID();
+    const id = stableProductId("reference", sourceId);
     const now = new Date().toISOString();
+    let images: string[];
+    try {
+      images = await persistCatalogImages(id, input.images);
+    } catch (error) {
+      return context.json({ error: error instanceof Error ? error.message : "invalid reference image" }, 400);
+    }
     const reference = productSchema.parse({
-      id: stableProductId("reference", sourceId),
+      id,
       kind: "reference",
       source: "reference",
       sourceId,
@@ -63,8 +109,9 @@ export function createApp(repository = new CatalogRepository()) {
       materials: [],
       tags: input.tags ?? [],
       sizes: [],
-      images: input.images,
+      images,
       available: true,
+      stockStatus: "not_applicable",
       decision: "saved",
       x: .5,
       y: .5,
@@ -73,18 +120,181 @@ export function createApp(repository = new CatalogRepository()) {
       updatedAt: now,
     });
     repository.upsertProducts([reference]);
-    return context.json(reference, 201);
+    return context.json(repository.getProduct(id), 201);
   });
   app.patch("/api/products/:id", async (context) => {
     const patch = productPatchSchema.parse(await context.req.json());
-    const updated = repository.patchProducts([context.req.param("id")], patch);
-    return context.json({ updated });
+    const id = context.req.param("id");
+    if (!repository.getProduct(id)) return context.json({ error: "product not found" }, 404);
+    if (patch.decision) {
+      const result = repository.setDecision([id], patch.decision);
+      const rest = { ...patch, decision: undefined };
+      if (Object.values(rest).some((value) => value !== undefined)) repository.patchProducts([id], rest);
+      return context.json({ updated: 1, product: repository.getProduct(id), actionId: result.actionId });
+    }
+    const updated = repository.patchProducts([id], patch);
+    return context.json({ updated, product: repository.getProduct(id) });
+  });
+  app.post("/api/products/bulk-decision", async (context) => {
+    const body = z.object({ ids: z.array(z.string().min(1)).min(1).max(500), decision: decisionSchema }).parse(await context.req.json());
+    const result = repository.setDecision(body.ids, body.decision);
+    return context.json(result);
+  });
+  app.post("/api/actions/undo", async (context) => {
+    const body = z.object({ actionId: z.string().uuid().optional() }).parse(await context.req.json());
+    const result = body.actionId ? repository.undoDecision(body.actionId) : repository.undoLastDecision();
+    if (!result) return context.json({ error: "action not found or already undone" }, 409);
+    return context.json({ ...result, product: result.products[0] ?? null });
+  });
+
+  app.post("/api/personal-items", async (context) => {
+    const parsed = personalItemSchema.safeParse(await context.req.json());
+    if (!parsed.success) return context.json({ error: "invalid personal item", issues: parsed.error.issues }, 400);
+    const input = parsed.data;
+    const sourceId = crypto.randomUUID();
+    const id = stableProductId(input.kind, sourceId);
+    const now = new Date().toISOString();
+    let images: string[];
+    try {
+      images = await persistCatalogImages(id, input.images);
+    } catch (error) {
+      return context.json({ error: error instanceof Error ? error.message : "invalid personal item image" }, 400);
+    }
+    const item = productSchema.parse({
+      id,
+      kind: input.kind,
+      source: input.kind,
+      sourceId,
+      url: `https://${input.kind}.local/${sourceId}`,
+      brand: input.kind === "owned" ? "Mon dressing" : "Référence",
+      name: input.name,
+      description: input.description ?? "",
+      price: null,
+      originalPrice: null,
+      currency: "CHF",
+      category: input.category ?? (input.kind === "reference" ? "Références" : "Autre"),
+      color: input.color ?? "Inconnue",
+      colorFamily: input.colorFamily ?? "unknown",
+      fit: input.fit ?? "unknown",
+      attributes: {},
+      materials: [],
+      tags: input.tags ?? [],
+      sizes: [],
+      images,
+      available: true,
+      stockStatus: "not_applicable",
+      decision: input.kind === "owned" ? "owned" : "saved",
+      x: .5,
+      y: .5,
+      scores: {},
+      importedAt: now,
+      updatedAt: now,
+    });
+    repository.upsertProducts([item]);
+    return context.json(repository.getProduct(id), 201);
   });
   app.get("/api/filters", (context) => context.json(repository.listFilters()));
   app.post("/api/filters", async (context) => {
     const filter = filterSpecSchema.parse(await context.req.json());
     return context.json(repository.saveFilter(filter), 201);
   });
+  app.get("/api/views", (context) => context.json(repository.listViews()));
+  app.post("/api/views", async (context) => {
+    const body = await context.req.json<Record<string, unknown>>();
+    const id = typeof body.id === "string" && body.id ? body.id : crypto.randomUUID();
+    const name = typeof body.name === "string" && body.name.trim() ? body.name.trim() : "Vue sans nom";
+    const filter = body.filter ? filterSpecSchema.parse(body.filter) : filterSpecSchema.parse({
+      id: `view_filter_${id}`,
+      name,
+      where: { type: "group", conjunction: "and", children: [] },
+      limit: 5000,
+    });
+    return context.json(repository.saveView({ id, name, filter, state: body }), 201);
+  });
+  app.delete("/api/views/:id", (context) => repository.deleteView(context.req.param("id"))
+    ? context.json({ deleted: true })
+    : context.json({ error: "view not found" }, 404));
+
+  app.get("/api/acquisition/jobs", (context) => {
+    const requestedLimit = Number(context.req.query("limit") ?? 20);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(100, Math.max(1, Math.trunc(requestedLimit)))
+      : 20;
+    return context.json(acquisition.list().slice(0, limit).map(acquisitionClientView));
+  });
+  app.post("/api/acquisition/jobs", async (context) => {
+    const body = z.object({ productIds: z.array(z.string().min(1)).min(1).max(120) }).parse(await context.req.json());
+    const targets = body.productIds.flatMap((id) => {
+      const product = repository.getProduct(id);
+      return product?.kind === "shop" ? [{ productId: product.id, url: product.url }] : [];
+    });
+    if (!targets.length) return context.json({ error: "no refreshable shop products" }, 400);
+    try { return context.json(acquisitionClientView(acquisition.start({ targets })), 202); }
+    catch (error) { return context.json({ error: error instanceof Error ? error.message : "acquisition unavailable" }, 400); }
+  });
+  app.get("/api/acquisition/jobs/:id", (context) => {
+    const job = acquisition.get(context.req.param("id"));
+    if (!job) return context.json({ error: "acquisition job not found" }, 404);
+    return context.json(acquisitionClientView(job));
+  });
+  app.post("/api/acquisition/jobs/:id/retry", (context) => {
+    try { return context.json(acquisitionClientView(acquisition.retry(context.req.param("id"))), 202); }
+    catch (error) { return context.json({ error: error instanceof Error ? error.message : "retry failed" }, 409); }
+  });
+  app.post("/api/acquisition/jobs/:id/resume", (context) => {
+    try { return context.json(acquisitionClientView(acquisition.resume(context.req.param("id"))), 202); }
+    catch (error) { return context.json({ error: error instanceof Error ? error.message : "resume failed" }, 409); }
+  });
+  app.post("/api/acquisition/jobs/:id/cancel", (context) => {
+    try { return context.json(acquisitionClientView(acquisition.cancel(context.req.param("id")))); }
+    catch (error) { return context.json({ error: error instanceof Error ? error.message : "cancel failed" }, 404); }
+  });
+
+  app.get("/api/outfit-boards", (context) => context.json(repository.listOutfitBoards().map(outfitView)));
+  app.post("/api/outfit-boards", async (context) => {
+    const body = z.object({
+      id: z.string().min(1).optional(),
+      name: z.string().trim().min(1).max(160),
+      description: z.string().max(2000).optional(),
+      productIds: z.array(z.string().min(1)).min(1).max(20),
+    }).parse(await context.req.json());
+    const board = repository.saveOutfitBoard({
+      id: body.id ?? crypto.randomUUID(),
+      name: body.name,
+      description: body.description,
+      items: [...new Set(body.productIds)].map((productId, position) => ({ productId, position })),
+    });
+    return context.json(outfitView(board), 201);
+  });
+  app.post("/api/outfit-boards/generate", async (context) => {
+    const body = z.object({ anchorProductId: z.string().min(1), maxOutfits: z.number().int().min(1).max(3).default(3) }).parse(await context.req.json());
+    const anchor = repository.getProduct(body.anchorProductId);
+    if (!anchor) return context.json({ error: "anchor product not found" }, 404);
+    const generated = generateOutfits(anchor, repository.listProducts({ limit: 10_000 }), body.maxOutfits);
+    const boards = generated.map((outfit) => repository.saveOutfitBoard({
+      id: crypto.randomUUID(),
+      name: outfit.title,
+      description: `Compatibilité ${outfit.compatibilityScore}/100 · nouveauté ${outfit.noveltyScore}/100`,
+      metadata: {
+        anchorProductId: outfit.anchorProductId,
+        compatibilityScore: outfit.compatibilityScore,
+        noveltyScore: outfit.noveltyScore,
+        missingRoles: outfit.missingRoles,
+      },
+      items: outfit.items.map((item, position) => ({ productId: item.productId, role: item.role, position, notes: item.reason })),
+    }));
+    return context.json(boards.map(outfitView), 201);
+  });
+  app.delete("/api/outfit-boards/:id", (context) => repository.deleteOutfitBoard(context.req.param("id"))
+    ? context.json({ deleted: true })
+    : context.json({ error: "outfit board not found" }, 404));
+
+  app.get("/api/export", (context) => context.json({
+    exportedAt: new Date().toISOString(),
+    products: repository.listProducts({ limit: 10_000 }),
+    views: repository.listViews(),
+    outfits: repository.listOutfitBoards().map(outfitView),
+  }));
   app.post("/api/codex/filter", async (context) => {
     const body = await context.req.json<{ prompt?: string }>();
     if (!body.prompt?.trim()) return context.json({ error: "prompt is required" }, 400);
@@ -102,6 +312,8 @@ export function createApp(repository = new CatalogRepository()) {
       topN?: number;
       threshold?: number;
       analysisMode?: "sequential" | "sheet";
+      reasoningEffort?: "low" | "medium";
+      constraints?: unknown;
       images?: { name?: string; dataUrl: string }[];
     }>();
     if (!body.prompt?.trim()) return context.json({ error: "prompt is required" }, 400);
@@ -111,6 +323,8 @@ export function createApp(repository = new CatalogRepository()) {
       topN: body.topN,
       threshold: body.threshold,
       analysisMode: body.analysisMode,
+      reasoningEffort: body.reasoningEffort,
+      constraints: body.constraints,
       images: body.images,
     }, repository), 202);
   });

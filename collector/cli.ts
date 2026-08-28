@@ -1,11 +1,15 @@
 import { Command } from "commander";
 import { PlaywrightCrawler } from "crawlee";
 import { CatalogRepository } from "../server/repository";
+import {
+  AcquisitionService,
+  mergeCollectedDetail,
+  PlaywrightDetailFetcher,
+} from "../server/acquisition";
 import { compactProjection } from "../src/projection/compact";
 import { projectProducts } from "../src/projection/pca";
 import { normalizeProduct } from "./normalize";
 import { adapterFor, listAdapters } from "./registry";
-import { productSchema } from "../src/domain/catalog";
 import type { RawProduct } from "./types";
 
 const program = new Command();
@@ -100,30 +104,54 @@ const crawler = new PlaywrightCrawler({
   },
 });
 
-const initialRequests = [
-  ...(startUrl ? [{ url: startUrl.href, userData: { kind: "listing" } }] : []),
-  ...existingProducts
-    .filter((product) => product.kind === "shop" && product.url && product.attributes.sizeAvailabilityKnown !== true)
-    .slice(0, enrichExisting)
-    .map((product) => ({ url: product.url, uniqueKey: `enrich:${product.url}`, userData: { kind: "detail" } })),
-];
-await crawler.run(initialRequests);
-const imported = [...collected.values()].slice(0, Math.max(maxProducts, enrichExisting)).map((raw) => {
+if (startUrl) {
+  const kind = /\.html$/i.test(startUrl.pathname) ? "detail" : "listing";
+  await crawler.run([{ url: startUrl.href, userData: { kind } }]);
+}
+const imported = [...collected.values()].slice(0, maxProducts).map((raw) => {
   const existing = existingByUrl.get(raw.url);
   if (!existing) {
     const source = adapterFor(new URL(raw.url), options.generic).id;
     return normalizeProduct(source, raw);
   }
-  return productSchema.parse({
-    ...existing,
-    ...raw,
-    attributes: { ...existing.attributes, ...raw.attributes },
-    materials: raw.materials?.length ? raw.materials : existing.materials,
-    images: raw.images?.length ? raw.images : existing.images,
-    updatedAt: new Date().toISOString(),
-  });
+  return mergeCollectedDetail(existing, raw, new Date().toISOString());
 });
 repository.upsertProducts(imported);
+
+let enriched = 0;
+if (enrichExisting > 0) {
+  const targets = existingProducts
+    .filter((product) => product.kind === "shop" && product.url && !product.sizesCheckedAt)
+    .filter((product) => {
+      try {
+        adapterFor(new URL(product.url), false);
+        return true;
+      } catch {
+        return false;
+      }
+    })
+    .slice(0, enrichExisting)
+    .map((product) => ({ productId: product.id, url: product.url }));
+  if (targets.length > 0) {
+    const acquisition = new AcquisitionService(repository, {
+      fetcher: new PlaywrightDetailFetcher({ headed: options.headed }),
+    });
+    let lastCompleted = -1;
+    acquisition.subscribe((job) => {
+      if (job.completed === lastCompleted) return;
+      lastCompleted = job.completed;
+      console.log(`Detail enrichment: ${job.completed}/${job.total} (${job.status}).`);
+    });
+    const job = acquisition.start({ targets, source: "collector-cli" });
+    const finished = await acquisition.waitFor(job.id);
+    enriched = finished.succeeded;
+    if (finished.blocked > 0) {
+      console.warn(`${finished.blocked} page(s) required login or CAPTCHA verification and were left blocked.`);
+    }
+    if (finished.failed > 0) console.warn(`${finished.failed} detail page(s) failed after retries.`);
+    await acquisition.close();
+  }
+}
 const allProducts = repository.listProducts({ limit: 10_000 });
 repository.replaceCoordinates(compactProjection(projectProducts(allProducts)));
-console.log(`Imported or enriched ${imported.length} products in Wardrobe Atlas.`);
+console.log(`Imported ${imported.length} and enriched ${enriched} products in Wardrobe Atlas.`);

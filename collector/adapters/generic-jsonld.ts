@@ -31,6 +31,20 @@ export function genericJsonLdAdapter(host: string): ShopAdapter {
         const product = values.find((value) => value?.["@type"] === "Product");
         if (!product?.name) return null;
         const offer = Array.isArray(product.offers) ? product.offers[0] : product.offers;
+        const rawReturnPolicy = offer?.hasMerchantReturnPolicy ?? product.hasMerchantReturnPolicy;
+        const returnPolicy = Array.isArray(rawReturnPolicy) ? rawReturnPolicy[0] : rawReturnPolicy;
+        const rawReturnDays = returnPolicy?.merchantReturnDays;
+        const returnWindowDays = Number.isFinite(Number(rawReturnDays)) && Number(rawReturnDays) >= 0
+          ? Number(rawReturnDays)
+          : null;
+        const returnPolicyCategory = String(returnPolicy?.returnPolicyCategory ?? "").toLowerCase();
+        const returnsLabel = returnPolicyCategory.includes("notpermitted")
+          ? "Retours non acceptés"
+          : returnWindowDays !== null
+            ? `${returnWindowDays} jours`
+            : returnPolicy
+              ? "Politique de retour disponible"
+              : null;
         return {
           sourceId: String(product.sku ?? product.productID ?? ""),
           url: location.href,
@@ -42,6 +56,10 @@ export function genericJsonLdAdapter(host: string): ShopAdapter {
           color: product.color,
           materials: product.material ? [String(product.material)] : [],
           images: Array.isArray(product.image) ? product.image : product.image ? [product.image] : [],
+          attributes: {
+            ...(returnsLabel ? { returnsLabel } : {}),
+            ...(returnWindowDays !== null ? { returnsWindowDays: returnWindowDays } : {}),
+          },
         };
       });
     },

@@ -2,6 +2,13 @@ import { z } from "zod";
 
 export const decisionSchema = z.enum(["unseen", "saved", "rejected", "owned"]);
 
+export const stockStatusSchema = z.enum([
+  "unknown",
+  "in_stock",
+  "out_of_stock",
+  "not_applicable",
+]);
+
 export const productSchema = z.object({
   id: z.string().min(1),
   kind: z.enum(["shop", "reference", "owned"]).default("shop"),
@@ -24,9 +31,14 @@ export const productSchema = z.object({
   ).default({}),
   materials: z.array(z.string()).default([]),
   tags: z.array(z.string()).default([]),
+  annotations: z.record(z.string(), z.string()).default({}),
   sizes: z.array(z.string()).default([]),
   images: z.array(z.string()).default([]),
   available: z.boolean().default(true),
+  stockStatus: stockStatusSchema.default("unknown"),
+  stockCheckedAt: z.string().datetime().nullable().default(null),
+  priceCheckedAt: z.string().datetime().nullable().default(null),
+  sizesCheckedAt: z.string().datetime().nullable().default(null),
   decision: decisionSchema.default("unseen"),
   x: z.number().min(0).max(1).default(0.5),
   y: z.number().min(0).max(1).default(0.5),
@@ -35,8 +47,19 @@ export const productSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
-export type Product = z.infer<typeof productSchema>;
+type ParsedProduct = z.infer<typeof productSchema>;
+
+// Keep direct Product object literals written before the freshness fields source-compatible.
+// productSchema.parse() still materializes every default at runtime.
+export type Product = Omit<
+  ParsedProduct,
+  "annotations" | "stockStatus" | "stockCheckedAt" | "priceCheckedAt" | "sizesCheckedAt"
+> & Partial<Pick<
+  ParsedProduct,
+  "annotations" | "stockStatus" | "stockCheckedAt" | "priceCheckedAt" | "sizesCheckedAt"
+>>;
 export type ProductDecision = z.infer<typeof decisionSchema>;
+export type StockStatus = z.infer<typeof stockStatusSchema>;
 
 export const comparisonOperatorSchema = z.enum([
   "eq",
@@ -99,6 +122,7 @@ export type FilterClause = z.infer<typeof filterClauseSchema>;
 export const productPatchSchema = z.object({
   decision: decisionSchema.optional(),
   tags: z.array(z.string()).optional(),
+  annotations: z.record(z.string(), z.string()).optional(),
   scores: z.record(z.string(), z.number().min(0).max(100)).optional(),
   fit: z.string().optional(),
   colorFamily: z.string().optional(),
