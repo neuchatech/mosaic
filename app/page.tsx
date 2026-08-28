@@ -1,6 +1,6 @@
 "use client";
 
-import { type CSSProperties, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type SeedItem = {
   id: number;
@@ -251,16 +251,23 @@ export default function Home() {
     requestAnimationFrame(() => atlasRef.current?.scrollTo({ left: 0, top: 0 }));
   }
 
-  function handleWheel(event: ReactWheelEvent<HTMLDivElement>) {
-    if (mode !== "space" || (!event.ctrlKey && !event.metaKey)) return;
-    event.preventDefault();
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const intensity = event.deltaMode === 1 ? .025 : .0025;
-    changeZoom(zoomRef.current * Math.exp(-event.deltaY * intensity), {
-      x: event.clientX - bounds.left,
-      y: event.clientY - bounds.top,
-    });
-  }
+  useEffect(() => {
+    const atlas = atlasRef.current;
+    if (!atlas || mode !== "space") return;
+    const handleNativeWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const bounds = atlas.getBoundingClientRect();
+      const intensity = event.deltaMode === 1 ? .025 : .0025;
+      changeZoom(zoomRef.current * Math.exp(-event.deltaY * intensity), {
+        x: event.clientX - bounds.left,
+        y: event.clientY - bounds.top,
+      });
+    };
+    atlas.addEventListener("wheel", handleNativeWheel, { passive: false });
+    return () => atlas.removeEventListener("wheel", handleNativeWheel);
+  }, [mode]);
 
   function startPan(event: ReactPointerEvent<HTMLDivElement>) {
     if (mode !== "space" || (event.target as HTMLElement).closest("button, input")) return;
@@ -550,13 +557,15 @@ export default function Home() {
           <div
             ref={atlasRef}
             className={`${mode === "space" ? "atlas spaceMode" : "atlas gridMode"}${dragging ? " dragging" : ""}`}
-            onWheel={handleWheel}
             onPointerDown={startPan}
             onPointerMove={pan}
             onPointerUp={stopPan}
             onPointerCancel={stopPan}
           >
-            <div className="atlasCanvas" style={mode === "space" ? ({ zoom, width: "160%" } as CSSProperties) : undefined}>
+            <div
+              className="atlasCanvas"
+              style={mode === "space" ? ({ "--board-scale": zoom, width: `${zoom * 160}%` } as CSSProperties) : undefined}
+            >
             {products.map((item, index) => (
               <article
                 className={`productCard ${item.kind === "reference" ? "referenceCard" : ""}`}
