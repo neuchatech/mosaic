@@ -78,6 +78,9 @@ button { color: inherit; font: inherit; }
 .axisLegend { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 9px; }
 .axisLegend i { display: block; width: 70px; height: 1px; background: linear-gradient(90deg, #b2aa9e, var(--clay)); position: relative; }
 .axisLegend i::after { content: ""; position: absolute; right: 0; top: -2px; width: 5px; height: 5px; border-radius: 50%; background: var(--clay); }
+.axisControls { display: flex; align-items: center; gap: 4px; }
+.axisControls label { height: 25px; display: flex; align-items: center; gap: 4px; padding: 0 5px; border: 1px solid var(--line); border-radius: 7px; background: white; color: #8f887c; font: 700 7px/1 var(--font-geist-mono); }
+.axisControls select { border: 0; outline: 0; background: transparent; color: var(--ink); font: 8px/1 Arial, sans-serif; cursor: pointer; }
 .segmented { padding: 2px; border: 1px solid var(--line); border-radius: 7px; background: #f3f0e9; }
 .segmented button { padding: 4px 8px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; font-size: 9px; }
 .segmented button.active { background: white; color: var(--ink); box-shadow: 0 1px 4px #00000010; }
@@ -92,6 +95,9 @@ button { color: inherit; font: inherit; }
 .filterBar > button small { grid-column: 1 / -1; color: #999185; font: 7px/1.1 var(--font-geist-mono); text-transform: uppercase; }
 .filterBar > button strong { margin-top: 1px; font-size: 8px; white-space: nowrap; }
 .filterBar > button span { color: #9c958a; font-size: 9px; }
+.quickFilter { min-width: 76px; display: grid; gap: 1px; padding: 4px 7px; border: 1px solid var(--line); border-radius: 7px; background: white; }
+.quickFilter small { color: #999185; font: 7px/1.1 var(--font-geist-mono); text-transform: uppercase; }
+.quickFilter select { max-width: 88px; padding: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font: 700 8px/1.2 Arial, sans-serif; cursor: pointer; }
 .aiComposer { min-width: 300px; flex: 1; display: grid; gap: 3px; }
 .aiFilter { min-width: 240px; display: flex; align-items: center; gap: 5px; padding: 3px 3px 3px 8px; border: 1px solid #ccd1c3; border-radius: 7px; background: #f3f5ee; }
 .aiFilter input { min-width: 80px; flex: 1; border: 0; outline: 0; background: transparent; font-size: 10px; }
@@ -153,7 +159,7 @@ button { color: inherit; font: inherit; }
   .sidebar { border-right: 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: repeat(2, 1fr); }
   .aiCard { display: none; }
   .atlas { min-height: 680px; }
-  .axisLegend { display: none; }
+  .axisLegend, .axisControls { display: none; }
   .filterBar { flex-wrap: wrap; }
   .aiFilter { flex-basis: 100%; }
   .aiComposer { flex-basis: 100%; }

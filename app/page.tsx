@@ -18,6 +18,8 @@ type SeedItem = {
   url?: string;
   reason?: string;
   kind?: "shop" | "reference" | "owned";
+  source?: string;
+  materials?: string[];
 };
 
 type ApiProduct = {
@@ -35,6 +37,8 @@ type ApiProduct = {
   kind: "shop" | "reference" | "owned";
   scores: Record<string, number>;
   attributes: Record<string, unknown>;
+  source: string;
+  materials: string[];
 };
 
 type VisualJobResponse = {
@@ -73,10 +77,6 @@ const seedItems: SeedItem[] = [
 
 const filters = ["Tout", "Vestes", "Pantalons", "Mailles", "Chemises", "T-shirts", "Références"];
 
-function compactItems(items: SeedItem[]): SeedItem[] {
-  return [...items].sort((a, b) => a.y - b.y || a.x - b.x);
-}
-
 const tileShapes = [
   [3, 18], [3, 14], [2, 16], [4, 20], [3, 15],
   [2, 18], [3, 20], [4, 15], [3, 17], [2, 14],
@@ -107,7 +107,23 @@ function apiProductsToItems(items: ApiProduct[]): SeedItem[] {
     url: item.url,
     reason: typeof item.attributes.visual_reason === "string" ? item.attributes.visual_reason : undefined,
     kind: item.kind,
+    source: item.source,
+    materials: item.materials,
   }));
+}
+
+type AxisField = "pca" | "price" | "score";
+
+function axisValue(item: SeedItem, field: AxisField, fallback: "x" | "y") {
+  if (field === "price") return item.price ?? Number.MAX_SAFE_INTEGER;
+  if (field === "score") return 100 - item.score;
+  return item[fallback];
+}
+
+function arrangeItems(items: SeedItem[], xAxis: AxisField, yAxis: AxisField): SeedItem[] {
+  return [...items].sort((left, right) =>
+    axisValue(left, yAxis, "y") - axisValue(right, yAxis, "y")
+    || axisValue(left, xAxis, "x") - axisValue(right, xAxis, "x"));
 }
 
 export default function Home() {
@@ -122,10 +138,19 @@ export default function Home() {
   const [visualBusy, setVisualBusy] = useState(false);
   const [visualMode, setVisualMode] = useState<"sequential" | "sheet">("sequential");
   const [promptImages, setPromptImages] = useState<PromptImage[]>([]);
+  const [xAxis, setXAxis] = useState<AxisField>("pca");
+  const [yAxis, setYAxis] = useState<AxisField>("pca");
+  const [sourceFilter, setSourceFilter] = useState("all");
+  const [priceFilter, setPriceFilter] = useState("all");
+  const [fitFilter, setFitFilter] = useState("all");
+  const [materialFilter, setMaterialFilter] = useState("all");
   const [zoom, setZoom] = useState(1);
   const [dragging, setDragging] = useState(false);
   const atlasRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const zoomRef = useRef(1);
+  const zoomFrameRef = useRef<number | null>(null);
+  const zoomScrollRef = useRef<{ left: number; top: number } | null>(null);
   const dragRef = useRef<{ x: number; y: number; left: number; top: number; pointerId: number; captured: boolean } | null>(null);
   const suppressProductClickRef = useRef(false);
 
@@ -149,9 +174,33 @@ export default function Home() {
   }, []);
 
   const visibleCatalog = aiItems ?? catalogItems;
+  const quickFilteredCatalog = useMemo(() => visibleCatalog.filter((item) => {
+    if (sourceFilter === "shop" && item.kind === "reference") return false;
+    if (sourceFilter === "reference" && item.kind !== "reference") return false;
+    if (sourceFilter === "zalando" && item.source !== "zalando-ch") return false;
+    if (priceFilter !== "all") {
+      if (item.price === null) return false;
+      if (priceFilter === "under50" && item.price >= 50) return false;
+      if (priceFilter === "50to100" && (item.price < 50 || item.price > 100)) return false;
+      if (priceFilter === "100to180" && (item.price < 100 || item.price > 180)) return false;
+      if (priceFilter === "over180" && item.price <= 180) return false;
+    }
+    if (fitFilter !== "all" && item.fit.toLocaleLowerCase() !== fitFilter) return false;
+    if (materialFilter !== "all") {
+      const haystack = `${item.name} ${(item.materials ?? []).join(" ")}`.toLocaleLowerCase();
+      const aliases: Record<string, string[]> = {
+        knit: ["maille", "knit", "strick"],
+        linen: ["lin", "linen"],
+        cotton: ["coton", "cotton"],
+        leather: ["cuir", "leather", "leder"],
+      };
+      if (!aliases[materialFilter]?.some((term) => haystack.includes(term))) return false;
+    }
+    return true;
+  }), [fitFilter, materialFilter, priceFilter, sourceFilter, visibleCatalog]);
   const products = useMemo(
-    () => compactItems(visibleCatalog.filter((item) => activeFilter === "Tout" || item.category === activeFilter)),
-    [activeFilter, visibleCatalog],
+    () => arrangeItems(quickFilteredCatalog.filter((item) => activeFilter === "Tout" || item.category === activeFilter), xAxis, yAxis),
+    [activeFilter, quickFilteredCatalog, xAxis, yAxis],
   );
   const categoryCounts = useMemo(() => Object.fromEntries(filters.map((filter) => [
     filter,
@@ -167,20 +216,37 @@ export default function Home() {
     });
   }
 
-  function changeZoom(nextValue: number) {
+  function changeZoom(nextValue: number, anchor?: { x: number; y: number }) {
     const atlas = atlasRef.current;
-    const next = Math.min(2.5, Math.max(.65, Math.round(nextValue * 20) / 20));
+    const next = Math.min(2.5, Math.max(.65, Math.round(nextValue * 100) / 100));
+    const current = zoomRef.current;
+    if (next === current) return;
+    zoomRef.current = next;
     if (!atlas) return setZoom(next);
-    const contentX = (atlas.scrollLeft + atlas.clientWidth / 2) / zoom;
-    const contentY = (atlas.scrollTop + atlas.clientHeight / 2) / zoom;
+    const point = anchor ?? { x: atlas.clientWidth / 2, y: atlas.clientHeight / 2 };
+    const pendingScroll = zoomScrollRef.current ?? { left: atlas.scrollLeft, top: atlas.scrollTop };
+    const contentX = (pendingScroll.left + point.x) / current;
+    const contentY = (pendingScroll.top + point.y) / current;
+    zoomScrollRef.current = {
+      left: contentX * next - point.x,
+      top: contentY * next - point.y,
+    };
     setZoom(next);
-    requestAnimationFrame(() => {
-      atlas.scrollLeft = contentX * next - atlas.clientWidth / 2;
-      atlas.scrollTop = contentY * next - atlas.clientHeight / 2;
+    if (zoomFrameRef.current !== null) cancelAnimationFrame(zoomFrameRef.current);
+    zoomFrameRef.current = requestAnimationFrame(() => {
+      const target = zoomScrollRef.current;
+      if (target) {
+        atlas.scrollLeft = target.left;
+        atlas.scrollTop = target.top;
+      }
+      zoomScrollRef.current = null;
+      zoomFrameRef.current = null;
     });
   }
 
   function resetView() {
+    zoomRef.current = 1;
+    zoomScrollRef.current = null;
     setZoom(1);
     requestAnimationFrame(() => atlasRef.current?.scrollTo({ left: 0, top: 0 }));
   }
@@ -188,7 +254,12 @@ export default function Home() {
   function handleWheel(event: ReactWheelEvent<HTMLDivElement>) {
     if (mode !== "space" || (!event.ctrlKey && !event.metaKey)) return;
     event.preventDefault();
-    changeZoom(zoom * (event.deltaY > 0 ? .9 : 1.1));
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const intensity = event.deltaMode === 1 ? .025 : .0025;
+    changeZoom(zoomRef.current * Math.exp(-event.deltaY * intensity), {
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top,
+    });
   }
 
   function startPan(event: ReactPointerEvent<HTMLDivElement>) {
@@ -235,10 +306,12 @@ export default function Home() {
     const image = card.querySelector("img");
     if (!image?.naturalWidth || !image.naturalHeight) return;
     const bounds = card.getBoundingClientRect();
-    const targetArea = bounds.width * bounds.height * 1.2;
     const ratio = image.naturalWidth / image.naturalHeight;
-    card.style.setProperty("--hover-width", `${Math.sqrt(targetArea * ratio)}px`);
-    card.style.setProperty("--hover-height", `${Math.sqrt(targetArea / ratio)}px`);
+    const currentRatio = bounds.width / bounds.height;
+    const targetWidth = ratio >= currentRatio ? bounds.height * ratio : bounds.width;
+    const targetHeight = ratio >= currentRatio ? bounds.height : bounds.width / ratio;
+    card.style.setProperty("--hover-width", `${targetWidth}px`);
+    card.style.setProperty("--hover-height", `${targetHeight}px`);
   }
 
   async function askCodex() {
@@ -394,28 +467,27 @@ export default function Home() {
               <h2>Automne · brun ténébreux</h2>
             </div>
             <div className="toolbarRight">
-              <div className="axisLegend">
-                <span>habillé</span>
-                <i />
-                <span>casual</span>
+              <div className="axisControls" aria-label="Axes de rangement">
+                <label>X<select value={xAxis} onChange={(event) => setXAxis(event.target.value as AxisField)}><option value="pca">PCA</option><option value="price">Prix</option><option value="score">Score</option></select></label>
+                <label>Y<select value={yAxis} onChange={(event) => setYAxis(event.target.value as AxisField)}><option value="pca">PCA</option><option value="price">Prix</option><option value="score">Score</option></select></label>
               </div>
               <div className="segmented" aria-label="Mode d’affichage">
                 <button className={mode === "space" ? "active" : ""} onClick={() => setMode("space")}>Espace</button>
                 <button className={mode === "grid" ? "active" : ""} onClick={() => setMode("grid")}>Grille</button>
               </div>
               <div className="zoomControls" aria-label="Zoom du board">
-                <button disabled={mode !== "space" || zoom <= .65} onClick={() => changeZoom(zoom - .15)} aria-label="Dézoomer">−</button>
+                <button disabled={mode !== "space" || zoom <= .65} onClick={() => changeZoom(zoomRef.current - .15)} aria-label="Dézoomer">−</button>
                 <button disabled={mode !== "space"} onClick={resetView} className="zoomValue">{Math.round(zoom * 100)}%</button>
-                <button disabled={mode !== "space" || zoom >= 2.5} onClick={() => changeZoom(zoom + .15)} aria-label="Zoomer">＋</button>
+                <button disabled={mode !== "space" || zoom >= 2.5} onClick={() => changeZoom(zoomRef.current + .15)} aria-label="Zoomer">＋</button>
               </div>
             </div>
           </div>
 
           <div className="filterBar">
-            <button><small>Source</small><strong>Toutes</strong><span>⌄</span></button>
-            <button><small>Prix</small><strong>40–180</strong><span>⌄</span></button>
-            <button><small>Coupe</small><strong>Large · courte</strong><span>⌄</span></button>
-            <button><small>Matière</small><strong>Toutes</strong><span>⌄</span></button>
+            <label className="quickFilter"><small>Source</small><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">Toutes</option><option value="shop">Tous shops</option><option value="zalando">Zalando</option><option value="reference">Références</option></select></label>
+            <label className="quickFilter"><small>Prix</small><select value={priceFilter} onChange={(event) => setPriceFilter(event.target.value)}><option value="all">Tous</option><option value="under50">&lt; 50</option><option value="50to100">50–100</option><option value="100to180">100–180</option><option value="over180">&gt; 180</option></select></label>
+            <label className="quickFilter"><small>Coupe</small><select value={fitFilter} onChange={(event) => setFitFilter(event.target.value)}><option value="all">Toutes</option><option value="large">Large</option><option value="courte">Courte</option><option value="droite">Droite</option><option value="unknown">Inconnue</option></select></label>
+            <label className="quickFilter"><small>Matière</small><select value={materialFilter} onChange={(event) => setMaterialFilter(event.target.value)}><option value="all">Toutes</option><option value="knit">Maille</option><option value="linen">Lin</option><option value="cotton">Coton</option><option value="leather">Cuir</option></select></label>
             <div className="aiComposer">
               <label className="aiFilter">
                 <span className="pulseDot" />
@@ -482,7 +554,7 @@ export default function Home() {
             onPointerUp={stopPan}
             onPointerCancel={stopPan}
           >
-            <div className="atlasCanvas" style={mode === "space" ? ({ zoom, width: `${zoom * 160}%` } as CSSProperties) : undefined}>
+            <div className="atlasCanvas" style={mode === "space" ? ({ zoom, width: "160%" } as CSSProperties) : undefined}>
             {products.map((item, index) => (
               <article
                 className={`productCard ${item.kind === "reference" ? "referenceCard" : ""}`}
