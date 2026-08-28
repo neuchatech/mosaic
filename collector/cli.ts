@@ -5,6 +5,7 @@ import { compactProjection } from "../src/projection/compact";
 import { projectProducts } from "../src/projection/pca";
 import { normalizeProduct } from "./normalize";
 import { adapterFor, listAdapters } from "./registry";
+import { productSchema } from "../src/domain/catalog";
 import type { RawProduct } from "./types";
 
 const program = new Command();
@@ -17,6 +18,7 @@ program
   .option("--generic", "Use the conservative JSON-LD adapter for an unregistered host", false)
   .option("--headed", "Show the browser while collecting", false)
   .option("--details <count>", "Visit up to N product pages for richer attributes", "0")
+  .option("--enrich-existing <count>", "Refresh detail data for up to N existing catalog products", "0")
   .option("--scrolls <count>", "Number of gentle listing-page scrolls", "8")
   .option("--max-products <count>", "Hard cap for imported products", "500")
   .parse();
@@ -27,6 +29,7 @@ const options = program.opts<{
   generic: boolean;
   headed: boolean;
   details: string;
+  enrichExisting: string;
   scrolls: string;
   maxProducts: string;
 }>();
@@ -35,20 +38,26 @@ if (options.listAdapters) {
   console.table(listAdapters());
   process.exit(0);
 }
-if (!options.url) throw new Error("--url is required unless --list-adapters is used");
+const enrichExisting = Math.min(Math.max(Number(options.enrichExisting), 0), 5000);
+if (!options.url && enrichExisting === 0) {
+  throw new Error("--url or --enrich-existing is required unless --list-adapters is used");
+}
 
-const startUrl = new URL(options.url);
-const adapter = adapterFor(startUrl, options.generic);
-if (!adapter.allowedHosts.includes(startUrl.hostname)) {
-  throw new Error(`Host ${startUrl.hostname} is not allowed by adapter ${adapter.id}.`);
+const startUrl = options.url ? new URL(options.url) : null;
+const listingAdapter = startUrl ? adapterFor(startUrl, options.generic) : null;
+if (startUrl && listingAdapter && !listingAdapter.allowedHosts.includes(startUrl.hostname)) {
+  throw new Error(`Host ${startUrl.hostname} is not allowed by adapter ${listingAdapter.id}.`);
 }
 
 const maxProducts = Math.min(Math.max(Number(options.maxProducts), 1), 5000);
 const detailLimit = Math.min(Math.max(Number(options.details), 0), maxProducts);
 const scrolls = Math.min(Math.max(Number(options.scrolls), 0), 30);
 const collected = new Map<string, RawProduct>();
+const repository = new CatalogRepository();
+const existingProducts = repository.listProducts({ limit: 10_000 });
+const existingByUrl = new Map(existingProducts.map((product) => [product.url, product]));
 
-console.log(`Collecting ${adapter.label} at a conservative rate. Checkout and account actions are out of scope.`);
+console.log(`Collecting product data at a conservative rate. Checkout and account actions are out of scope.`);
 
 const crawler = new PlaywrightCrawler({
   headless: !options.headed,
@@ -59,10 +68,11 @@ const crawler = new PlaywrightCrawler({
   launchContext: { launchOptions: { channel: "chrome" } },
   async requestHandler({ page, request, addRequests, log }) {
     const requestUrl = new URL(request.url);
-    if (!adapter.allowedHosts.includes(requestUrl.hostname)) return;
+    const requestAdapter = adapterFor(requestUrl, options.generic);
+    if (!requestAdapter.allowedHosts.includes(requestUrl.hostname)) return;
 
     if (request.userData.kind === "detail") {
-      const detail = await adapter.extractDetail(page);
+      const detail = await requestAdapter.extractDetail(page);
       if (detail) {
         const current = collected.get(detail.url) ?? {} as RawProduct;
         collected.set(detail.url, { ...current, ...detail });
@@ -74,7 +84,7 @@ const crawler = new PlaywrightCrawler({
       await page.mouse.wheel(0, 900);
       await page.waitForTimeout(450);
     }
-    const listingProducts = (await adapter.extractListing(page)).slice(0, maxProducts);
+    const listingProducts = (await requestAdapter.extractListing(page)).slice(0, maxProducts);
     for (const product of listingProducts) collected.set(product.url, product);
     log.info(`Found ${collected.size} unique product cards.`);
 
@@ -90,10 +100,30 @@ const crawler = new PlaywrightCrawler({
   },
 });
 
-await crawler.run([startUrl.href]);
-const repository = new CatalogRepository();
-const imported = [...collected.values()].slice(0, maxProducts).map((raw) => normalizeProduct(adapter.id, raw));
+const initialRequests = [
+  ...(startUrl ? [{ url: startUrl.href, userData: { kind: "listing" } }] : []),
+  ...existingProducts
+    .filter((product) => product.kind === "shop" && product.url && product.attributes.sizeAvailabilityKnown !== true)
+    .slice(0, enrichExisting)
+    .map((product) => ({ url: product.url, uniqueKey: `enrich:${product.url}`, userData: { kind: "detail" } })),
+];
+await crawler.run(initialRequests);
+const imported = [...collected.values()].slice(0, Math.max(maxProducts, enrichExisting)).map((raw) => {
+  const existing = existingByUrl.get(raw.url);
+  if (!existing) {
+    const source = adapterFor(new URL(raw.url), options.generic).id;
+    return normalizeProduct(source, raw);
+  }
+  return productSchema.parse({
+    ...existing,
+    ...raw,
+    attributes: { ...existing.attributes, ...raw.attributes },
+    materials: raw.materials?.length ? raw.materials : existing.materials,
+    images: raw.images?.length ? raw.images : existing.images,
+    updatedAt: new Date().toISOString(),
+  });
+});
 repository.upsertProducts(imported);
 const allProducts = repository.listProducts({ limit: 10_000 });
 repository.replaceCoordinates(compactProjection(projectProducts(allProducts)));
-console.log(`Imported ${imported.length} products into Wardrobe Atlas.`);
+console.log(`Imported or enriched ${imported.length} products in Wardrobe Atlas.`);

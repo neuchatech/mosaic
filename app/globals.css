@@ -143,6 +143,8 @@ button { color: inherit; font: inherit; }
 .productMeta h3 { margin: 3px 0 0; font-size: 10px; line-height: 1.15; }
 .spaceMode .productMeta p { display: none; }
 .productMeta > strong { display: block; margin-top: 3px; font-size: 8px; }
+.sizeSummary { color: #eee9de; font-style: normal; font-weight: 500; opacity: .9; }
+.gridMode .sizeSummary { color: var(--muted); }
 .referenceCard::after { content: "RÉF"; position: absolute; z-index: 3; top: 6px; left: 6px; padding: 3px 5px; border-radius: 3px; color: white; background: #68442fd9; font: 700 6px/1 var(--font-geist-mono); letter-spacing: .09em; }
 
 .gridMode .atlasCanvas { min-width: 100%; display: grid; grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); align-content: start; gap: 7px; padding: 7px; }
@@ -150,6 +152,9 @@ button { color: inherit; font: inherit; }
 .gridMode .productImage { height: 155px; min-height: 155px; }
 .gridMode .productMeta { padding: 6px 7px 8px; }
 .gridMode .productMeta p { margin: 3px 0 5px; color: #898174; font-size: 8px; }
+.emptyBoard { grid-column: 1 / -1; align-self: start; display: grid; place-items: center; gap: 5px; min-height: 180px; padding: 30px; color: var(--muted); text-align: center; }
+.emptyBoard strong { color: var(--ink); font: 500 15px/1.2 Georgia, serif; }
+.emptyBoard span { font-size: 9px; }
 .boardFooter { display: flex; justify-content: space-between; padding: 6px 3px 0; color: #8b8478; font-size: 8px; }
 .boardFooter b { color: var(--ink); }
 

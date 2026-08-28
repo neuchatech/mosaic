@@ -1,5 +1,19 @@
 import type { ShopAdapter } from "../types";
 
+const SIZE_PATTERN = /^(?:XXS|XS|S|M|L|XL|XXL|XXXL|[2-6]XL|(?:EU\s*)?\d{2,3}(?:[.,]5)?|\d{1,2}\s*[/-]\s*\d{1,2})$/i;
+
+export function normalizeZalandoSizes(values: string[]): string[] {
+  const cleaned = values.flatMap((value) => value
+    .split(/[\n,;|]/)
+    .map((part) => part
+      .replace(/^(?:taille|size|grösse)\s*:?\s*/i, "")
+      .replace(/\s+(?:disponible|available|verfügbar)$/i, "")
+      .trim())
+    .filter((part) => SIZE_PATTERN.test(part))
+    .map((part) => part.toUpperCase().replace(/\s+/g, " ").replace(",", ".")));
+  return [...new Set(cleaned)];
+}
+
 function priceFromText(text: string): number | null {
   const match = text.match(/(?:CHF|Fr\.?)[\s\u00a0]*([0-9'’.,]+)/i);
   if (!match) return null;
@@ -59,7 +73,34 @@ export const zalandoAdapter: ShopAdapter = {
       });
       const product = values.find((value) => value?.["@type"] === "Product");
       if (!product) return null;
-      const offer = Array.isArray(product.offers) ? product.offers[0] : product.offers;
+      const offers = Array.isArray(product.offers) ? product.offers : product.offers ? [product.offers] : [];
+      const offer = offers[0];
+      const sizeCandidates: string[] = [];
+      const addSize = (value: unknown) => {
+        if (typeof value === "string") sizeCandidates.push(value);
+        if (Array.isArray(value)) value.forEach(addSize);
+      };
+      addSize(product.size);
+      for (const candidateOffer of offers) {
+        if (String(candidateOffer?.availability ?? "").toLowerCase().includes("outofstock")) continue;
+        addSize(candidateOffer?.size);
+        addSize(candidateOffer?.itemOffered?.size);
+        for (const property of candidateOffer?.itemOffered?.additionalProperty ?? []) {
+          if (/size|taille|grösse/i.test(String(property?.name ?? ""))) addSize(property?.value);
+        }
+      }
+      const sizeSelectors = [
+        '[data-testid*="size" i] button:not([disabled]):not([aria-disabled="true"])',
+        '[data-testid*="size" i] option:not([disabled])',
+        'select[name*="size" i] option:not([disabled])',
+        'select[aria-label*="taille" i] option:not([disabled])',
+        'select[aria-label*="size" i] option:not([disabled])',
+      ];
+      for (const element of document.querySelectorAll<HTMLElement>(sizeSelectors.join(","))) {
+        addSize(element.getAttribute("value"));
+        addSize(element.getAttribute("aria-label"));
+        addSize(element.textContent);
+      }
       return {
         sourceId: String(product.sku ?? product.productID ?? ""),
         url: location.href,
@@ -72,14 +113,17 @@ export const zalandoAdapter: ShopAdapter = {
         price: Number(offer?.price),
         currency: offer?.priceCurrency,
         available: !String(offer?.availability ?? "").toLowerCase().includes("outofstock"),
+        sizeCandidates,
       };
     });
     if (!raw?.name) return null;
+    const sizes = normalizeZalandoSizes(raw.sizeCandidates);
     return {
       ...raw,
+      sizes,
       materials: raw.material ? [String(raw.material)] : [],
       colorFamily: raw.color ?? "unknown",
-      attributes: { detailCaptured: true },
+      attributes: { detailCaptured: true, sizeAvailabilityKnown: sizes.length > 0 || !raw.available },
     };
   },
 };

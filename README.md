@@ -28,6 +28,14 @@ npm run collect -- --url "https://fr.zalando.ch/…" --headed --details 30
 
 The collector uses one browser page at a time, waits between requests, caps the number of products, and never performs account or checkout actions. Run `npm run collect -- --list-adapters` to inspect installed shops. Add another shop by implementing `ShopAdapter` under `collector/adapters/` and registering it in `collector/registry.ts`.
 
+To add current size availability to products already in the local catalog:
+
+```bash
+npm run collect -- --enrich-existing 50
+```
+
+Run it in bounded batches. The collector preserves existing decisions, scores, images, and board coordinates while enriching detail-page fields.
+
 ## Add references
 
 POST a reference to `http://localhost:8788/api/references` with a name and one or more image paths/URLs. References receive `kind: "reference"`, are included in PCA, and can carry the same tags, colors, fits, attributes, and vision scores as shop products.
@@ -50,4 +58,4 @@ npm run typecheck
 npm test
 ```
 
-See `docs/ARCHITECTURE.md` and `docs/FILTERS.md` for extension points and the filter contract.
+See `docs/ARCHITECTURE.md`, `docs/FILTERS.md`, and `docs/ROADMAP.md` for extension points, the filter contract, and upcoming sprints.

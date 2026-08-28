@@ -20,6 +20,9 @@ type SeedItem = {
   kind?: "shop" | "reference" | "owned";
   source?: string;
   materials?: string[];
+  sizes?: string[];
+  sizeAvailabilityKnown?: boolean;
+  available?: boolean;
 };
 
 type ApiProduct = {
@@ -39,6 +42,8 @@ type ApiProduct = {
   attributes: Record<string, unknown>;
   source: string;
   materials: string[];
+  sizes: string[];
+  available: boolean;
 };
 
 type VisualJobResponse = {
@@ -63,9 +68,9 @@ type PromptImage = {
 };
 
 const seedItems: SeedItem[] = [
-  { id: 1, brand: "Selected", name: "Veste worker raccourcie", price: 129, color: "Tabac", category: "Vestes", fit: "Courte", score: 94, x: 6, y: 8, crop: "4% 6%" },
-  { id: 2, brand: "Weekday", name: "Pantalon ample à pinces", price: 79, color: "Brun", category: "Pantalons", fit: "Large", score: 91, x: 28, y: 18, crop: "29% 9%" },
-  { id: 3, brand: "Massimo Dutti", name: "Maille texturée", price: 99, color: "Grège", category: "Mailles", fit: "Relax", score: 88, x: 52, y: 6, crop: "47% 8%" },
+  { id: 1, brand: "Selected", name: "Veste worker raccourcie", price: 129, color: "Tabac", category: "Vestes", fit: "Courte", score: 94, x: 6, y: 8, crop: "4% 6%", sizes: ["S", "M", "L"], sizeAvailabilityKnown: true, available: true },
+  { id: 2, brand: "Weekday", name: "Pantalon ample à pinces", price: 79, color: "Brun", category: "Pantalons", fit: "Large", score: 91, x: 28, y: 18, crop: "29% 9%", sizes: ["M", "L", "XL"], sizeAvailabilityKnown: true, available: true },
+  { id: 3, brand: "Massimo Dutti", name: "Maille texturée", price: 99, color: "Grège", category: "Mailles", fit: "Relax", score: 88, x: 52, y: 6, crop: "47% 8%", sizes: ["XL"], sizeAvailabilityKnown: true, available: true },
   { id: 4, brand: "Carhartt WIP", name: "Surchemise vieillie", price: 149, color: "Olive", category: "Vestes", fit: "Droite", score: 86, x: 73, y: 20, crop: "58% 58%" },
   { id: 5, brand: "ARKET", name: "Pantalon laine ample", price: 139, color: "Anthracite", category: "Pantalons", fit: "Large", score: 84, x: 16, y: 58, crop: "71% 19%" },
   { id: 6, brand: "COS", name: "Cardigan compact", price: 115, color: "Chocolat", category: "Mailles", fit: "Court", score: 82, x: 43, y: 55, crop: "86% 16%" },
@@ -109,7 +114,21 @@ function apiProductsToItems(items: ApiProduct[]): SeedItem[] {
     kind: item.kind,
     source: item.source,
     materials: item.materials,
+    sizes: item.sizes,
+    sizeAvailabilityKnown: item.attributes.sizeAvailabilityKnown === true,
+    available: item.available,
   }));
+}
+
+const standardSizes = ["XS", "S", "M", "L", "XL", "XXL"];
+
+function normalizedSize(value: string) {
+  return value.trim().toLocaleUpperCase().replace(/^TAILLE\s+/i, "");
+}
+
+function hasSize(item: SeedItem, requestedSize: string) {
+  const wanted = normalizedSize(requestedSize);
+  return (item.sizes ?? []).some((size) => normalizedSize(size) === wanted);
 }
 
 type AxisField = "pca" | "price" | "score";
@@ -144,6 +163,7 @@ export default function Home() {
   const [priceFilter, setPriceFilter] = useState("all");
   const [fitFilter, setFitFilter] = useState("all");
   const [materialFilter, setMaterialFilter] = useState("all");
+  const [sizeFilter, setSizeFilter] = useState("all");
   const [zoom, setZoom] = useState(1);
   const [dragging, setDragging] = useState(false);
   const atlasRef = useRef<HTMLDivElement>(null);
@@ -196,8 +216,30 @@ export default function Home() {
       };
       if (!aliases[materialFilter]?.some((term) => haystack.includes(term))) return false;
     }
+    if (sizeFilter === "known" && !item.sizeAvailabilityKnown) return false;
+    if (sizeFilter !== "all" && sizeFilter !== "known" && !hasSize(item, sizeFilter)) return false;
     return true;
-  }), [fitFilter, materialFilter, priceFilter, sourceFilter, visibleCatalog]);
+  }), [fitFilter, materialFilter, priceFilter, sizeFilter, sourceFilter, visibleCatalog]);
+  const sizeOptions = useMemo(() => {
+    const discovered = [...new Set(visibleCatalog.flatMap((item) => item.sizes ?? []).map(normalizedSize))];
+    return [...new Set([...standardSizes, ...discovered])].sort((left, right) => {
+      const leftStandard = standardSizes.indexOf(left);
+      const rightStandard = standardSizes.indexOf(right);
+      if (leftStandard >= 0 || rightStandard >= 0) {
+        if (leftStandard < 0) return 1;
+        if (rightStandard < 0) return -1;
+        return leftStandard - rightStandard;
+      }
+      return left.localeCompare(right, undefined, { numeric: true });
+    });
+  }, [visibleCatalog]);
+  const knownSizeCount = useMemo(
+    () => visibleCatalog.filter((item) => item.sizeAvailabilityKnown).length,
+    [visibleCatalog],
+  );
+  const sizeCounts = useMemo(() => Object.fromEntries(
+    sizeOptions.map((size) => [size, visibleCatalog.filter((item) => hasSize(item, size)).length]),
+  ), [sizeOptions, visibleCatalog]);
   const products = useMemo(
     () => arrangeItems(quickFilteredCatalog.filter((item) => activeFilter === "Tout" || item.category === activeFilter), xAxis, yAxis),
     [activeFilter, quickFilteredCatalog, xAxis, yAxis],
@@ -497,6 +539,7 @@ export default function Home() {
             <label className="quickFilter"><small>Prix</small><select value={priceFilter} onChange={(event) => setPriceFilter(event.target.value)}><option value="all">Tous</option><option value="under50">&lt; 50</option><option value="50to100">50–100</option><option value="100to180">100–180</option><option value="over180">&gt; 180</option></select></label>
             <label className="quickFilter"><small>Coupe</small><select value={fitFilter} onChange={(event) => setFitFilter(event.target.value)}><option value="all">Toutes</option><option value="large">Large</option><option value="courte">Courte</option><option value="droite">Droite</option><option value="unknown">Inconnue</option></select></label>
             <label className="quickFilter"><small>Matière</small><select value={materialFilter} onChange={(event) => setMaterialFilter(event.target.value)}><option value="all">Toutes</option><option value="knit">Maille</option><option value="linen">Lin</option><option value="cotton">Coton</option><option value="leather">Cuir</option></select></label>
+            <label className="quickFilter" title={`${knownSizeCount} articles avec disponibilité de taille vérifiée sur ${visibleCatalog.length}`}><small>Taille · {knownSizeCount}/{visibleCatalog.length}</small><select value={sizeFilter} onChange={(event) => setSizeFilter(event.target.value)} aria-label="Filtrer par taille disponible"><option value="all">Toutes</option><option value="known">Disponibilité connue ({knownSizeCount})</option>{sizeOptions.map((size) => <option value={size} key={size}>{size} ({sizeCounts[size]})</option>)}</select></label>
             <div className="aiComposer">
               <label className="aiFilter">
                 <span className="pulseDot" />
@@ -607,10 +650,21 @@ export default function Home() {
                   <div className="scoreRow"><span>{item.brand}</span><b>{item.score}</b></div>
                   <h3>{item.name}</h3>
                   <p>{item.reason ?? `${item.color} · ${item.fit}`}</p>
-                  <strong>{item.kind === "reference" ? "Ancre de style" : item.price == null ? "Prix inconnu" : `CHF ${item.price.toFixed(2)}`}</strong>
+                  <strong>
+                    {item.kind === "reference" ? "Ancre de style" : item.price == null ? "Prix inconnu" : `CHF ${item.price.toFixed(2)}`}
+                    {item.kind !== "reference" && item.sizeAvailabilityKnown && (
+                      <em className="sizeSummary"> · {(item.sizes ?? []).length > 0 ? (item.sizes ?? []).slice(0, 5).join(" ") : "épuisé"}</em>
+                    )}
+                  </strong>
                 </div>
               </article>
             ))}
+            {products.length === 0 && (
+              <div className="emptyBoard">
+                <strong>Aucun article confirmé{sizeFilter !== "all" && sizeFilter !== "known" ? ` en ${sizeFilter}` : ""}</strong>
+                <span>Les disponibilités inconnues restent exclues pour éviter les faux positifs.</span>
+              </div>
+            )}
             </div>
           </div>
 

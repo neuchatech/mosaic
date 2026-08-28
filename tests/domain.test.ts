@@ -10,6 +10,7 @@ import { filterSpecSchema } from "../src/domain/catalog";
 import { applyFilter } from "../src/domain/filter";
 import { compactProjection } from "../src/projection/compact";
 import { projectProducts } from "../src/projection/pca";
+import { normalizeZalandoSizes } from "../collector/adapters/zalando";
 
 test("nested filters can inspect standard, dynamic, and negated criteria", () => {
   const filter = filterSpecSchema.parse({
@@ -40,6 +41,26 @@ test("numeric filters do not treat a missing reference price as zero", () => {
     limit: 100
   });
   assert.equal(applyFilter([reference], filter).length, 0);
+});
+
+test("Zalando size capture keeps only available-looking garment sizes", () => {
+  assert.deepEqual(
+    normalizeZalandoSizes(["Taille: M", "XL disponible", "Choisir une taille", "48", "M", "EU 50"]),
+    ["M", "XL", "48", "EU 50"],
+  );
+});
+
+test("size filters match the recorded available sizes", () => {
+  const products = seedProducts.slice(0, 2).map((product, index) => ({
+    ...product,
+    sizes: index === 0 ? ["S", "M"] : ["XL"],
+  }));
+  const filter = filterSpecSchema.parse({
+    id: "size-m",
+    name: "M disponible",
+    where: { type: "clause", field: "sizes", operator: "contains", value: "M" },
+  });
+  assert.deepEqual(applyFilter(products, filter).map((product) => product.id), [products[0].id]);
 });
 
 test("compact projection assigns one in-bounds cell per visible product", () => {
