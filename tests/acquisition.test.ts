@@ -286,6 +286,38 @@ test("HTTP 429 pauses the same item before retrying instead of hammering later p
   await service.close();
 });
 
+test("a cooldown timer that wakes slightly early keeps waiting and resumes automatically", async () => {
+  const current = product("early-timer");
+  const repository = new MemoryRepository([current]);
+  let calls = 0;
+  let clock = Date.parse(observed);
+  const sleeps: number[] = [];
+  const service = new AcquisitionService(repository, {
+    fetcher: {
+      async fetch(target) {
+        calls += 1;
+        if (calls === 1) throw new AcquisitionBlockedError("Shop access stopped with HTTP 429; no bypass was attempted.");
+        return { url: target.url, name: target.productId, stockStatus: "unknown" };
+      },
+    },
+    sameDomainDelayMs: 0,
+    rateLimitCooldownMs: 30_000,
+    maxRateLimitRetries: 1,
+    now: () => new Date(clock),
+    sleep: async (milliseconds) => {
+      sleeps.push(milliseconds);
+      clock += sleeps.length === 1 ? milliseconds - 1 : milliseconds;
+    },
+    idFactory: ids(),
+  });
+  const started = service.start({ targets: [{ productId: current.id, url: current.url }] });
+  const finished = await service.waitFor(started.id);
+  assert.equal(finished.status, "succeeded");
+  assert.equal(calls, 2);
+  assert.deepEqual(sleeps, [30_000, 1]);
+  await service.close();
+});
+
 test("cancel aborts the active page best-effort and cancels queued items", async () => {
   const products = [product("active"), product("waiting")];
   const repository = new MemoryRepository(products);
@@ -341,6 +373,42 @@ test("same-domain requests observe the configured delay", async () => {
   const finished = await service.waitFor(started.id);
   assert.equal(finished.status, "succeeded");
   assert.deepEqual(sleeps, [1_500]);
+  await service.close();
+});
+
+test("size enrichment uses jitter and prioritizes saved, affordable, high-score items", async () => {
+  const products = [
+    product("expensive", { decision: "unseen", price: 350, scores: { visual_match: 99 } }),
+    product("low-score", { decision: "unseen", price: 90, scores: { visual_match: 40 } }),
+    product("high-score", { decision: "unseen", price: 150, scores: { visual_match: 92 } }),
+    product("saved", { decision: "saved", price: 250, scores: { visual_match: 30 } }),
+  ];
+  const repository = new MemoryRepository(products);
+  const calls: string[] = [];
+  let clock = Date.parse(observed);
+  const sleeps: number[] = [];
+  const service = new AcquisitionService(repository, {
+    fetcher: {
+      async fetch(target) {
+        calls.push(target.productId);
+        return { url: target.url, name: target.productId, stockStatus: "unknown" };
+      },
+    },
+    sameDomainDelayMs: 8_000,
+    sameDomainJitterMs: 4_000,
+    random: () => .5,
+    now: () => new Date(clock),
+    sleep: async (milliseconds) => { sleeps.push(milliseconds); clock += milliseconds; },
+    idFactory: ids(),
+  });
+  const started = service.start({
+    source: "size-enrichment",
+    targets: products.map(({ id, url }) => ({ productId: id, url })),
+  });
+  const finished = await service.waitFor(started.id);
+  assert.equal(finished.status, "succeeded");
+  assert.deepEqual(calls, ["saved", "high-score", "low-score", "expensive"]);
+  assert.deepEqual(sleeps, [10_000, 10_000, 10_000]);
   await service.close();
 });
 

@@ -861,6 +861,7 @@ type AtlasAcquisitionJob = {
   cancelled?: number;
   message?: string;
   error?: string;
+  cooldownUntil?: string;
 };
 
 type AtlasDiscoveryStatus = "queued" | "running" | "succeeded" | "failed" | "blocked" | "cancelled";
@@ -1274,6 +1275,19 @@ function atlasTimestamp(value?: string | null) {
   return `il y a ${Math.round(seconds / 86400)} j`;
 }
 
+function atlasCooldownTimestamp(value?: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString("fr-CH", {
+    timeZone: "Europe/Zurich",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "short",
+  });
+}
+
 function atlasIsStale(value?: string | null, days = 2) {
   if (!value) return true;
   const time = new Date(value).getTime();
@@ -1405,6 +1419,26 @@ export default function Home() {
 
   useEffect(() => {
     const controller = new AbortController();
+    const monitorRecoveredRefresh = async (initialJob: AtlasAcquisitionJob) => {
+      let job = initialJob;
+      setRefreshRecovered(false);
+      setRefreshJob(job);
+      while (!controller.signal.aborted && !(job.terminal ?? ATLAS_TERMINAL_REFRESH_STATUSES.includes(job.status))) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (controller.signal.aborted) return;
+        const poll = await fetch(`${ATLAS_API}/acquisition/jobs/${job.id}`, { signal: controller.signal });
+        if (!poll.ok) throw new Error("job unavailable");
+        job = await poll.json() as AtlasAcquisitionJob;
+        setRefreshJob(job);
+      }
+      if (!controller.signal.aborted && (job.status === "complete" || (job.succeeded ?? 0) > 0)) {
+        const response = await fetch(`${ATLAS_API}/products?limit=10000`, { signal: controller.signal });
+        if (response.ok) {
+          const items = await response.json() as AtlasApiProduct[];
+          setCatalogItems((current) => atlasMergeItems(items, current));
+        }
+      }
+    };
     Promise.allSettled([
       fetch(`${ATLAS_API}/products?limit=10000`, { signal: controller.signal }).then(async (response) => {
         if (!response.ok) throw new Error("catalog unavailable");
@@ -1426,7 +1460,17 @@ export default function Home() {
         if (!response.ok) return;
         const jobs = await response.json() as AtlasAcquisitionJob[];
         const recoverable = jobs.find((job) => job.canResume && ["queued", "running", "error"].includes(job.status));
-        if (recoverable) { setRefreshJob(recoverable); setRefreshRecovered(true); }
+        if (!recoverable) return;
+        if (["queued", "running"].includes(recoverable.status)) {
+          void monitorRecoveredRefresh(recoverable).catch((error) => {
+            if (!(error instanceof DOMException && error.name === "AbortError")) {
+              setToast(`Vérification interrompue — ${error instanceof Error ? error.message : "reprise disponible"}`);
+            }
+          });
+        } else {
+          setRefreshJob(recoverable);
+          setRefreshRecovered(true);
+        }
       }),
       fetch(`${ATLAS_API}/discovery/jobs?limit=20`, { signal: controller.signal }).then(async (response) => {
         if (!response.ok) return;
@@ -2441,6 +2485,8 @@ export default function Home() {
   const progressDone = refreshJob?.completed ?? refreshJob?.processed ?? 0;
   const progressTotal = refreshJob?.total ?? 0;
   const refreshNeedsResume = refreshRecovered || ["error", "blocked"].includes(refreshJob?.status ?? "");
+  const refreshCooldownAt = atlasCooldownTimestamp(refreshJob?.cooldownUntil);
+  const refreshCooldownActive = Boolean(refreshCooldownAt && Date.parse(refreshJob?.cooldownUntil ?? "") > Date.now());
   const discoveryTotal = discoveryJobs.reduce((sum, job) => sum + job.total, 0);
   const discoveryCompleted = discoveryJobs.reduce((sum, job) => sum + job.completed, 0);
   const discoveryProgress = discoveryTotal
@@ -2581,7 +2627,7 @@ export default function Home() {
         </div>
 
         <div className="operationStack">
-          {refreshJob && !["complete", "cancelled"].includes(refreshJob.status) && <div className={`jobProgress${["error", "blocked"].includes(refreshJob.status) ? " jobError" : ""}`} role="status"><span style={{ width: progressTotal ? `${Math.min(100, progressDone / progressTotal * 100)}%` : "18%" }} /><b>{["error", "blocked"].includes(refreshJob.status) ? refreshJob.error ?? "Certaines fiches sont bloquées" : refreshRecovered ? "Une vérification locale peut être reprise" : refreshJob.message ?? "Fiches en cours de vérification"}</b><em>{progressTotal ? `${progressDone}/${progressTotal}` : refreshJob.status}</em>{refreshNeedsResume ? refreshJob.canResume !== false && <button onClick={() => void retryAtlasRefresh()}>Reprendre</button> : <button onClick={() => void cancelAtlasRefresh()}>Arrêter</button>}</div>}
+          {refreshJob && !["complete", "cancelled"].includes(refreshJob.status) && <div className={`jobProgress${["error", "blocked"].includes(refreshJob.status) ? " jobError" : ""}`} role="status"><span style={{ width: progressTotal ? `${Math.min(100, progressDone / progressTotal * 100)}%` : "18%" }} /><b>{refreshCooldownActive ? `Pause Zalando · reprise automatique à ${refreshCooldownAt} (heure suisse)` : ["error", "blocked"].includes(refreshJob.status) ? refreshJob.error ?? "Certaines fiches sont bloquées" : refreshRecovered ? "Une vérification locale peut être reprise" : refreshJob.message ?? "Fiches en cours de vérification"}</b><em>{progressTotal ? `${progressDone}/${progressTotal}` : refreshJob.status}</em>{refreshNeedsResume ? refreshJob.canResume !== false && <button onClick={() => void retryAtlasRefresh()}>Reprendre</button> : <button onClick={() => void cancelAtlasRefresh()}>Arrêter</button>}</div>}
           {discoveryJobs.length > 0 && <div className={`discoveryProgress${discoveryHasFailures ? " discoveryError" : discoveryWasCancelled ? " discoveryCancelled" : ""}`} role="status" aria-live="polite" title={discoveryPlan?.description}>
             <span className="discoveryFill" style={{ width: `${Math.round(discoveryProgress * 100)}%` }} />
             <div className="discoveryPlanInfo"><b>{discoveryPlan?.name ?? "Découverte agentique"}</b><small>Tailles {discoverySizes} · {discoverySources.join(" + ") || "shops locaux"}{discoveryPlan?.targetCount ? ` · cible ${discoveryPlan.targetCount}` : ""} · {discoveryStatusText}</small></div>

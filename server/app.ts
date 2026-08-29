@@ -125,10 +125,14 @@ function createDiscoveryService(
 
 export function createApp(
   repository = new CatalogRepository(),
-  acquisition = new AcquisitionService(repository, { sameDomainDelayMs: 4_000 }),
+  acquisition = new AcquisitionService(repository, { sameDomainDelayMs: 8_000, sameDomainJitterMs: 4_000 }),
   discovery = createDiscoveryService(repository, acquisition),
 ) {
   const app = new Hono();
+  // A persisted size scan is expected to keep running in the background after
+  // a local API reload. Only rate-limit cooldowns are restored automatically;
+  // login/CAPTCHA blocks remain manual.
+  queueMicrotask(() => acquisition.recoverLatestSizeEnrichment());
   let interactiveDiscovery: DiscoveryService | null = null;
   const interactiveDiscoveryJobs = new Set<string>();
   const getInteractiveDiscovery = () => {

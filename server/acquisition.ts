@@ -45,6 +45,7 @@ export type AcquisitionJobSnapshot = {
   finishedAt?: string;
   updatedAt: string;
   error?: string;
+  cooldownUntil?: string;
 };
 
 export type AcquisitionClientStatus = "queued" | "running" | "complete" | "error" | "cancelled";
@@ -142,11 +143,13 @@ type MutableJob = AcquisitionJobSnapshot & {
 type AcquisitionServiceOptions = {
   fetcher?: DetailFetcher;
   sameDomainDelayMs?: number;
+  sameDomainJitterMs?: number;
   rateLimitCooldownMs?: number;
   maxRateLimitRetries?: number;
   maxRetries?: number;
   now?: () => Date;
   sleep?: (milliseconds: number) => Promise<void>;
+  random?: () => number;
   idFactory?: () => string;
 };
 
@@ -178,6 +181,24 @@ function asIso(value: string | null | undefined, fallback?: string): string | nu
 
 function nonEmpty(value: string | undefined, fallback: string): string {
   return value?.trim() ? value : fallback;
+}
+
+function cooldownDeadline(...messages: Array<string | null | undefined>): string | undefined {
+  for (const message of messages) {
+    const match = message?.match(/(?:paused|cooldown active) until\s+([^\s;]+)/i);
+    if (!match?.[1]) continue;
+    const candidate = match[1].replace(/[.,;]+$/, "");
+    if (!Number.isNaN(Date.parse(candidate))) return new Date(candidate).toISOString();
+  }
+  return undefined;
+}
+
+function productPriority(product: Product | null): [number, number, number, string] {
+  if (!product) return [2, 2, 0, ""];
+  const decisionRank = product.decision === "saved" ? 0 : 1;
+  const priceRank = product.price !== null && product.price <= 200 ? 0 : product.price === null ? 1 : 2;
+  const score = Math.max(0, ...Object.values(product.scores).filter(Number.isFinite));
+  return [decisionRank, priceRank, -score, product.importedAt];
 }
 
 /**
@@ -300,13 +321,17 @@ export function acquisitionClientView(job: AcquisitionJobSnapshot): AcquisitionC
       ? "error"
       : job.status;
   const problem = job.items.find((item) => item.status === "failed" || item.status === "blocked")?.error;
+  const parsedCooldown = job.cooldownUntil ?? cooldownDeadline(job.error, ...job.items.map((item) => item.error));
+  const cooldownUntil = parsedCooldown && Date.parse(parsedCooldown) > Date.now() ? parsedCooldown : undefined;
   const message = status === "complete"
     ? `${job.succeeded}/${job.total} fiches rafraîchies`
     : status === "error"
       ? `${job.succeeded} réussie${job.succeeded === 1 ? "" : "s"}, ${job.failed + job.blocked} à reprendre`
       : status === "cancelled"
         ? `${job.succeeded} réussie${job.succeeded === 1 ? "" : "s"} avant l’arrêt`
-        : `${job.completed}/${job.total} fiches vérifiées`;
+        : cooldownUntil && Date.parse(cooldownUntil) > Date.now()
+          ? "Pause Zalando — reprise automatique"
+          : `${job.completed}/${job.total} fiches vérifiées`;
   return {
     ...job,
     status,
@@ -315,6 +340,7 @@ export function acquisitionClientView(job: AcquisitionJobSnapshot): AcquisitionC
     terminal: status === "complete" || status === "error" || status === "cancelled",
     partial: job.succeeded > 0 && status !== "complete",
     canResume: job.status === "queued" || job.status === "running" || job.status === "failed" || job.status === "blocked",
+    ...(cooldownUntil ? { cooldownUntil } : {}),
     ...(status === "error" && !job.error && problem ? { error: problem } : {}),
   };
 }
@@ -322,11 +348,13 @@ export function acquisitionClientView(job: AcquisitionJobSnapshot): AcquisitionC
 export class AcquisitionService {
   private readonly fetcher: DetailFetcher;
   private readonly sameDomainDelayMs: number;
+  private readonly sameDomainJitterMs: number;
   private readonly rateLimitCooldownMs: number;
   private readonly maxRateLimitRetries: number;
   private readonly maxRetries: number;
   private readonly now: () => Date;
   private readonly sleep: (milliseconds: number) => Promise<void>;
+  private readonly random: () => number;
   private readonly idFactory: () => string;
   private readonly jobs = new Map<string, MutableJob>();
   private readonly listeners = new Set<(job: AcquisitionJobSnapshot) => void>();
@@ -339,16 +367,19 @@ export class AcquisitionService {
   constructor(private readonly repository: AcquisitionRepository, options: AcquisitionServiceOptions = {}) {
     this.fetcher = options.fetcher ?? new PlaywrightDetailFetcher();
     this.sameDomainDelayMs = Math.max(0, options.sameDomainDelayMs ?? 5_000);
+    this.sameDomainJitterMs = Math.max(0, options.sameDomainJitterMs ?? 0);
     this.rateLimitCooldownMs = Math.max(0, options.rateLimitCooldownMs ?? 5 * 60_000);
     this.maxRateLimitRetries = Math.max(0, options.maxRateLimitRetries ?? 12);
     this.maxRetries = Math.min(2, Math.max(0, options.maxRetries ?? 2));
     this.now = options.now ?? (() => new Date());
     this.sleep = options.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+    this.random = options.random ?? Math.random;
     this.idFactory = options.idFactory ?? randomUUID;
   }
 
   start(input: { targets: AcquisitionTarget[]; source?: string }): AcquisitionJobSnapshot {
     const targets = validateTargets(input.targets);
+    if (input.source === "size-enrichment") this.prioritizeTargets(targets);
     for (const target of targets) {
       const product = this.repository.getProduct(target.productId);
       if (!product) throw new Error(`Unknown product: ${target.productId}`);
@@ -411,6 +442,35 @@ export class AcquisitionService {
       .map(publicSnapshot);
   }
 
+  /**
+   * Recover only the newest persisted size scan. Cooldowns are restored and
+   * waited out; CAPTCHA/login blocks remain manual and are never retried here.
+   */
+  recoverLatestSizeEnrichment(): AcquisitionJobSnapshot | null {
+    const stored = (this.repository.listAcquisitionJobs?.({ limit: 100 }) ?? [])
+      .filter((job) => job.source === "size-enrichment")
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .find((job) => job.status === "queued" || job.status === "running"
+        || (job.status === "blocked" && /(?:HTTP 429|rate-limit cooldown)/i.test(job.error ?? "")));
+    if (!stored || this.activeRuns.has(stored.id)) return stored ? this.get(stored.id) : null;
+    const job = this.requireJob(stored.id);
+    const deadline = cooldownDeadline(job.error, ...job.items.map((item) => item.error));
+    if (deadline) {
+      job.cooldownUntil = deadline;
+      const blockedUntil = Date.parse(deadline);
+      for (const item of job.items) {
+        if (item.status === "queued" || item.status === "running" || item.status === "blocked") {
+          this.blockedHostsUntil.set(new URL(item.url).hostname, blockedUntil);
+        }
+      }
+    }
+    try {
+      return job.status === "blocked" ? this.retry(job.id) : this.resume(job.id);
+    } catch {
+      return publicSnapshot(job);
+    }
+  }
+
   subscribe(listener: (job: AcquisitionJobSnapshot) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -459,6 +519,7 @@ export class AcquisitionService {
     delete job.error;
     job.updatedAt = now;
     this.repository.retryAcquisitionItems?.(job.id, retryable.map((item) => item.id));
+    if (job.source === "size-enrichment") this.prioritizeItems(job.items);
     this.recount(job);
     this.emit(job);
     this.enqueue(job);
@@ -500,6 +561,7 @@ export class AcquisitionService {
     delete job.finishedAt;
     delete job.error;
     this.repository.updateAcquisitionJob?.(job.id, { status: "queued", error: null });
+    if (job.source === "size-enrichment") this.prioritizeItems(job.items);
     this.recount(job);
     this.emit(job);
     this.enqueue(job);
@@ -552,6 +614,9 @@ export class AcquisitionService {
       ...(stored.finishedAt ? { finishedAt: stored.finishedAt } : {}),
       updatedAt: stored.updatedAt,
       ...(stored.error ? { error: stored.error } : {}),
+      ...(cooldownDeadline(stored.error, ...items.map((item) => item.error))
+        ? { cooldownUntil: cooldownDeadline(stored.error, ...items.map((item) => item.error)) }
+        : {}),
       cancelRequested: false,
       abortController: new AbortController(),
     };
@@ -616,7 +681,7 @@ export class AcquisitionService {
         return;
       }
       try {
-        await this.throttle(item.url);
+        await this.throttle(item.url, job.abortController.signal);
         item.attempts += 1;
         this.repository.recordAcquisitionItemAttempt?.(job.id, item.id);
         const raw = await this.fetcher.fetch(item, { signal: job.abortController.signal });
@@ -654,13 +719,19 @@ export class AcquisitionService {
             this.blockedHostsUntil.set(host, blockedUntil);
             rateLimitRetries += 1;
             item.error = `${error.message} Paused until ${new Date(blockedUntil).toISOString()}.`;
+            job.error = item.error;
+            job.cooldownUntil = new Date(blockedUntil).toISOString();
+            this.repository.updateAcquisitionJob?.(job.id, { status: "running", error: item.error });
             this.emit(job);
             try {
-              await this.waitForCooldown(job.abortController.signal);
+              await this.waitUntil(blockedUntil, job.abortController.signal);
             } catch {
               this.cancelRunningItem(job, item);
               return;
             }
+            delete job.cooldownUntil;
+            delete job.error;
+            this.repository.updateAcquisitionJob?.(job.id, { status: "running", error: null });
             continue;
           }
           item.status = "blocked";
@@ -702,24 +773,29 @@ export class AcquisitionService {
     this.emit(job);
   }
 
-  private async throttle(url: string): Promise<void> {
+  private async throttle(url: string, signal: AbortSignal): Promise<void> {
     const host = new URL(url).hostname;
-    const now = this.now().getTime();
     const blockedUntil = this.blockedHostsUntil.get(host) ?? 0;
-    if (blockedUntil > now) {
-      throw new AcquisitionBlockedError(`Shop rate-limit cooldown active until ${new Date(blockedUntil).toISOString()}; resume later.`);
-    }
-    if (blockedUntil) this.blockedHostsUntil.delete(host);
+    if (blockedUntil > this.now().getTime()) await this.waitUntil(blockedUntil, signal);
+    if (blockedUntil && blockedUntil <= this.now().getTime()) this.blockedHostsUntil.delete(host);
+    const now = this.now().getTime();
     const last = this.lastRequestAt.get(host);
     if (last !== undefined) {
-      const remaining = this.sameDomainDelayMs - (now - last);
-      if (remaining > 0) await this.sleep(remaining);
+      const jitter = Math.round(this.random() * this.sameDomainJitterMs);
+      const remaining = this.sameDomainDelayMs + jitter - (now - last);
+      if (remaining > 0) await this.waitDelay(remaining, signal);
     }
     this.lastRequestAt.set(host, this.now().getTime());
   }
 
-  private async waitForCooldown(signal: AbortSignal): Promise<void> {
-    if (this.rateLimitCooldownMs <= 0) return;
+  private async waitUntil(deadline: number, signal: AbortSignal): Promise<void> {
+    while (deadline > this.now().getTime()) {
+      await this.waitDelay(deadline - this.now().getTime(), signal);
+    }
+  }
+
+  private async waitDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+    if (milliseconds <= 0) return;
     await new Promise<void>((resolve, reject) => {
       let settled = false;
       const finish = (callback: () => void) => {
@@ -730,8 +806,28 @@ export class AcquisitionService {
       };
       const onAbort = () => finish(() => reject(new AcquisitionCancelledError("Acquisition cancelled during shop cooldown.")));
       signal.addEventListener("abort", onAbort, { once: true });
-      void this.sleep(this.rateLimitCooldownMs).then(() => finish(resolve), (error) => finish(() => reject(error)));
+      void this.sleep(milliseconds).then(() => finish(resolve), (error) => finish(() => reject(error)));
     });
+  }
+
+  private prioritizeTargets(targets: AcquisitionTarget[]): void {
+    targets.sort((left, right) => this.compareProducts(left.productId, right.productId));
+  }
+
+  private prioritizeItems(items: AcquisitionItemSnapshot[]): void {
+    items.sort((left, right) => this.compareProducts(left.productId, right.productId));
+  }
+
+  private compareProducts(leftId: string, rightId: string): number {
+    const left = productPriority(this.repository.getProduct(leftId));
+    const right = productPriority(this.repository.getProduct(rightId));
+    for (let index = 0; index < left.length; index += 1) {
+      const leftValue = left[index]!;
+      const rightValue = right[index]!;
+      if (leftValue < rightValue) return -1;
+      if (leftValue > rightValue) return 1;
+    }
+    return leftId.localeCompare(rightId);
   }
 
   private recount(job: MutableJob): void {
