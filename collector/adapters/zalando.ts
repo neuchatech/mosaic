@@ -44,6 +44,12 @@ function priceFromText(text: string): number | null {
   return Number(match[1].replace(/[’']/g, "").replace(",", "."));
 }
 
+function pricesFromText(text: string): number[] {
+  return [...text.matchAll(/(?:CHF|Fr\.?)[\s\u00a0]*([0-9'’.,]+)/gi)]
+    .map((match) => Number(match[1].replace(/[’']/g, "").replace(",", ".")))
+    .filter(Number.isFinite);
+}
+
 export const zalandoAdapter: ShopAdapter = {
   id: "zalando-ch",
   label: "Zalando Suisse",
@@ -54,33 +60,42 @@ export const zalandoAdapter: ShopAdapter = {
   async extractListing(page) {
     const cards = await page.locator("article").evaluateAll((articles) =>
       articles.flatMap((article) => {
-        const link = article.querySelector<HTMLAnchorElement>('a[href*=".html"]');
+        const heading = article.querySelector("h3");
+        const link = heading?.closest<HTMLAnchorElement>('a[href*=".html"]')
+          ?? article.querySelector<HTMLAnchorElement>('a[href*=".html"]');
         const image = article.querySelector<HTMLImageElement>("img");
-        const text = (article.textContent ?? "").split("\n").map((line) => line.trim()).filter(Boolean);
-        if (!link || text.length === 0) return [];
+        const headingParts = Array.from(heading?.children ?? [])
+          .map((node) => (node.textContent ?? "").trim())
+          .filter(Boolean);
+        const brand = headingParts[0] ?? "";
+        const name = headingParts.slice(1).join(" ") || (heading?.textContent ?? image?.alt ?? "").trim();
+        const text = (article.textContent ?? "").trim();
+        if (!link || !name || !text) return [];
         return [{
           url: link.href,
           image: image?.currentSrc || image?.src || "",
           alt: image?.alt || "",
+          brand,
+          name,
           text,
         }];
       }),
     );
 
     return cards.map((card) => {
-      const useful = card.text.filter((line) => !/^(nouveau|promo|exclusivité|plus durable)$/i.test(line));
-      const priceLine = useful.find((line) => /CHF|Fr\.?/i.test(line)) ?? "";
-      const price = priceFromText(priceLine);
+      const prices = pricesFromText(card.text);
+      const price = prices[0] ?? priceFromText(card.text);
       const sourceId = new URL(card.url).pathname.split("/").pop()?.replace(/\.html$/, "");
       return {
         sourceId,
         url: card.url,
-        brand: useful[0] ?? "Unknown",
-        name: useful[1] ?? card.alt ?? useful[0] ?? "Article Zalando",
+        brand: card.brand || "Unknown",
+        name: card.name || card.alt || "Article Zalando",
         price,
+        originalPrice: prices.length > 1 ? prices.at(-1) : null,
         currency: "CHF",
         images: card.image ? [card.image] : [],
-        attributes: { listingText: useful.slice(0, 12) },
+        attributes: { listingText: card.text.slice(0, 500) },
       };
     });
   },

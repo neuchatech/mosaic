@@ -17,6 +17,7 @@
     "db:generate": "drizzle-kit generate",
     "db:seed": "tsx scripts/seed.ts",
     "project": "tsx scripts/project.ts",
+    "catalog:normalize": "tsx scripts/normalize-catalog.ts",
     "collect": "tsx collector/cli.ts",
     "mcp": "tsx mcp/index.ts"
   },

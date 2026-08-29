@@ -84,10 +84,17 @@ const crawler = new PlaywrightCrawler({
       return;
     }
 
+    // Zalando hydrates its product grid after the initial navigation event.
+    // Waiting for the first real product link avoids treating a healthy page
+    // as an empty listing on fast local runs.
+    await page.locator('article a[href*=".html"]').first()
+      .waitFor({ state: "attached", timeout: 15_000 })
+      .catch(() => undefined);
     for (let index = 0; index < scrolls; index += 1) {
       await page.mouse.wheel(0, 900);
       await page.waitForTimeout(450);
     }
+    await page.waitForTimeout(750);
     const listingProducts = (await requestAdapter.extractListing(page)).slice(0, maxProducts);
     for (const product of listingProducts) collected.set(product.url, product);
     log.info(`Found ${collected.size} unique product cards.`);

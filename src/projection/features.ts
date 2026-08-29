@@ -1,10 +1,10 @@
 import type { Product } from "../domain/catalog";
 
 const dimensions = {
-  categories: ["vestes", "pantalons", "mailles", "chemises", "t-shirts", "chaussures"],
+  categories: ["vestes", "pantalons", "mailles", "chemises", "t-shirts", "chaussures", "accessoires"],
   colors: ["brown", "beige", "green", "blue", "grey", "black", "white"],
   fits: ["cropped", "wide", "relaxed", "straight", "slim", "oversized"],
-  tags: ["tailored", "textured", "washed", "layering", "minimal", "utility", "timeless", "casual"],
+  tags: ["tailored", "textured", "washed", "layering", "minimal", "utility", "timeless", "casual", "headwear", "jewelry", "bags", "belts", "scarves", "eyewear"],
 };
 
 function oneHot(value: string, vocabulary: string[]): number[] {

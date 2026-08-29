@@ -12,6 +12,7 @@ import { applyFilter } from "../src/domain/filter";
 import { compactProjection } from "../src/projection/compact";
 import { projectProducts } from "../src/projection/pca";
 import { normalizeZalandoSizes } from "../collector/adapters/zalando";
+import { guessCategory, guessColorFamily, guessFit, guessTags } from "../collector/normalize";
 
 test("nested filters can inspect standard, dynamic, and negated criteria", () => {
   const filter = filterSpecSchema.parse({
@@ -49,6 +50,31 @@ test("Zalando size capture keeps only available-looking garment sizes", () => {
     normalizeZalandoSizes(["Taille: M", "XL disponible", "Choisir une taille", "48", "M", "EU 50"]),
     ["M", "XL", "48", "EU 50"],
   );
+});
+
+test("catalog normalization separates footwear and accessories", () => {
+  assert.equal(guessCategory("Leather loafer - dark brown"), "Chaussures");
+  assert.equal(guessCategory("Ceinture tressée en cuir"), "Accessoires");
+  assert.equal(guessCategory("Crossbody bag - olive"), "Accessoires");
+  assert.equal(guessCategory("Pantalon wide leg"), "Pantalons");
+  assert.equal(guessCategory("TAILORED BAGGY - Stoffhose - dark grey"), "Pantalons");
+  assert.equal(guessCategory("BOOTCUT - Jeans - indigo"), "Pantalons");
+  assert.equal(guessCategory("BELTED WIDE LEG TROUSERS - brown"), "Pantalons");
+  assert.equal(guessCategory("BASKETBALL SHORTS - navy"), "Pantalons");
+  assert.equal(guessCategory("SHORT SLEEVE SHIRT - white"), "Chemises");
+  assert.equal(guessCategory("LOCKERE STOFFHOSE - braun"), "Pantalons");
+  assert.equal(guessCategory("STRICKJACKE - beige"), "Mailles");
+  assert.equal(guessCategory("PLEATED TWILL - Anzughose - navy"), "Pantalons");
+  assert.equal(guessCategory("MASSUM - Gilet - dk brown mix"), "Mailles");
+  assert.equal(guessCategory("CITY RETRO - Baskets basses - sage"), "Chaussures");
+  assert.equal(guessCategory("Langarmshirt - off white"), "T-shirts");
+  assert.equal(guessColorFamily("Cardigan chocolate brown"), "brown");
+  assert.equal(guessColorFamily("Sneaker navy blue"), "blue");
+  assert.equal(guessColorFamily("Collier gold-coloured"), "beige");
+  assert.equal(guessFit("Loose pleated trousers"), "wide");
+  assert.deepEqual(guessTags("Vintage washed chore jacket"), ["washed", "utility"]);
+  assert.deepEqual(guessTags("Bonnet noir"), ["headwear"]);
+  assert.deepEqual(guessTags("Collier silver-coloured"), ["jewelry"]);
 });
 
 test("size filters match the recorded available sizes", () => {

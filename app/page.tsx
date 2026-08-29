@@ -157,6 +157,26 @@ function arrangeItems(items: SeedItem[], xAxis: AxisField, yAxis: AxisField): Se
     || axisValue(left, xAxis, "x") - axisValue(right, xAxis, "x"));
 }
 
+function applyNaturalPreviewGeometry(card: HTMLElement) {
+  const image = card.querySelector<HTMLImageElement>(".productImage img");
+  const baseWidth = card.offsetWidth;
+  const baseHeight = card.offsetHeight;
+  if (!image?.naturalWidth || !image.naturalHeight || !baseWidth || !baseHeight) return false;
+  const naturalRatio = image.naturalWidth / image.naturalHeight;
+  const baseRatio = baseWidth / baseHeight;
+  const targetWidth = naturalRatio > baseRatio ? baseHeight * naturalRatio : baseWidth;
+  const targetHeight = naturalRatio > baseRatio ? baseHeight : baseWidth / naturalRatio;
+  card.style.setProperty("--hover-width", `${Math.max(baseWidth, targetWidth)}px`);
+  card.style.setProperty("--hover-height", `${Math.max(baseHeight, targetHeight)}px`);
+  return true;
+}
+
+function clearNaturalPreviewGeometry(card: HTMLElement | null) {
+  card?.style.removeProperty("--hover-width");
+  card?.style.removeProperty("--hover-height");
+  card?.style.removeProperty("--hover-scale");
+}
+
 export function LegacyHome() {
   const [activeFilter, setActiveFilter] = useState("Tout");
   const [liked, setLiked] = useState<Set<number>>(() => new Set([1, 2, 4]));
@@ -185,6 +205,7 @@ export function LegacyHome() {
   const zoomScrollRef = useRef<{ left: number; top: number } | null>(null);
   const dragRef = useRef<{ x: number; y: number; left: number; top: number; pointerId: number; captured: boolean } | null>(null);
   const suppressProductClickRef = useRef(false);
+  const legacyHoverCardRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -325,6 +346,8 @@ export function LegacyHome() {
 
   function startPan(event: ReactPointerEvent<HTMLDivElement>) {
     if (mode !== "space" || (event.target as HTMLElement).closest("button, input")) return;
+    clearNaturalPreviewGeometry(legacyHoverCardRef.current);
+    legacyHoverCardRef.current = null;
     dragRef.current = {
       x: event.clientX,
       y: event.clientY,
@@ -362,20 +385,16 @@ export function LegacyHome() {
   }
 
   function prepareNaturalPreview(event: ReactPointerEvent<HTMLElement>) {
-    if (mode !== "space" || dragging) return;
-    const card = event.currentTarget;
-    const image = card.querySelector("img");
-    if (!image?.naturalWidth || !image.naturalHeight) return;
-    const baseWidth = card.offsetWidth;
-    const baseHeight = card.offsetHeight;
-    if (!baseWidth || !baseHeight) return;
-    const ratio = image.naturalWidth / image.naturalHeight;
-    const currentRatio = baseWidth / baseHeight;
-    const targetWidth = ratio >= currentRatio ? baseHeight * ratio : baseWidth;
-    const targetHeight = ratio >= currentRatio ? baseHeight : baseWidth / ratio;
-    card.style.setProperty("--hover-width", `${targetWidth}px`);
-    card.style.setProperty("--hover-height", `${targetHeight}px`);
+    if (mode !== "space" || dragging || window.matchMedia("(hover: none)").matches) return;
+    legacyHoverCardRef.current = event.currentTarget;
+    applyNaturalPreviewGeometry(event.currentTarget);
+    event.currentTarget.style.setProperty("--hover-scale", "1.2");
   }
+
+  useEffect(() => {
+    clearNaturalPreviewGeometry(legacyHoverCardRef.current);
+    legacyHoverCardRef.current = null;
+  }, [mode, zoom]);
 
   async function askCodex() {
     if (!aiPrompt.trim()) return;
@@ -629,8 +648,8 @@ export function LegacyHome() {
                 title={item.reason}
                 onPointerEnter={prepareNaturalPreview}
                 onPointerLeave={(event) => {
-                  event.currentTarget.style.removeProperty("--hover-width");
-                  event.currentTarget.style.removeProperty("--hover-height");
+                  clearNaturalPreviewGeometry(event.currentTarget);
+                  if (legacyHoverCardRef.current === event.currentTarget) legacyHoverCardRef.current = null;
                 }}
               >
                 <button className={liked.has(item.id) ? "heart liked" : "heart"} onClick={() => toggleLiked(item.id)} aria-label="Ajouter aux favoris">
@@ -656,7 +675,10 @@ export function LegacyHome() {
                     backgroundPosition: item.crop,
                   }}
                 >
-                  {item.image && <img src={item.image} alt="" loading="lazy" decoding="async" />}
+                  {item.image && <img src={item.image} alt="" loading="lazy" decoding="async" onLoad={(event) => {
+                    const card = event.currentTarget.closest<HTMLElement>(".productCard");
+                    if (mode === "space" && card && legacyHoverCardRef.current === card && card.matches(":hover") && card.style.getPropertyValue("--hover-scale")) applyNaturalPreviewGeometry(card);
+                  }} />}
                 </div>
                 <div className="productMeta">
                   <div className="scoreRow"><span>{item.brand}</span><b>{item.score}</b></div>
@@ -857,7 +879,7 @@ const atlasSeedItems: AtlasItem[] = [
   { id: "demo_ref_volume", brand: "Référence", name: "Volume pantalon ample", price: null, currency: "CHF", color: "Terre", category: "Références", fit: "Large", score: 96, x: 61, y: 43, crop: "72% 17%", images: [], kind: "reference", decision: "saved", source: "reference", materials: [], sizes: [], tags: [], sizeAvailabilityKnown: false, available: true, stockStatus: "not_applicable" },
 ];
 
-const atlasCategories = ["Tout", "Vestes", "Pantalons", "Mailles", "Chemises", "T-shirts", "Chaussures", "Références"];
+const atlasCategories = ["Tout", "Vestes", "Pantalons", "Mailles", "Chemises", "T-shirts", "Chaussures", "Accessoires", "Références"];
 const atlasSizes = ["XS", "S", "M", "L", "XL", "XXL"];
 const atlasScopes: { id: AtlasScope; label: string; icon: string }[] = [
   { id: "catalogue", label: "Catalogue", icon: "▦" },
@@ -1401,39 +1423,32 @@ export default function Home() {
       atlasHoverTimerRef.current = null;
     }
     const activeCard = card ?? atlasHoverCardRef.current;
-    activeCard?.style.removeProperty("--hover-width");
-    activeCard?.style.removeProperty("--hover-height");
+    clearNaturalPreviewGeometry(activeCard);
     if (!card || atlasHoverCardRef.current === card) atlasHoverCardRef.current = null;
   }
 
   function prepareAtlasPreview(event: ReactPointerEvent<HTMLElement>) {
     cancelAtlasPreview();
-    if (mode !== "space" || atlasDraggingRef.current || window.matchMedia("(hover: none)").matches) return;
+    if (atlasDraggingRef.current || window.matchMedia("(hover: none)").matches) return;
     // Keep the action rail under the pointer. Entering a hidden action directly
-    // must not resize the card between pointer-down and pointer-up.
+    // must not move the card between pointer-down and pointer-up.
     if ((event.target as HTMLElement).closest(".cardActions")) return;
     const card = event.currentTarget;
     atlasHoverCardRef.current = card;
     atlasHoverTimerRef.current = window.setTimeout(() => {
       atlasHoverTimerRef.current = null;
       if (atlasHoverCardRef.current !== card || !card.isConnected || !card.matches(":hover") || atlasDraggingRef.current) return;
-      const image = card.querySelector("img");
-      if (!image?.naturalWidth || !image.naturalHeight || !card.offsetWidth || !card.offsetHeight) return;
-      const ratio = image.naturalWidth / image.naturalHeight;
-      const currentRatio = card.offsetWidth / card.offsetHeight;
-      card.style.setProperty("--hover-width", `${ratio >= currentRatio ? card.offsetHeight * ratio : card.offsetWidth}px`);
-      card.style.setProperty("--hover-height", `${ratio >= currentRatio ? card.offsetHeight : card.offsetWidth / ratio}px`);
+      if (mode === "space") applyNaturalPreviewGeometry(card);
+      card.style.setProperty("--hover-scale", "1.2");
     }, 140);
   }
 
   useEffect(() => {
-    if (mode === "space") return;
     if (atlasHoverTimerRef.current !== null) window.clearTimeout(atlasHoverTimerRef.current);
     atlasHoverTimerRef.current = null;
-    atlasHoverCardRef.current?.style.removeProperty("--hover-width");
-    atlasHoverCardRef.current?.style.removeProperty("--hover-height");
+    clearNaturalPreviewGeometry(atlasHoverCardRef.current);
     atlasHoverCardRef.current = null;
-  }, [mode]);
+  }, [mode, zoom]);
 
   useEffect(() => () => {
     if (atlasHoverTimerRef.current !== null) window.clearTimeout(atlasHoverTimerRef.current);
@@ -1803,7 +1818,10 @@ export default function Home() {
                   <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={item.decision === "rejected" ? "active reject" : "reject"} onClick={() => void setAtlasDecision(item, "rejected")} aria-label={`Rejeter ${item.name}`} title="Rejeter (R)">×</button>
                 </div>
                 {item.url && item.kind === "shop" && <a tabIndex={index === effectiveFocusedIndex ? 0 : -1} className="productLinkOverlay" href={item.url} target="_blank" rel="noopener noreferrer" aria-label={`Ouvrir ${item.brand} — ${item.name}`} onClick={(event) => { if (!atlasSuppressClickRef.current) return; event.preventDefault(); atlasSuppressClickRef.current = false; }} />}
-                <div className="productImage" style={{ backgroundPosition: item.crop }}>{item.image && <img src={item.image} alt="" loading="lazy" decoding="async" />}</div>
+                <div className="productImage" style={{ backgroundPosition: item.crop }}>{item.image && <img src={item.image} alt="" loading="lazy" decoding="async" onLoad={(event) => {
+                  const card = event.currentTarget.closest<HTMLElement>(".productCard");
+                  if (mode === "space" && card && atlasHoverCardRef.current === card && card.matches(":hover") && card.style.getPropertyValue("--hover-scale")) applyNaturalPreviewGeometry(card);
+                }} />}</div>
                 <div className="productMeta">
                   <div className="scoreRow"><span>{item.brand}</span><b>{item.score}</b></div>
                   <h3>{item.name}</h3><p>{item.reason ?? `${item.color} · ${item.fit}`}</p>
@@ -1881,7 +1899,7 @@ export default function Home() {
                 <button type="button" className="imageDrop" onClick={() => personalImageInputRef.current?.click()}><span>＋</span><strong>Ajouter des photos</strong><small>JPG, PNG ou WebP · 6 images · 24 MB max</small></button>
                 {personalImages.length > 0 && <div className="personalPreviews">{personalImages.map((image) => <span key={image.id}><img src={image.dataUrl} alt="" /><button type="button" onClick={() => setPersonalImages((current) => current.filter((item) => item.id !== image.id))} aria-label={`Retirer ${image.name}`}>×</button></span>)}</div>}
                 <label>Nom<input name="name" required placeholder={personalKind === "owned" ? "Mon cardigan brun" : "Silhouette courte / pantalon ample"} /></label>
-                <div className="formColumns"><label>Catégorie<select name="category"><option>Vestes</option><option>Pantalons</option><option>Mailles</option><option>Chemises</option><option>T-shirts</option><option>Chaussures</option><option>Autre</option></select></label><label>Couleur<input name="color" placeholder="Chocolat" /></label></div>
+                <div className="formColumns"><label>Catégorie<select name="category"><option>Vestes</option><option>Pantalons</option><option>Mailles</option><option>Chemises</option><option>T-shirts</option><option>Chaussures</option><option>Accessoires</option><option>Autre</option></select></label><label>Couleur<input name="color" placeholder="Chocolat" /></label></div>
                 <div className="formColumns"><label>Coupe<input name="fit" placeholder="Large, courte…" /></label><label>Tags<input name="tags" placeholder="automne, texture" /></label></div>
                 <button className="primaryButton submitPersonal" disabled={personalBusy}>{personalBusy ? "Ajout…" : personalKind === "owned" ? "Ajouter au dressing" : "Ajouter comme référence"}</button>
               </form>

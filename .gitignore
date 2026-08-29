@@ -47,4 +47,5 @@ yarn-error.log*
 /data/contact-sheets/
 /data/image-cache/
 /data/media/
+/data/backups/
 /storage/

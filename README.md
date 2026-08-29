@@ -58,6 +58,7 @@ npm run dev          # web + local API
 npm run db:seed      # demo catalog
 npm run project      # recompute the complete compact PCA layout
 npm run collect -- --list-adapters
+npm run catalog:normalize # improve inferred categories/colors/fits, then reproject
 npm run mcp          # run the STDIO server manually
 npm run typecheck
 npm test

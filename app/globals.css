@@ -123,18 +123,16 @@ button { color: inherit; font: inherit; }
 .atlasCanvas { min-height: 100%; }
 .spaceMode .atlasCanvas { display: grid; grid-template-columns: repeat(20, minmax(0, 1fr)); grid-auto-rows: calc(12px * var(--board-scale, 1)); grid-auto-flow: dense; align-content: start; gap: calc(3px * var(--board-scale, 1)); padding: calc(3px * var(--board-scale, 1)); transform-origin: 0 0; }
 
-.productCard { position: relative; min-width: 0; overflow: hidden; border: 0; border-radius: 4px; background: #82796d; box-shadow: none; transform: translateZ(0); transition: width .24s cubic-bezier(.2,.78,.24,1), height .24s cubic-bezier(.2,.78,.24,1), filter .2s ease, transform .22s cubic-bezier(.2,.78,.24,1), box-shadow .22s ease; }
+.productCard { position: relative; min-width: 0; overflow: hidden; border: 0; border-radius: 4px; background: #82796d; box-shadow: none; transform: translateZ(0); transform-origin: center; transition: width .22s cubic-bezier(.2,.78,.24,1), height .22s cubic-bezier(.2,.78,.24,1), filter .2s ease, transform .22s cubic-bezier(.2,.78,.24,1), box-shadow .22s ease; }
 .productLinkOverlay { position: absolute; z-index: 3; inset: 0; }
 .productLinkOverlay { -webkit-user-drag: none; }
 .productLinkOverlay:focus-visible { outline: 2px solid #f5efe3; outline-offset: -3px; }
 .spaceMode .productCard { width: 100%; height: 100%; justify-self: center; align-self: center; grid-column: span var(--tile-columns); grid-row: span var(--tile-rows); }
-.spaceMode .productCard:hover { z-index: 8; width: var(--hover-width, 100%); height: var(--hover-height, 100%); transform: translateY(-3px); filter: brightness(1.025); box-shadow: 0 14px 36px #1c17103d; }
-.gridMode .productCard:hover { z-index: 8; transform: translateY(-3px) scale(1.08); filter: brightness(1.025); box-shadow: 0 14px 36px #1c17103d; }
-.dragging .productCard:hover { width: 100%; height: 100%; transform: translateZ(0); box-shadow: none; }
+.spaceMode .productCard:hover { z-index: 8; width: var(--hover-width, 100%); height: var(--hover-height, 100%); transform: translateY(-3px) scale(var(--hover-scale, 1)); filter: brightness(1.025); box-shadow: 0 14px 36px #1c17103d; }
+.gridMode .productCard:hover { z-index: 8; transform: translateY(-3px) scale(var(--hover-scale, 1)); filter: brightness(1.025); box-shadow: 0 14px 36px #1c17103d; }
+.dragging .productCard:hover { transform: translateZ(0); box-shadow: none; }
 .productImage { height: 100%; min-height: 100%; background-color: #e9e5dc; background-image: url('/seed/reference-board.png'); background-size: 500%; filter: saturate(.8) contrast(.98); }
 .productImage img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.productCard:hover .productImage { background-image: none; }
-.productCard:hover .productImage img { object-fit: contain; }
 .heart { position: absolute; z-index: 4; top: 5px; right: 5px; width: 22px; height: 22px; border: 0; border-radius: 50%; background: #1917128f; color: #fff; cursor: pointer; backdrop-filter: blur(5px); opacity: .75; }
 .heart.liked { color: var(--clay); }
 .spaceMode .productMeta { position: absolute; z-index: 2; inset: auto 0 0; padding: 28px 7px 7px; color: white; background: linear-gradient(transparent, #17140fc7); }
@@ -452,7 +450,7 @@ body:has(.compareDock) .toast { bottom: 61px; }
 @media (hover: none), (pointer: coarse) {
   .cardActions { opacity: 1; transform: none; }
   .spaceMode .productCard:hover, .gridMode .productCard:hover {
-    width: 100%; height: 100%; transform: none; filter: none; box-shadow: none;
+    transform: none; filter: none; box-shadow: none;
   }
   .atlasBoardPanel .productCard.decision-rejected:hover { filter: saturate(.4) brightness(.77); }
   .cardActions button { width: 28px; height: 28px; }
