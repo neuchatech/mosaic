@@ -15,6 +15,7 @@ import { createFilterWithCodex } from "./codex-bridge";
 import { createDiscoveryPlanWithCodex } from "./codex-discovery";
 import { DiscoveryService, FileDiscoveryJobStore } from "./discovery";
 import { getEmbeddingJob, startEmbeddingJob } from "./embedding-job";
+import { attachImageAspectRatios } from "./image-aspect-ratios";
 import { getVisualSelection, startVisualSelection } from "./visual-selection";
 
 const catalogItemFieldsSchema = z.object({
@@ -109,10 +110,10 @@ export function createApp(
   app.get("/api/stats", (context) => context.json(repository.stats()));
   app.get("/api/embeddings/job", (context) => context.json(getEmbeddingJob()));
   app.post("/api/embeddings/job", (context) => context.json(startEmbeddingJob(repository), 202));
-  app.get("/api/products", (context) => {
+  app.get("/api/products", async (context) => {
     const search = context.req.query("search");
     const limit = Number(context.req.query("limit") ?? 1000);
-    return context.json(projectCompactCached(repository.listProducts({ search, limit })));
+    return context.json(await attachImageAspectRatios(projectCompactCached(repository.listProducts({ search, limit }))));
   });
   app.post("/api/products/import", async (context) => {
     const body = await context.req.json();
@@ -122,7 +123,7 @@ export function createApp(
   app.post("/api/query", async (context) => {
     const filter = filterSpecSchema.parse(await context.req.json());
     const products = repository.listProducts({ filter, limit: filter.limit });
-    return context.json(projectCompactCached(products));
+    return context.json(await attachImageAspectRatios(projectCompactCached(products)));
   });
   app.post("/api/references", async (context) => {
     const parsed = referenceItemSchema.safeParse(await context.req.json());

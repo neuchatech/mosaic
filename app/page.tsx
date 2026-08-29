@@ -752,6 +752,7 @@ type AtlasItem = {
   updatedAt?: string;
   returnsLabel?: string;
   returnsWindowDays?: number;
+  imageAspectRatio?: number;
 };
 
 type AtlasApiProduct = {
@@ -997,6 +998,7 @@ function atlasApiToItem(item: AtlasApiProduct, index = 0): AtlasItem {
     sizesCheckedAt: item.sizesCheckedAt, updatedAt: item.updatedAt,
     returnsLabel: typeof returnsLabel === "string" ? returnsLabel : undefined,
     returnsWindowDays: typeof returnsWindowDays === "number" ? returnsWindowDays : undefined,
+    imageAspectRatio: typeof attributes.imageAspectRatio === "number" ? attributes.imageAspectRatio : undefined,
   };
 }
 
@@ -1059,90 +1061,169 @@ function atlasSpaceLayout(items: AtlasItem[], xAxis: AxisField, yAxis: AxisField
     : 1.7;
   const xPositions = atlasAxisPositions(items, xAxis, "x");
   const yPositions = atlasAxisPositions(items, yAxis, "y");
-  const cropShapes = [[68, 92], [76, 104], [84, 94], [72, 112], [90, 82]] as const;
-  const dimensions = items.map((item) => {
-    const hash = [...item.id].reduce((value, character) => ((value * 31) + character.charCodeAt(0)) | 0, 0);
-    const [width, height] = imageMode === "cropped" ? cropShapes[Math.abs(hash) % cropShapes.length] : [112, 148];
-    return { width, height, hash };
-  });
-  const gap = imageMode === "cropped" ? .75 : 2;
-  const padding = 18;
-  const occupiedArea = dimensions.reduce((sum, item) => sum + (item.width + gap) * (item.height + gap), 0);
-  const targetArea = occupiedArea / .88;
+  const nominalArea = imageMode === "cropped" ? 7_400 : 10_800;
+  const gap = imageMode === "cropped" ? .6 : 1.5;
+  const padding = 16;
+  const targetArea = items.length * nominalArea / .9;
   const baseWidth = Math.max(viewportWidth * 1.65, Math.sqrt(targetArea * viewportRatio));
   const baseHeight = Math.max(viewportHeight * 1.65, Math.sqrt(targetArea / viewportRatio));
   const nodes = items.map((item, index) => {
-    const { width, height, hash } = dimensions[index];
+    const hash = [...item.id].reduce((value, character) => ((value * 31) + character.charCodeAt(0)) | 0, 0);
+    const aspect = Math.min(2.6, Math.max(.38, imageMode === "full" ? item.imageAspectRatio ?? (item.source === "aliexpress" ? 1 : .72) : 1));
+    const seed = imageMode === "cropped" ? 18 : 20;
+    const width = imageMode === "full" ? (aspect >= 1 ? seed * aspect : seed) : seed;
+    const height = imageMode === "full" ? (aspect >= 1 ? seed : seed / aspect) : seed;
     const targetX = padding + width / 2 + xPositions[index] * Math.max(1, baseWidth - padding * 2 - width);
     const targetY = padding + height / 2 + yPositions[index] * Math.max(1, baseHeight - padding * 2 - height);
     return {
-      id: item.id, width, height, hash, targetX, targetY,
-      x: targetX + (((hash & 31) / 31) - .5) * 12,
-      y: targetY + ((((hash >>> 5) & 31) / 31) - .5) * 12,
+      id: item.id, width, height, aspect, hash, targetX, targetY,
+      x: targetX + (((hash & 31) / 31) - .5) * 8,
+      y: targetY + ((((hash >>> 5) & 31) / 31) - .5) * 8,
     };
   });
-  const bucketSize = Math.max(...dimensions.map((item) => Math.max(item.width, item.height))) + gap;
-  const placed: typeof nodes = [];
-  const buckets = new Map<string, number[]>();
-  const bucketKeys = (node: (typeof nodes)[number], x = node.x, y = node.y) => {
+
+  // Negative magnetism: spread coincident PCA anchors before rectangles grow.
+  const minimumCenterDistance = imageMode === "cropped" ? 56 : 68;
+  for (let iteration = 0; iteration < 64; iteration += 1) {
+    let moved = false;
+    for (let leftIndex = 0; leftIndex < nodes.length; leftIndex += 1) {
+      const left = nodes[leftIndex];
+      for (let rightIndex = leftIndex + 1; rightIndex < nodes.length; rightIndex += 1) {
+        const right = nodes[rightIndex];
+        let deltaX = right.x - left.x;
+        let deltaY = right.y - left.y;
+        let distance = Math.hypot(deltaX, deltaY);
+        if (distance >= minimumCenterDistance) continue;
+        if (distance < .001) {
+          const angle = ((left.hash ^ right.hash) >>> 0) / 0xffffffff * Math.PI * 2;
+          deltaX = Math.cos(angle); deltaY = Math.sin(angle); distance = 1;
+        }
+        const push = (minimumCenterDistance - distance) * .51;
+        const unitX = deltaX / distance;
+        const unitY = deltaY / distance;
+        left.x -= unitX * push; left.y -= unitY * push;
+        right.x += unitX * push; right.y += unitY * push;
+        moved = true;
+      }
+    }
+    nodes.forEach((node) => {
+      node.x += (node.targetX - node.x) * .008;
+      node.y += (node.targetY - node.y) * .008;
+      node.x = Math.min(baseWidth - padding - node.width / 2, Math.max(padding + node.width / 2, node.x));
+      node.y = Math.min(baseHeight - padding - node.height / 2, Math.max(padding + node.height / 2, node.y));
+    });
+    if (!moved) break;
+  }
+
+  // Resolve the last seed-rectangle collisions left by elongated natural ratios.
+  for (let iteration = 0; iteration < 24; iteration += 1) {
+    let moved = false;
+    for (let leftIndex = 0; leftIndex < nodes.length; leftIndex += 1) {
+      const left = nodes[leftIndex];
+      for (let rightIndex = leftIndex + 1; rightIndex < nodes.length; rightIndex += 1) {
+        const right = nodes[rightIndex];
+        const deltaX = right.x - left.x;
+        const deltaY = right.y - left.y;
+        const overlapX = (left.width + right.width) / 2 + gap - Math.abs(deltaX);
+        const overlapY = (left.height + right.height) / 2 + gap - Math.abs(deltaY);
+        if (overlapX <= 0 || overlapY <= 0) continue;
+        if (overlapX < overlapY) {
+          const direction = deltaX === 0 ? ((left.hash ^ right.hash) & 1 ? 1 : -1) : Math.sign(deltaX);
+          left.x -= direction * overlapX * .51; right.x += direction * overlapX * .51;
+        } else {
+          const direction = deltaY === 0 ? ((left.hash ^ right.hash) & 1 ? 1 : -1) : Math.sign(deltaY);
+          left.y -= direction * overlapY * .51; right.y += direction * overlapY * .51;
+        }
+        moved = true;
+      }
+    }
+    nodes.forEach((node) => {
+      node.x = Math.min(baseWidth - padding - node.width / 2, Math.max(padding + node.width / 2, node.x));
+      node.y = Math.min(baseHeight - padding - node.height / 2, Math.max(padding + node.height / 2, node.y));
+    });
+    if (!moved) break;
+  }
+
+  const bucketSize = 128;
+  const buckets = new Map<string, Set<number>>();
+  const bucketKeys = (node: (typeof nodes)[number], x = node.x, y = node.y, width = node.width, height = node.height) => {
     const keys: string[] = [];
-    const minimumColumn = Math.floor((x - node.width / 2 - gap) / bucketSize);
-    const maximumColumn = Math.floor((x + node.width / 2 + gap) / bucketSize);
-    const minimumRow = Math.floor((y - node.height / 2 - gap) / bucketSize);
-    const maximumRow = Math.floor((y + node.height / 2 + gap) / bucketSize);
+    const minimumColumn = Math.floor((x - width / 2 - gap) / bucketSize);
+    const maximumColumn = Math.floor((x + width / 2 + gap) / bucketSize);
+    const minimumRow = Math.floor((y - height / 2 - gap) / bucketSize);
+    const maximumRow = Math.floor((y + height / 2 + gap) / bucketSize);
     for (let row = minimumRow; row <= maximumRow; row += 1) {
       for (let column = minimumColumn; column <= maximumColumn; column += 1) keys.push(`${column}:${row}`);
     }
     return keys;
   };
-  const fits = (node: (typeof nodes)[number], x: number, y: number) => {
-    if (x - node.width / 2 < padding || x + node.width / 2 > baseWidth - padding
-      || y - node.height / 2 < padding || y + node.height / 2 > baseHeight - padding) return false;
+  const addToBuckets = (index: number) => {
+    for (const key of bucketKeys(nodes[index])) {
+      const bucket = buckets.get(key);
+      if (bucket) bucket.add(index); else buckets.set(key, new Set([index]));
+    }
+  };
+  const removeFromBuckets = (index: number) => {
+    for (const key of bucketKeys(nodes[index])) {
+      const bucket = buckets.get(key);
+      bucket?.delete(index);
+      if (bucket?.size === 0) buckets.delete(key);
+    }
+  };
+  nodes.forEach((_, index) => addToBuckets(index));
+  const fits = (index: number, x: number, y: number, width: number, height: number) => {
+    if (x - width / 2 < padding || x + width / 2 > baseWidth - padding
+      || y - height / 2 < padding || y + height / 2 > baseHeight - padding) return false;
     const neighbours = new Set<number>();
-    for (const key of bucketKeys(node, x, y)) for (const index of buckets.get(key) ?? []) neighbours.add(index);
-    for (const index of neighbours) {
-      const other = placed[index];
-      if (Math.abs(other.x - x) < (other.width + node.width) / 2 + gap
-        && Math.abs(other.y - y) < (other.height + node.height) / 2 + gap) return false;
+    for (const key of bucketKeys(nodes[index], x, y, width, height)) {
+      for (const neighbour of buckets.get(key) ?? []) if (neighbour !== index) neighbours.add(neighbour);
+    }
+    for (const neighbour of neighbours) {
+      const other = nodes[neighbour];
+      if (Math.abs(other.x - x) < (other.width + width) / 2 + gap
+        && Math.abs(other.y - y) < (other.height + height) / 2 + gap) return false;
     }
     return true;
   };
-  const placementOrder = [...nodes].sort((left, right) => {
-    const leftDistance = (left.targetX - baseWidth / 2) ** 2 + (left.targetY - baseHeight / 2) ** 2;
-    const rightDistance = (right.targetX - baseWidth / 2) ** 2 + (right.targetY - baseHeight / 2) ** 2;
-    return leftDistance - rightDistance || left.id.localeCompare(right.id);
-  });
-  for (const node of placementOrder) {
-    let found = false;
-    for (let attempt = 0; attempt < 240; attempt += 1) {
-      const radius = attempt * 2.4;
-      const angle = attempt * 2.399963229728653;
-      const x = node.targetX + Math.cos(angle) * radius;
-      const y = node.targetY + Math.sin(angle) * radius;
-      if (!fits(node, x, y)) continue;
-      node.x = x; node.y = y; found = true; break;
-    }
-    let randomState = node.hash >>> 0;
-    for (let attempt = 0; !found && attempt < 180; attempt += 1) {
-      randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
-      const x = padding + node.width / 2 + (randomState / 0xffffffff) * (baseWidth - padding * 2 - node.width);
-      randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
-      const y = padding + node.height / 2 + (randomState / 0xffffffff) * (baseHeight - padding * 2 - node.height);
-      if (!fits(node, x, y)) continue;
-      node.x = x; node.y = y; found = true;
-    }
-    if (!found) {
-      outer: for (let y = padding + node.height / 2; y <= baseHeight - padding - node.height / 2; y += 24) {
-        for (let x = padding + node.width / 2; x <= baseWidth - padding - node.width / 2; x += 24) {
-          if (!fits(node, x, y)) continue;
-          node.x = x; node.y = y; break outer;
+
+  const resize = (index: number, x: number, y: number, width: number, height: number) => {
+    if (!fits(index, x, y, width, height)) return false;
+    removeFromBuckets(index);
+    Object.assign(nodes[index], { x, y, width, height });
+    addToBuckets(index);
+    return true;
+  };
+  const order = nodes.map((_, index) => index).sort((left, right) => nodes[left].hash - nodes[right].hash);
+  for (const step of [6, 2, .5]) {
+    for (let round = 0; round < 180; round += 1) {
+      let grew = false;
+      if (imageMode === "full") {
+        for (let offset = 0; offset < order.length; offset += 1) {
+          const index = order[(offset + round * 17) % order.length];
+          const node = nodes[index];
+          grew = resize(index, node.x, node.y, node.width + step * node.aspect, node.height + step) || grew;
+        }
+      } else {
+        for (let phase = 0; phase < 4; phase += 1) {
+          for (let offset = 0; offset < order.length; offset += 1) {
+            const index = order[(offset + round * 17 + phase * 31) % order.length];
+            const node = nodes[index];
+            const direction = (phase + (node.hash & 3)) % 4;
+            let x = node.x;
+            let y = node.y;
+            let width = node.width;
+            let height = node.height;
+            if (direction === 0) { x -= step / 2; width += step; }
+            if (direction === 1) { x += step / 2; width += step; }
+            if (direction === 2) { y -= step / 2; height += step; }
+            if (direction === 3) { y += step / 2; height += step; }
+            const ratio = width / height;
+            if (ratio < .32 || ratio > 3.1) continue;
+            grew = resize(index, x, y, width, height) || grew;
+          }
         }
       }
-    }
-    const placedIndex = placed.push(node) - 1;
-    for (const key of bucketKeys(node)) {
-      const bucket = buckets.get(key);
-      if (bucket) bucket.push(placedIndex); else buckets.set(key, [placedIndex]);
+      if (!grew) break;
     }
   }
 
@@ -1504,7 +1585,7 @@ export default function Home() {
   const spaceLayout = useMemo(() => atlasScaledLayout(baseSpaceLayout, zoom), [baseSpaceLayout, zoom]);
   const renderedProducts = useMemo(() => {
     if (mode === "grid") return products.slice(0, renderLimit);
-    const overscan = 360;
+    const overscan = 240;
     const minimumX = atlasView.left - overscan;
     const maximumX = atlasView.left + atlasView.width + overscan;
     const minimumY = atlasView.top - overscan;
@@ -1528,7 +1609,7 @@ export default function Home() {
   function scheduleAtlasView(element: HTMLDivElement) {
     const next = { left: element.scrollLeft, top: element.scrollTop, width: element.clientWidth, height: element.clientHeight };
     const current = atlasViewRef.current;
-    const escapedOverscan = Math.abs(next.left - current.left) > 250 || Math.abs(next.top - current.top) > 250;
+    const escapedOverscan = Math.abs(next.left - current.left) > 160 || Math.abs(next.top - current.top) > 160;
     if (atlasScrollTimerRef.current !== null) window.clearTimeout(atlasScrollTimerRef.current);
     if (escapedOverscan) {
       atlasScrollTimerRef.current = null;
