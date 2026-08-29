@@ -86,13 +86,20 @@ export function extractGenericJsonLdProduct(
     .filter((offer): offer is { price: number; currency: string | undefined } => offer.price !== null)
     .sort((left, right) => left.price - right.price);
   const offer = pricedOffers[0];
-  const rawImages = Array.isArray(product.image) ? product.image : product.image ? [product.image] : [];
-  const images = rawImages.flatMap((value) => {
+  const productImages = Array.isArray(product.image) ? product.image : product.image ? [product.image] : [];
+  // ProductGroup markup (notably About You) often stores the shared gallery
+  // only on each size variant. Pulling from every variant keeps the importer
+  // useful without having to interact with the product gallery.
+  const variantImages = variants.flatMap((variant) => (
+    Array.isArray(variant.image) ? variant.image : variant.image ? [variant.image] : []
+  ));
+  const rawImages = [...productImages, ...variantImages];
+  const images = [...new Set(rawImages.flatMap((value) => {
     const direct = text(value);
     const nested = text(record(value)?.url) ?? text(record(value)?.contentUrl);
     const resolved = direct ?? nested;
     return resolved ? [resolved] : [];
-  });
+  }))];
   const name = text(product.name);
   if (!name) return null;
   let url = pageUrl;
@@ -107,6 +114,7 @@ export function extractGenericJsonLdProduct(
     ?? text(product.productID)
     ?? new URL(url).pathname;
   const material = Array.isArray(product.material) ? product.material : product.material ? [product.material] : [];
+  const firstVariant = variants[0];
   const sizeAvailabilityKnown = sizes.length > 0 || stockStatus === "out_of_stock";
   return {
     sourceId,
@@ -116,7 +124,8 @@ export function extractGenericJsonLdProduct(
     description: text(product.description),
     price: offer?.price ?? null,
     currency: offer?.currency,
-    color: text(product.color),
+    category: text(product.category),
+    color: text(product.color) ?? text(firstVariant?.color),
     materials: material.map(text).filter((value): value is string => Boolean(value)),
     images,
     rawSizes: [...new Set(rawSizes)],

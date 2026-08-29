@@ -72,7 +72,11 @@ export function normalizeProduct(source: string, raw: RawProduct): Product {
     price: raw.price ?? null,
     originalPrice: raw.originalPrice ?? null,
     currency: raw.currency ?? "CHF",
-    category: raw.category ?? guessCategory(descriptiveText),
+    // Shops often expose a very specific taxonomy ("Pantalons cargo",
+    // "Vestes de mi-saison", ...). The board facets intentionally use a
+    // small canonical set, so normalize the retailer category together with
+    // the product copy instead of leaking shop-specific labels into the UI.
+    category: guessCategory(`${raw.category ?? ""} ${descriptiveText}`),
     color: raw.color ?? "Inconnue",
     colorFamily: raw.colorFamily ?? guessColorFamily(descriptiveText),
     fit: raw.fit ?? guessFit(descriptiveText),

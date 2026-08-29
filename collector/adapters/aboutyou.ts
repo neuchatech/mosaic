@@ -1,4 +1,5 @@
 import type { DiscoveryIntent, DiscoveryListingTarget, RawProduct, ShopAdapter } from "../types";
+import { extractGenericJsonLdProduct } from "./generic-jsonld";
 
 const ABOUT_YOU_HOSTS = ["www.aboutyou.ch", "aboutyou.ch", "fr.aboutyou.ch", "en.aboutyou.ch"];
 
@@ -188,6 +189,22 @@ export const aboutYouAdapter: ShopAdapter = {
       attributes: {
         detailCaptured: true,
         sizeAvailabilityKnown: false,
+        returnsLabel: "30 jours",
+        returnsWindowDays: 30,
+      },
+    };
+  },
+  extractDetailHtml(html, pageUrl) {
+    const observedAt = new Date().toISOString();
+    const product = extractGenericJsonLdProduct(html, pageUrl, observedAt);
+    if (!product) return null;
+    return {
+      ...product,
+      sourceId: aboutYouSourceIdFromUrl(pageUrl) ?? product.sourceId,
+      url: canonicalAboutYouProductUrl(pageUrl),
+      attributes: {
+        ...product.attributes,
+        detailCaptured: true,
         returnsLabel: "30 jours",
         returnsWindowDays: 30,
       },
