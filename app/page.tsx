@@ -8,6 +8,7 @@ import {
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -909,6 +910,9 @@ const ATLAS_API = "/api";
 const ATLAS_ORIGIN = ATLAS_API.slice(0, -4);
 const ATLAS_PAGE_SIZE = 240;
 const ATLAS_DEFAULT_ZOOM = 2;
+const ATLAS_MAX_ZOOM = 10;
+const ATLAS_ZOOM_SENSITIVITY = .009;
+const ATLAS_CULL_INTERVAL_MS = 250;
 const ATLAS_MAX_IMAGES = 6;
 const ATLAS_MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const ATLAS_MAX_TOTAL_BYTES = 24 * 1024 * 1024;
@@ -1240,20 +1244,6 @@ function atlasSpaceLayout(items: AtlasItem[], xAxis: AxisField, yAxis: AxisField
   return { width: baseWidth, height: baseHeight, positions };
 }
 
-function atlasScaledLayout(layout: AtlasSpaceLayout, zoom: number): AtlasSpaceLayout {
-  if (zoom === 1) return layout;
-  return {
-    width: layout.width * zoom,
-    height: layout.height * zoom,
-    positions: new Map([...layout.positions].map(([id, rectangle]) => [id, {
-      left: rectangle.left * zoom,
-      top: rectangle.top * zoom,
-      width: rectangle.width * zoom,
-      height: rectangle.height * zoom,
-    }])),
-  };
-}
-
 function atlasSpaceCardStyle(item: AtlasItem, layout: AtlasSpaceLayout): CSSProperties {
   const position = layout.positions.get(item.id) ?? { left: layout.width / 2, top: layout.height / 2, width: 82, height: 108 };
   return {
@@ -1385,6 +1375,8 @@ export default function Home() {
   const [focusedIndex, setFocusedIndex] = useState(0);
 
   const atlasElementRef = useRef<HTMLDivElement>(null);
+  const atlasCanvasRef = useRef<HTMLDivElement>(null);
+  const atlasSceneRef = useRef<HTMLDivElement>(null);
   const atlasImageInputRef = useRef<HTMLInputElement>(null);
   const personalImageInputRef = useRef<HTMLInputElement>(null);
   const loadMoreRef = useRef<HTMLButtonElement>(null);
@@ -1398,6 +1390,8 @@ export default function Home() {
   const atlasZoomRef = useRef(ATLAS_DEFAULT_ZOOM);
   const atlasZoomFrameRef = useRef<number | null>(null);
   const atlasScrollTimerRef = useRef<number | null>(null);
+  const atlasLastCullAtRef = useRef(0);
+  const atlasPendingZoomCommitRef = useRef(false);
   const atlasViewRef = useRef({ left: 0, top: 0, width: 1000, height: 650 });
   const atlasZoomScrollRef = useRef<{ left: number; top: number } | null>(null);
   const atlasDragRef = useRef<{ x: number; y: number; left: number; top: number; pointerId: number; captured: boolean; lastX: number; lastY: number; lastAt: number; velocityX: number; velocityY: number } | null>(null);
@@ -1639,14 +1633,15 @@ export default function Home() {
     layouts.set(key, layout);
     return layout;
   }, [atlasViewport.height, atlasViewport.width, imageMode, products, xAxis, yAxis]);
-  const spaceLayout = useMemo(() => atlasScaledLayout(baseSpaceLayout, zoom), [baseSpaceLayout, zoom]);
+  const spaceLayout = baseSpaceLayout;
   const renderedProducts = useMemo(() => {
     if (mode === "grid") return products.slice(0, renderLimit);
-    const overscan = 240;
-    const minimumX = atlasView.left - overscan;
-    const maximumX = atlasView.left + atlasView.width + overscan;
-    const minimumY = atlasView.top - overscan;
-    const maximumY = atlasView.top + atlasView.height + overscan;
+    const scale = Math.max(.001, zoom);
+    const overscan = 320 / scale;
+    const minimumX = atlasView.left / scale - overscan;
+    const maximumX = (atlasView.left + atlasView.width) / scale + overscan;
+    const minimumY = atlasView.top / scale - overscan;
+    const maximumY = (atlasView.top + atlasView.height) / scale + overscan;
     return products.filter((item) => {
       const rectangle = spaceLayout.positions.get(item.id);
       if (!rectangle) return false;
@@ -1655,7 +1650,7 @@ export default function Home() {
         && rectangle.top + rectangle.height / 2 >= minimumY
         && rectangle.top - rectangle.height / 2 <= maximumY;
     });
-  }, [atlasView.height, atlasView.left, atlasView.top, atlasView.width, mode, products, renderLimit, spaceLayout.positions]);
+  }, [atlasView.height, atlasView.left, atlasView.top, atlasView.width, mode, products, renderLimit, spaceLayout.positions, zoom]);
   const categoryCounts = useMemo(() => Object.fromEntries(atlasCategories.map((filter) => [filter, filter === "Tout" ? quickFilteredCatalog.length : quickFilteredCatalog.filter((item) => item.category === filter).length])), [quickFilteredCatalog]);
   const compareItems = useMemo(() => [...compareIds].map((id) => catalogItems.find((item) => item.id === id) ?? visibleCatalog.find((item) => item.id === id)).filter(Boolean) as AtlasItem[], [catalogItems, compareIds, visibleCatalog]);
   const outfitDraftItems = useMemo(() => [...outfitDraftIds].map((id) => catalogItems.find((item) => item.id === id)).filter(Boolean) as AtlasItem[], [catalogItems, outfitDraftIds]);
@@ -1663,23 +1658,22 @@ export default function Home() {
   const wardrobeGaps = useMemo(() => ["Vestes", "Pantalons", "Mailles", "Chemises", "Chaussures"].filter((category) => !ownedItems.some((item) => item.category === category)), [ownedItems]);
   const staleCount = useMemo(() => catalogItems.filter((item) => item.kind === "shop" && atlasIsStale(item.stockCheckedAt)).length, [catalogItems]);
 
-  function scheduleAtlasView(element: HTMLDivElement) {
-    const next = { left: element.scrollLeft, top: element.scrollTop, width: element.clientWidth, height: element.clientHeight };
-    const current = atlasViewRef.current;
-    const escapedOverscan = Math.abs(next.left - current.left) > 160 || Math.abs(next.top - current.top) > 160;
-    if (atlasScrollTimerRef.current !== null) window.clearTimeout(atlasScrollTimerRef.current);
-    if (escapedOverscan) {
-      atlasScrollTimerRef.current = null;
-      atlasViewRef.current = next;
-      setAtlasView(next);
-      return;
-    }
+  const scheduleAtlasView = useCallback((element: HTMLDivElement, includeZoom = false) => {
+    if (includeZoom) atlasPendingZoomCommitRef.current = true;
+    if (atlasScrollTimerRef.current !== null) return;
+    const elapsed = performance.now() - atlasLastCullAtRef.current;
     atlasScrollTimerRef.current = window.setTimeout(() => {
       atlasScrollTimerRef.current = null;
+      atlasLastCullAtRef.current = performance.now();
+      if (atlasPendingZoomCommitRef.current) {
+        atlasPendingZoomCommitRef.current = false;
+        setZoom(atlasZoomRef.current);
+      }
+      const next = { left: element.scrollLeft, top: element.scrollTop, width: element.clientWidth, height: element.clientHeight };
       atlasViewRef.current = next;
       setAtlasView(next);
-    }, 140);
-  }
+    }, Math.max(0, ATLAS_CULL_INTERVAL_MS - elapsed));
+  }, []);
 
   useEffect(() => {
     const atlas = atlasElementRef.current;
@@ -1719,8 +1713,10 @@ export default function Home() {
     if (!context) return;
     const width = canvas.width;
     const height = canvas.height;
-    const scaleX = width / Math.max(1, spaceLayout.width);
-    const scaleY = height / Math.max(1, spaceLayout.height);
+    const scaledWidth = spaceLayout.width * zoom;
+    const scaledHeight = spaceLayout.height * zoom;
+    const scaleX = width / Math.max(1, scaledWidth);
+    const scaleY = height / Math.max(1, scaledHeight);
     context.clearRect(0, 0, width, height);
     context.fillStyle = "rgba(239, 235, 226, .94)";
     context.fillRect(0, 0, width, height);
@@ -1729,16 +1725,16 @@ export default function Home() {
       if (!rectangle) continue;
       context.fillStyle = item.decision === "saved" ? "#9a6148" : item.kind === "reference" ? "#66705d" : "#8b8377";
       context.fillRect(
-        (rectangle.left - rectangle.width / 2) * scaleX,
-        (rectangle.top - rectangle.height / 2) * scaleY,
-        Math.max(1.5, rectangle.width * scaleX),
-        Math.max(1.5, rectangle.height * scaleY),
+        (rectangle.left - rectangle.width / 2) * zoom * scaleX,
+        (rectangle.top - rectangle.height / 2) * zoom * scaleY,
+        Math.max(1.5, rectangle.width * zoom * scaleX),
+        Math.max(1.5, rectangle.height * zoom * scaleY),
       );
     }
     context.strokeStyle = "#332c24";
     context.lineWidth = 3;
     context.strokeRect(atlasView.left * scaleX, atlasView.top * scaleY, atlasView.width * scaleX, atlasView.height * scaleY);
-  }, [atlasView.height, atlasView.left, atlasView.top, atlasView.width, mode, products, spaceLayout]);
+  }, [atlasView.height, atlasView.left, atlasView.top, atlasView.width, mode, products, spaceLayout, zoom]);
 
   useEffect(() => {
     const target = loadMoreRef.current;
@@ -1940,9 +1936,9 @@ export default function Home() {
     setSelectedSizes(["M", "L"]); setStockFilter("all"); setAttributeQuery(""); setMinPrice(""); setMaxPrice(""); setIncludeRejected(false);
   }
 
-  function changeAtlasZoom(nextValue: number, anchor?: { x: number; y: number }) {
+  const changeAtlasZoom = useCallback((nextValue: number, anchor?: { x: number; y: number }) => {
     const atlas = atlasElementRef.current;
-    const next = Math.min(3, Math.max(.25, Math.round(nextValue * 1000) / 1000));
+    const next = Math.min(ATLAS_MAX_ZOOM, Math.max(.25, Math.round(nextValue * 1000) / 1000));
     const current = atlasZoomRef.current;
     if (next === current) return;
     atlasZoomRef.current = next;
@@ -1952,14 +1948,24 @@ export default function Home() {
     const contentX = (pendingScroll.left + point.x) / current;
     const contentY = (pendingScroll.top + point.y) / current;
     atlasZoomScrollRef.current = { left: contentX * next - point.x, top: contentY * next - point.y };
-    setZoom(next);
+    const canvas = atlasCanvasRef.current;
+    const scene = atlasSceneRef.current;
+    if (canvas && scene) {
+      canvas.style.width = `${spaceLayout.width * next}px`;
+      canvas.style.height = `${spaceLayout.height * next}px`;
+      scene.style.transform = `scale(${next})`;
+    }
     if (atlasZoomFrameRef.current !== null) cancelAnimationFrame(atlasZoomFrameRef.current);
     atlasZoomFrameRef.current = requestAnimationFrame(() => {
       const target = atlasZoomScrollRef.current;
-      if (target) { atlas.scrollLeft = target.left; atlas.scrollTop = target.top; }
+      if (target) {
+        atlas.scrollLeft = target.left;
+        atlas.scrollTop = target.top;
+      }
+      scheduleAtlasView(atlas, true);
       atlasZoomScrollRef.current = null; atlasZoomFrameRef.current = null;
     });
-  }
+  }, [scheduleAtlasView, spaceLayout.height, spaceLayout.width]);
 
   function resetAtlasView() {
     atlasZoomRef.current = ATLAS_DEFAULT_ZOOM; atlasZoomScrollRef.current = null; setZoom(ATLAS_DEFAULT_ZOOM);
@@ -1977,7 +1983,7 @@ export default function Home() {
       event.preventDefault(); event.stopPropagation();
       if (event.ctrlKey || event.metaKey) {
         const bounds = atlas.getBoundingClientRect();
-        const intensity = event.deltaMode === 1 ? .018 : .0018;
+        const intensity = event.deltaMode === 1 ? .09 : ATLAS_ZOOM_SENSITIVITY;
         changeAtlasZoom(atlasZoomRef.current * Math.exp(-event.deltaY * intensity), { x: event.clientX - bounds.left, y: event.clientY - bounds.top });
         return;
       }
@@ -1986,7 +1992,7 @@ export default function Home() {
     };
     atlas.addEventListener("wheel", handleNativeWheel, { passive: false });
     return () => atlas.removeEventListener("wheel", handleNativeWheel);
-  }, [mode]);
+  }, [changeAtlasZoom, mode]);
 
   function navigateAtlasMinimap(event: ReactPointerEvent<HTMLCanvasElement>) {
     if (event.type === "pointermove" && event.buttons !== 1) return;
@@ -2555,9 +2561,9 @@ export default function Home() {
               <button className={mode === "grid" ? "active" : ""} onClick={() => setMode("grid")}>Grille</button>
             </div>
             <div className="zoomControls" aria-label="Zoom du board">
-              <button disabled={mode !== "space" || zoom <= .25} onClick={() => changeAtlasZoom(atlasZoomRef.current - .15)} aria-label="Dézoomer">−</button>
+              <button disabled={mode !== "space" || zoom <= .25} onClick={() => changeAtlasZoom(atlasZoomRef.current - .5)} aria-label="Dézoomer">−</button>
               <button disabled={mode !== "space"} onClick={resetAtlasView} className="zoomValue">{Math.round(zoom * 100)}%</button>
-              <button disabled={mode !== "space" || zoom >= 3} onClick={() => changeAtlasZoom(atlasZoomRef.current + .15)} aria-label="Zoomer">＋</button>
+              <button disabled={mode !== "space" || zoom >= ATLAS_MAX_ZOOM} onClick={() => changeAtlasZoom(atlasZoomRef.current + .5)} aria-label="Zoomer">＋</button>
             </div>
             <div className="segmented imageDisplaySwitch" aria-label="Affichage des images">
               <button className={imageMode === "cropped" ? "active" : ""} aria-pressed={imageMode === "cropped"} onClick={() => setImageMode("cropped")}>Crop</button>
@@ -2637,7 +2643,8 @@ export default function Home() {
         </div>
 
         <div ref={atlasElementRef} className={`${mode === "space" ? "atlas spaceMode" : "atlas gridMode"}${dragging ? " dragging" : ""}`} onScroll={(event) => scheduleAtlasView(event.currentTarget)} onPointerDown={startAtlasPan} onPointerMove={atlasPan} onPointerUp={stopAtlasPan} onPointerCancel={stopAtlasPan}>
-          <div className="atlasCanvas" style={mode === "space" ? ({ width: spaceLayout.width, height: spaceLayout.height } as CSSProperties) : undefined}>
+          <div ref={atlasCanvasRef} className="atlasCanvas" style={mode === "space" ? ({ width: spaceLayout.width * zoom, height: spaceLayout.height * zoom } as CSSProperties) : undefined}>
+            <div ref={atlasSceneRef} className="atlasScene" style={mode === "space" ? ({ width: spaceLayout.width, height: spaceLayout.height, transform: `scale(${zoom})` } as CSSProperties) : undefined}>
             {renderedProducts.map((item, index) => (
               <article
                 className={`productCard ${item.kind === "reference" ? "referenceCard" : ""} decision-${item.decision}${compareIds.has(item.id) ? " comparing" : ""}${outfitDraftIds.has(item.id) ? " inOutfit" : ""}`}
@@ -2681,6 +2688,7 @@ export default function Home() {
               </div>
             )}
             {mode === "grid" && renderLimit < products.length && <button ref={loadMoreRef} className="loadMore" onClick={() => setRenderWindow((current) => ({ signature: renderSignature, limit: Math.min((current.signature === renderSignature ? current.limit : ATLAS_PAGE_SIZE) + ATLAS_PAGE_SIZE, products.length) }))}>Afficher {Math.min(ATLAS_PAGE_SIZE, products.length - renderLimit)} de plus</button>}
+            </div>
           </div>
         </div>
         {mode === "space" && <canvas ref={atlasMinimapRef} className="atlasMinimap" width={360} height={220} aria-label="Minimap du board" onPointerDown={navigateAtlasMinimap} onPointerMove={navigateAtlasMinimap} />}
@@ -2788,6 +2796,13 @@ export default function Home() {
                 {!previewProduct.images.length && !previewProduct.image && <div className="productPreviewNoImage">Aucune image capturée</div>}
               </div>
               <aside className="productPreviewFacts">
+                <section className="productPreviewTools" data-testid="product-preview-actions"><span>Actions</span><div>
+                  <button type="button" className={previewProduct.decision === "saved" ? "active" : ""} onClick={() => void setAtlasDecision(previewProduct, "saved")}>{previewProduct.decision === "saved" ? "♥ Gardé" : "♡ Garder"}</button>
+                  <button type="button" className={compareIds.has(previewProduct.id) ? "active" : ""} onClick={() => toggleCompare(previewProduct.id)}>⇄ Comparer</button>
+                  <button type="button" className={outfitDraftIds.has(previewProduct.id) ? "active" : ""} onClick={() => toggleOutfitDraft(previewProduct.id)}>＋ Tenue</button>
+                  <button type="button" className={previewProduct.decision === "owned" ? "active" : ""} onClick={() => void setAtlasDecision(previewProduct, "owned")}>◆ Possédé</button>
+                  <button type="button" className={previewProduct.decision === "rejected" ? "active reject" : "reject"} onClick={() => void setAtlasDecision(previewProduct, "rejected")}>× Rejeter</button>
+                </div></section>
                 <section><span>Prix</span><strong>{previewProduct.price == null ? "Inconnu" : <>{previewProduct.currency} {previewProduct.price.toFixed(2)}{previewProduct.originalPrice && previewProduct.originalPrice > previewProduct.price ? <del>{previewProduct.currency} {previewProduct.originalPrice.toFixed(2)}</del> : null}</>}</strong><small>Prix {atlasTimestamp(previewProduct.priceCheckedAt)}</small></section>
                 <section><span>Disponibilité</span><strong>{previewProduct.stockStatus === "in_stock" ? "En stock" : previewProduct.stockStatus === "out_of_stock" ? "Épuisé" : "À vérifier"}</strong><small>Stock {atlasTimestamp(previewProduct.stockCheckedAt)}</small></section>
                 <section><span>Tailles</span><div className="productPreviewSizes">{previewProduct.sizeAvailabilityKnown ? previewProduct.sizes.length ? previewProduct.sizes.map((size) => <b key={size}>{size}</b>) : <em>Épuisé</em> : <em>Pas encore vérifiées</em>}</div><small>Tailles {atlasTimestamp(previewProduct.sizesCheckedAt)}</small></section>
