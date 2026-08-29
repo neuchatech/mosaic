@@ -107,6 +107,34 @@ function tileStyle(index: number): CSSProperties {
   } as CSSProperties;
 }
 
+function atlasSpaceGeometry(count: number, viewportWidth: number, viewportHeight: number, zoom: number) {
+  const safeCount = Math.max(1, count);
+  const viewportRatio = viewportWidth > 0 && viewportHeight > 0
+    ? Math.min(2.1, Math.max(1.35, viewportWidth / viewportHeight))
+    : 1.7;
+  const cardWidth = 112;
+  const cardHeight = 148;
+  const gap = 9;
+  const columns = Math.max(1, Math.ceil(Math.sqrt(safeCount * viewportRatio * (cardHeight + gap) / (cardWidth + gap))));
+  const rows = Math.max(1, Math.ceil(safeCount / columns));
+  const baseWidth = Math.max(viewportWidth * 1.35, 32 + columns * (cardWidth + gap));
+  const baseHeight = Math.max(viewportHeight * 1.35, 32 + rows * (cardHeight + gap));
+  return { columns, rows, cardWidth, cardHeight, width: baseWidth * zoom, height: baseHeight * zoom };
+}
+
+function atlasSpaceCardStyle(index: number, geometry: ReturnType<typeof atlasSpaceGeometry>, zoom: number): CSSProperties {
+  const column = index % geometry.columns;
+  const row = Math.floor(index / geometry.columns);
+  const cellWidth = geometry.width / geometry.columns;
+  const cellHeight = geometry.height / geometry.rows;
+  return {
+    left: column * cellWidth + cellWidth / 2,
+    top: row * cellHeight + cellHeight / 2,
+    "--card-width": `${geometry.cardWidth * zoom}px`,
+    "--card-height": `${geometry.cardHeight * zoom}px`,
+  } as CSSProperties;
+}
+
 function apiProductsToItems(items: ApiProduct[]): SeedItem[] {
   return items.map((item, index) => ({
     id: index + 1,
@@ -1108,6 +1136,7 @@ export default function Home() {
   const [includeRejected, setIncludeRejected] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [dragging, setDragging] = useState(false);
+  const [atlasViewport, setAtlasViewport] = useState({ width: 1000, height: 650 });
   const [drawer, setDrawer] = useState<AtlasDrawer>(null);
   const [compareIds, setCompareIds] = useState<Set<string>>(() => new Set());
   const [outfitDraftIds, setOutfitDraftIds] = useState<Set<string>>(() => new Set());
@@ -1140,7 +1169,8 @@ export default function Home() {
   const atlasZoomRef = useRef(1);
   const atlasZoomFrameRef = useRef<number | null>(null);
   const atlasZoomScrollRef = useRef<{ left: number; top: number } | null>(null);
-  const atlasDragRef = useRef<{ x: number; y: number; left: number; top: number; pointerId: number; captured: boolean } | null>(null);
+  const atlasDragRef = useRef<{ x: number; y: number; left: number; top: number; pointerId: number; captured: boolean; lastX: number; lastY: number; lastAt: number; velocityX: number; velocityY: number } | null>(null);
+  const atlasInertiaFrameRef = useRef<number | null>(null);
   const atlasSuppressClickRef = useRef(false);
   const atlasDraggingRef = useRef(false);
   const atlasHoverTimerRef = useRef<number | null>(null);
@@ -1334,12 +1364,23 @@ export default function Home() {
   ]), [activeFilter, aiItems, attributeQuery, fitFilter, includeRejected, materialFilter, maxPrice, minPrice, mode, priceFilter, products, scope, selectedOutfitBoardId, selectedSizes, sourceFilter, stockFilter, xAxis, yAxis]);
   const renderLimit = renderWindow.signature === renderSignature ? renderWindow.limit : ATLAS_PAGE_SIZE;
   const renderedProducts = useMemo(() => products.slice(0, renderLimit), [products, renderLimit]);
+  const spaceGeometry = useMemo(() => atlasSpaceGeometry(products.length, atlasViewport.width, atlasViewport.height, zoom), [atlasViewport.height, atlasViewport.width, products.length, zoom]);
   const categoryCounts = useMemo(() => Object.fromEntries(atlasCategories.map((filter) => [filter, filter === "Tout" ? quickFilteredCatalog.length : quickFilteredCatalog.filter((item) => item.category === filter).length])), [quickFilteredCatalog]);
   const compareItems = useMemo(() => [...compareIds].map((id) => catalogItems.find((item) => item.id === id) ?? visibleCatalog.find((item) => item.id === id)).filter(Boolean) as AtlasItem[], [catalogItems, compareIds, visibleCatalog]);
   const outfitDraftItems = useMemo(() => [...outfitDraftIds].map((id) => catalogItems.find((item) => item.id === id)).filter(Boolean) as AtlasItem[], [catalogItems, outfitDraftIds]);
   const ownedItems = useMemo(() => catalogItems.filter((item) => item.kind === "owned" || item.decision === "owned"), [catalogItems]);
   const wardrobeGaps = useMemo(() => ["Vestes", "Pantalons", "Mailles", "Chemises", "Chaussures"].filter((category) => !ownedItems.some((item) => item.category === category)), [ownedItems]);
   const staleCount = useMemo(() => catalogItems.filter((item) => item.kind === "shop" && atlasIsStale(item.stockCheckedAt)).length, [catalogItems]);
+
+  useEffect(() => {
+    const atlas = atlasElementRef.current;
+    if (!atlas) return;
+    const update = () => setAtlasViewport({ width: atlas.clientWidth, height: atlas.clientHeight });
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(atlas);
+    return () => observer.disconnect();
+  }, [mode]);
 
   useEffect(() => {
     const target = loadMoreRef.current;
@@ -1498,7 +1539,7 @@ export default function Home() {
 
   function changeAtlasZoom(nextValue: number, anchor?: { x: number; y: number }) {
     const atlas = atlasElementRef.current;
-    const next = Math.min(2.5, Math.max(.65, Math.round(nextValue * 100) / 100));
+    const next = Math.min(3, Math.max(.25, Math.round(nextValue * 1000) / 1000));
     const current = atlasZoomRef.current;
     if (next === current) return;
     atlasZoomRef.current = next;
@@ -1519,18 +1560,26 @@ export default function Home() {
 
   function resetAtlasView() {
     atlasZoomRef.current = 1; atlasZoomScrollRef.current = null; setZoom(1);
-    requestAnimationFrame(() => atlasElementRef.current?.scrollTo({ left: 0, top: 0 }));
+    requestAnimationFrame(() => {
+      const atlas = atlasElementRef.current;
+      if (!atlas) return;
+      atlas.scrollTo({ left: Math.max(0, (atlas.scrollWidth - atlas.clientWidth) / 2), top: Math.max(0, (atlas.scrollHeight - atlas.clientHeight) / 2) });
+    });
   }
 
   useEffect(() => {
     const atlas = atlasElementRef.current;
     if (!atlas || mode !== "space") return;
     const handleNativeWheel = (event: WheelEvent) => {
-      if (!event.ctrlKey && !event.metaKey) return;
       event.preventDefault(); event.stopPropagation();
-      const bounds = atlas.getBoundingClientRect();
-      const intensity = event.deltaMode === 1 ? .025 : .0025;
-      changeAtlasZoom(atlasZoomRef.current * Math.exp(-event.deltaY * intensity), { x: event.clientX - bounds.left, y: event.clientY - bounds.top });
+      if (event.ctrlKey || event.metaKey) {
+        const bounds = atlas.getBoundingClientRect();
+        const intensity = event.deltaMode === 1 ? .018 : .0018;
+        changeAtlasZoom(atlasZoomRef.current * Math.exp(-event.deltaY * intensity), { x: event.clientX - bounds.left, y: event.clientY - bounds.top });
+        return;
+      }
+      atlas.scrollLeft += event.deltaX || (event.shiftKey ? event.deltaY : 0);
+      atlas.scrollTop += event.shiftKey ? 0 : event.deltaY;
     };
     atlas.addEventListener("wheel", handleNativeWheel, { passive: false });
     return () => atlas.removeEventListener("wheel", handleNativeWheel);
@@ -1538,9 +1587,11 @@ export default function Home() {
 
   function startAtlasPan(event: ReactPointerEvent<HTMLDivElement>) {
     const target = event.target as HTMLElement;
-    if (mode !== "space" || target.closest("button, input, select, textarea") || (target.closest("a") && !target.closest(".productLinkOverlay"))) return;
+    if (mode !== "space" || event.button !== 0 || target.closest("button, input, select, textarea") || (target.closest("a") && !target.closest(".productLinkOverlay"))) return;
+    if (atlasInertiaFrameRef.current !== null) cancelAnimationFrame(atlasInertiaFrameRef.current);
+    atlasInertiaFrameRef.current = null;
     cancelAtlasPreview();
-    atlasDragRef.current = { x: event.clientX, y: event.clientY, left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop, pointerId: event.pointerId, captured: false };
+    atlasDragRef.current = { x: event.clientX, y: event.clientY, left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop, pointerId: event.pointerId, captured: false, lastX: event.clientX, lastY: event.clientY, lastAt: performance.now(), velocityX: 0, velocityY: 0 };
     atlasSuppressClickRef.current = false;
   }
 
@@ -1558,12 +1609,30 @@ export default function Home() {
     if (!start.captured) return;
     event.currentTarget.scrollLeft = start.left - (event.clientX - start.x);
     event.currentTarget.scrollTop = start.top - (event.clientY - start.y);
+    const now = performance.now();
+    const elapsed = Math.max(8, now - start.lastAt);
+    start.velocityX = (start.lastX - event.clientX) / elapsed * 16;
+    start.velocityY = (start.lastY - event.clientY) / elapsed * 16;
+    start.lastX = event.clientX; start.lastY = event.clientY; start.lastAt = now;
   }
 
   function stopAtlasPan(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!atlasDragRef.current) return;
-    if (atlasDragRef.current.captured && event.currentTarget.hasPointerCapture(atlasDragRef.current.pointerId)) event.currentTarget.releasePointerCapture(atlasDragRef.current.pointerId);
+    const drag = atlasDragRef.current;
+    if (!drag) return;
+    if (drag.captured && event.currentTarget.hasPointerCapture(drag.pointerId)) event.currentTarget.releasePointerCapture(drag.pointerId);
     atlasDragRef.current = null; atlasDraggingRef.current = false; setDragging(false);
+    if (!drag.captured || Math.hypot(drag.velocityX, drag.velocityY) < .8) return;
+    const atlas = event.currentTarget;
+    let velocityX = drag.velocityX;
+    let velocityY = drag.velocityY;
+    const coast = () => {
+      atlas.scrollLeft += velocityX;
+      atlas.scrollTop += velocityY;
+      velocityX *= .92; velocityY *= .92;
+      if (Math.hypot(velocityX, velocityY) < .35) { atlasInertiaFrameRef.current = null; return; }
+      atlasInertiaFrameRef.current = requestAnimationFrame(coast);
+    };
+    atlasInertiaFrameRef.current = requestAnimationFrame(coast);
   }
 
   function cancelAtlasPreview(card?: HTMLElement) {
@@ -1602,6 +1671,7 @@ export default function Home() {
   useEffect(() => () => {
     if (atlasHoverTimerRef.current !== null) window.clearTimeout(atlasHoverTimerRef.current);
     if (atlasZoomFrameRef.current !== null) cancelAnimationFrame(atlasZoomFrameRef.current);
+    if (atlasInertiaFrameRef.current !== null) cancelAnimationFrame(atlasInertiaFrameRef.current);
     discoveryMonitorRef.current += 1;
   }, []);
 
@@ -2039,9 +2109,13 @@ export default function Home() {
               <button className={mode === "grid" ? "active" : ""} onClick={() => setMode("grid")}>Grille</button>
             </div>
             <div className="zoomControls" aria-label="Zoom du board">
-              <button disabled={mode !== "space" || zoom <= .65} onClick={() => changeAtlasZoom(atlasZoomRef.current - .15)} aria-label="Dézoomer">−</button>
+              <button disabled={mode !== "space" || zoom <= .25} onClick={() => changeAtlasZoom(atlasZoomRef.current - .15)} aria-label="Dézoomer">−</button>
               <button disabled={mode !== "space"} onClick={resetAtlasView} className="zoomValue">{Math.round(zoom * 100)}%</button>
-              <button disabled={mode !== "space" || zoom >= 2.5} onClick={() => changeAtlasZoom(atlasZoomRef.current + .15)} aria-label="Zoomer">＋</button>
+              <button disabled={mode !== "space" || zoom >= 3} onClick={() => changeAtlasZoom(atlasZoomRef.current + .15)} aria-label="Zoomer">＋</button>
+            </div>
+            <div className="segmented imageDisplaySwitch" aria-label="Affichage des images">
+              <button className={imageMode === "cropped" ? "active" : ""} aria-pressed={imageMode === "cropped"} onClick={() => setImageMode("cropped")}>Crop</button>
+              <button className={imageMode === "full" ? "active" : ""} aria-pressed={imageMode === "full"} onClick={() => setImageMode("full")}>Entier</button>
             </div>
           </div>
         </div>
@@ -2061,7 +2135,6 @@ export default function Home() {
               <p>OU entre les tailles · stock connu · vérifié sous 48 h.</p>
             </div>
           </details>
-          <button type="button" className="imageModeButton" aria-pressed={imageMode === "full"} onClick={() => setImageMode((current) => current === "cropped" ? "full" : "cropped")} title={imageMode === "cropped" ? "Afficher les images en entier" : "Recadrer les images pour remplir les cartes"}><small>Images</small><strong>{imageMode === "cropped" ? "Recadré" : "Entière"}</strong><span>↔</span></button>
           <details className="advancedFilters">
             <summary aria-label={`${advancedFilterCount} filtres avancés actifs`}><span>＋ filtres</span>{advancedFilterCount > 0 && <b>{advancedFilterCount}</b>}</summary>
             <div className="filterPopover">
@@ -2110,11 +2183,11 @@ export default function Home() {
         </div>
 
         <div ref={atlasElementRef} className={`${mode === "space" ? "atlas spaceMode" : "atlas gridMode"}${dragging ? " dragging" : ""}`} onPointerDown={startAtlasPan} onPointerMove={atlasPan} onPointerUp={stopAtlasPan} onPointerCancel={stopAtlasPan}>
-          <div className="atlasCanvas" style={mode === "space" ? ({ "--board-scale": zoom, width: `${zoom * 160}%` } as CSSProperties) : undefined}>
+          <div className="atlasCanvas" style={mode === "space" ? ({ width: spaceGeometry.width, height: spaceGeometry.height } as CSSProperties) : undefined}>
             {renderedProducts.map((item, index) => (
               <article
                 className={`productCard ${item.kind === "reference" ? "referenceCard" : ""} decision-${item.decision}${compareIds.has(item.id) ? " comparing" : ""}${outfitDraftIds.has(item.id) ? " inOutfit" : ""}`}
-                key={item.id} style={mode === "space" ? tileStyle(index) : undefined} title={item.reason}
+                key={item.id} style={mode === "space" ? atlasSpaceCardStyle(index, spaceGeometry, zoom) : undefined} title={item.reason}
                 data-card-index={index} data-product-id={item.id} tabIndex={index === effectiveFocusedIndex ? 0 : -1}
                 aria-label={`${item.brand}, ${item.name}, ${atlasDecisionLabel(item.decision)}`}
                 onFocus={() => setFocusedIndex(index)} onKeyDown={(event) => handleAtlasCardKey(event, item, index)} onPointerEnter={prepareAtlasPreview}
