@@ -112,7 +112,7 @@ export function createApp(
   app.get("/api/products", (context) => {
     const search = context.req.query("search");
     const limit = Number(context.req.query("limit") ?? 1000);
-    return context.json(repository.listProducts({ search, limit }));
+    return context.json(projectCompactCached(repository.listProducts({ search, limit })));
   });
   app.post("/api/products/import", async (context) => {
     const body = await context.req.json();

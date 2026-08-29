@@ -3,7 +3,6 @@ import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Product } from "../src/domain/catalog";
 import type { VisualEmbeddingRun } from "../src/embeddings";
-import { compactProjection } from "../src/projection/compact";
 import { projectProductsWithVectors } from "../src/projection/pca";
 
 const maxEntries = 32;
@@ -50,10 +49,10 @@ export function projectCompactCached(products: Product[]): Product[] {
   const key = signature(products, hybrid.revision);
   let coordinates = cache.get(key);
   if (!coordinates) {
-    coordinates = new Map(compactProjection(projectProductsWithVectors(products, {
+    coordinates = new Map(projectProductsWithVectors(products, {
       vectorsById: hybrid.vectors,
       scale: hybrid.vectors ? false : true,
-    })).map((product) => [
+    }).map((product) => [
       product.id,
       { x: product.x, y: product.y },
     ]));

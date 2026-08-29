@@ -166,8 +166,8 @@ function applyNaturalPreviewGeometry(card: HTMLElement) {
   const baseRatio = baseWidth / baseHeight;
   const targetWidth = naturalRatio > baseRatio ? baseHeight * naturalRatio : baseWidth;
   const targetHeight = naturalRatio > baseRatio ? baseHeight : baseWidth / naturalRatio;
-  card.style.setProperty("--hover-width", `${Math.max(baseWidth, targetWidth)}px`);
-  card.style.setProperty("--hover-height", `${Math.max(baseHeight, targetHeight)}px`);
+  card.style.setProperty("--hover-width", `${Math.min(baseWidth * 1.8, Math.max(baseWidth, targetWidth))}px`);
+  card.style.setProperty("--hover-height", `${Math.min(baseHeight * 1.8, Math.max(baseHeight, targetHeight))}px`);
   return true;
 }
 
@@ -1034,73 +1034,137 @@ type AtlasSpaceLayout = {
 
 function atlasAxisPositions(items: AtlasItem[], field: AxisField, fallback: "x" | "y") {
   const values = items.map((item) => atlasAxisValue(item, field, fallback));
-  if (field === "pca") {
-    const minimum = Math.min(...values);
-    const maximum = Math.max(...values);
-    const spread = maximum - minimum || 1;
-    return values.map((value) => (value - minimum) / spread);
-  }
   const ranks = new Map<number, number>();
   [...values].sort((left, right) => left - right).forEach((value, index) => {
     if (!ranks.has(value)) ranks.set(value, index);
   });
   const denominator = Math.max(1, values.length - 1);
-  return values.map((value) => (ranks.get(value) ?? 0) / denominator);
+  const rankPositions = values.map((value) => (ranks.get(value) ?? 0) / denominator);
+  if (field === "pca") {
+    const minimum = Math.min(...values);
+    const maximum = Math.max(...values);
+    const spread = maximum - minimum || 1;
+    // A partial quantile transform compresses giant empty PCA gaps without
+    // destroying the continuous order and local visual neighbourhoods.
+    return values.map((value, index) => ((value - minimum) / spread) * .05 + rankPositions[index] * .95);
+  }
+  return rankPositions;
 }
 
-/**
- * Assigns every item to the closest free cell around its selected X/Y values.
- * The small deterministic offset breaks the spreadsheet look while the free
- * cells keep the filtered board dense and collision-free.
- */
-function atlasSpaceLayout(items: AtlasItem[], xAxis: AxisField, yAxis: AxisField, viewportWidth: number, viewportHeight: number, zoom: number, imageMode: AtlasImageMode): AtlasSpaceLayout {
-  const count = Math.max(1, items.length);
+/** Packs rectangles continuously around their X/Y anchors without grid slots. */
+function atlasSpaceLayout(items: AtlasItem[], xAxis: AxisField, yAxis: AxisField, viewportWidth: number, viewportHeight: number, imageMode: AtlasImageMode): AtlasSpaceLayout {
+  if (items.length === 0) return { width: viewportWidth, height: viewportHeight, positions: new Map() };
   const viewportRatio = viewportWidth > 0 && viewportHeight > 0
     ? Math.min(2.1, Math.max(1.35, viewportWidth / viewportHeight))
     : 1.7;
-  const cardWidth = imageMode === "cropped" ? 88 : 112;
-  const cardHeight = imageMode === "cropped" ? 116 : 148;
-  const gap = imageMode === "cropped" ? 10 : 12;
-  const cellWidth = cardWidth + gap;
-  const cellHeight = cardHeight + gap;
-  const slotCount = Math.max(count, Math.ceil(count / .82));
-  const columns = Math.max(1, Math.ceil(Math.sqrt(slotCount * viewportRatio * cellHeight / cellWidth)));
-  const rows = Math.max(1, Math.ceil(slotCount / columns));
-  const padding = 24;
-  const baseWidth = Math.max(viewportWidth * 1.5, padding * 2 + columns * cellWidth);
-  const baseHeight = Math.max(viewportHeight * 1.5, padding * 2 + rows * cellHeight);
-  const usableWidth = baseWidth - padding * 2;
-  const usableHeight = baseHeight - padding * 2;
   const xPositions = atlasAxisPositions(items, xAxis, "x");
   const yPositions = atlasAxisPositions(items, yAxis, "y");
-  const free = new Set(Array.from({ length: columns * rows }, (_, index) => index));
-  const positions = new Map<string, { left: number; top: number; width: number; height: number }>();
-
-  items.forEach((item, itemIndex) => {
-    let bestCell = 0;
-    let bestDistance = Number.POSITIVE_INFINITY;
-    for (const cell of free) {
-      const column = cell % columns;
-      const row = Math.floor(cell / columns);
-      const normalizedX = columns === 1 ? .5 : column / (columns - 1);
-      const normalizedY = rows === 1 ? .5 : row / (rows - 1);
-      const distance = (normalizedX - xPositions[itemIndex]) ** 2 + (normalizedY - yPositions[itemIndex]) ** 2;
-      if (distance < bestDistance) { bestCell = cell; bestDistance = distance; }
-    }
-    free.delete(bestCell);
-    const column = bestCell % columns;
-    const row = Math.floor(bestCell / columns);
+  const cropShapes = [[68, 92], [76, 104], [84, 94], [72, 112], [90, 82]] as const;
+  const dimensions = items.map((item) => {
     const hash = [...item.id].reduce((value, character) => ((value * 31) + character.charCodeAt(0)) | 0, 0);
-    const jitterX = ((hash & 15) / 15 - .5) * gap * .55;
-    const jitterY = (((hash >>> 4) & 15) / 15 - .5) * gap * .55;
-    const left = padding + (columns === 1 ? usableWidth / 2 : (column / (columns - 1)) * (usableWidth - cellWidth) + cellWidth / 2) + jitterX;
-    const top = padding + (rows === 1 ? usableHeight / 2 : (row / (rows - 1)) * (usableHeight - cellHeight) + cellHeight / 2) + jitterY;
-    const cropShapes = [[74, 98], [82, 108], [88, 96], [78, 116]] as const;
-    const [itemWidth, itemHeight] = imageMode === "cropped" ? cropShapes[Math.abs(hash) % cropShapes.length] : [cardWidth, cardHeight];
-    positions.set(item.id, { left: left * zoom, top: top * zoom, width: itemWidth * zoom, height: itemHeight * zoom });
+    const [width, height] = imageMode === "cropped" ? cropShapes[Math.abs(hash) % cropShapes.length] : [112, 148];
+    return { width, height, hash };
   });
+  const gap = imageMode === "cropped" ? .75 : 2;
+  const padding = 18;
+  const occupiedArea = dimensions.reduce((sum, item) => sum + (item.width + gap) * (item.height + gap), 0);
+  const targetArea = occupiedArea / .88;
+  const baseWidth = Math.max(viewportWidth * 1.65, Math.sqrt(targetArea * viewportRatio));
+  const baseHeight = Math.max(viewportHeight * 1.65, Math.sqrt(targetArea / viewportRatio));
+  const nodes = items.map((item, index) => {
+    const { width, height, hash } = dimensions[index];
+    const targetX = padding + width / 2 + xPositions[index] * Math.max(1, baseWidth - padding * 2 - width);
+    const targetY = padding + height / 2 + yPositions[index] * Math.max(1, baseHeight - padding * 2 - height);
+    return {
+      id: item.id, width, height, hash, targetX, targetY,
+      x: targetX + (((hash & 31) / 31) - .5) * 12,
+      y: targetY + ((((hash >>> 5) & 31) / 31) - .5) * 12,
+    };
+  });
+  const bucketSize = Math.max(...dimensions.map((item) => Math.max(item.width, item.height))) + gap;
+  const placed: typeof nodes = [];
+  const buckets = new Map<string, number[]>();
+  const bucketKeys = (node: (typeof nodes)[number], x = node.x, y = node.y) => {
+    const keys: string[] = [];
+    const minimumColumn = Math.floor((x - node.width / 2 - gap) / bucketSize);
+    const maximumColumn = Math.floor((x + node.width / 2 + gap) / bucketSize);
+    const minimumRow = Math.floor((y - node.height / 2 - gap) / bucketSize);
+    const maximumRow = Math.floor((y + node.height / 2 + gap) / bucketSize);
+    for (let row = minimumRow; row <= maximumRow; row += 1) {
+      for (let column = minimumColumn; column <= maximumColumn; column += 1) keys.push(`${column}:${row}`);
+    }
+    return keys;
+  };
+  const fits = (node: (typeof nodes)[number], x: number, y: number) => {
+    if (x - node.width / 2 < padding || x + node.width / 2 > baseWidth - padding
+      || y - node.height / 2 < padding || y + node.height / 2 > baseHeight - padding) return false;
+    const neighbours = new Set<number>();
+    for (const key of bucketKeys(node, x, y)) for (const index of buckets.get(key) ?? []) neighbours.add(index);
+    for (const index of neighbours) {
+      const other = placed[index];
+      if (Math.abs(other.x - x) < (other.width + node.width) / 2 + gap
+        && Math.abs(other.y - y) < (other.height + node.height) / 2 + gap) return false;
+    }
+    return true;
+  };
+  const placementOrder = [...nodes].sort((left, right) => {
+    const leftDistance = (left.targetX - baseWidth / 2) ** 2 + (left.targetY - baseHeight / 2) ** 2;
+    const rightDistance = (right.targetX - baseWidth / 2) ** 2 + (right.targetY - baseHeight / 2) ** 2;
+    return leftDistance - rightDistance || left.id.localeCompare(right.id);
+  });
+  for (const node of placementOrder) {
+    let found = false;
+    for (let attempt = 0; attempt < 240; attempt += 1) {
+      const radius = attempt * 2.4;
+      const angle = attempt * 2.399963229728653;
+      const x = node.targetX + Math.cos(angle) * radius;
+      const y = node.targetY + Math.sin(angle) * radius;
+      if (!fits(node, x, y)) continue;
+      node.x = x; node.y = y; found = true; break;
+    }
+    let randomState = node.hash >>> 0;
+    for (let attempt = 0; !found && attempt < 180; attempt += 1) {
+      randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
+      const x = padding + node.width / 2 + (randomState / 0xffffffff) * (baseWidth - padding * 2 - node.width);
+      randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
+      const y = padding + node.height / 2 + (randomState / 0xffffffff) * (baseHeight - padding * 2 - node.height);
+      if (!fits(node, x, y)) continue;
+      node.x = x; node.y = y; found = true;
+    }
+    if (!found) {
+      outer: for (let y = padding + node.height / 2; y <= baseHeight - padding - node.height / 2; y += 24) {
+        for (let x = padding + node.width / 2; x <= baseWidth - padding - node.width / 2; x += 24) {
+          if (!fits(node, x, y)) continue;
+          node.x = x; node.y = y; break outer;
+        }
+      }
+    }
+    const placedIndex = placed.push(node) - 1;
+    for (const key of bucketKeys(node)) {
+      const bucket = buckets.get(key);
+      if (bucket) bucket.push(placedIndex); else buckets.set(key, [placedIndex]);
+    }
+  }
 
-  return { width: baseWidth * zoom, height: baseHeight * zoom, positions };
+  const positions = new Map(nodes.map((node) => [node.id, {
+    left: node.x, top: node.y, width: node.width, height: node.height,
+  }]));
+
+  return { width: baseWidth, height: baseHeight, positions };
+}
+
+function atlasScaledLayout(layout: AtlasSpaceLayout, zoom: number): AtlasSpaceLayout {
+  if (zoom === 1) return layout;
+  return {
+    width: layout.width * zoom,
+    height: layout.height * zoom,
+    positions: new Map([...layout.positions].map(([id, rectangle]) => [id, {
+      left: rectangle.left * zoom,
+      top: rectangle.top * zoom,
+      width: rectangle.width * zoom,
+      height: rectangle.height * zoom,
+    }])),
+  };
 }
 
 function atlasSpaceCardStyle(item: AtlasItem, layout: AtlasSpaceLayout): CSSProperties {
@@ -1196,6 +1260,7 @@ export default function Home() {
   const [zoom, setZoom] = useState(1);
   const [dragging, setDragging] = useState(false);
   const [atlasViewport, setAtlasViewport] = useState({ width: 1000, height: 650 });
+  const [atlasView, setAtlasView] = useState({ left: 0, top: 0, width: 1000, height: 650 });
   const [drawer, setDrawer] = useState<AtlasDrawer>(null);
   const [compareIds, setCompareIds] = useState<Set<string>>(() => new Set());
   const [outfitDraftIds, setOutfitDraftIds] = useState<Set<string>>(() => new Set());
@@ -1222,11 +1287,14 @@ export default function Home() {
   const atlasImageInputRef = useRef<HTMLInputElement>(null);
   const personalImageInputRef = useRef<HTMLInputElement>(null);
   const loadMoreRef = useRef<HTMLButtonElement>(null);
+  const atlasMinimapRef = useRef<HTMLCanvasElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
   const drawerCloseRef = useRef<HTMLButtonElement>(null);
   const drawerReturnFocusRef = useRef<HTMLElement | null>(null);
   const atlasZoomRef = useRef(1);
   const atlasZoomFrameRef = useRef<number | null>(null);
+  const atlasScrollTimerRef = useRef<number | null>(null);
+  const atlasViewRef = useRef({ left: 0, top: 0, width: 1000, height: 650 });
   const atlasZoomScrollRef = useRef<{ left: number; top: number } | null>(null);
   const atlasDragRef = useRef<{ x: number; y: number; left: number; top: number; pointerId: number; captured: boolean; lastX: number; lastY: number; lastAt: number; velocityX: number; velocityY: number } | null>(null);
   const atlasInertiaFrameRef = useRef<number | null>(null);
@@ -1234,6 +1302,7 @@ export default function Home() {
   const atlasDraggingRef = useRef(false);
   const atlasHoverTimerRef = useRef<number | null>(null);
   const atlasHoverCardRef = useRef<HTMLElement | null>(null);
+  const atlasLayoutCacheRef = useRef(new WeakMap<AtlasItem[], Map<string, AtlasSpaceLayout>>());
   const discoveryMonitorRef = useRef(0);
 
   async function reloadAtlasCatalog() {
@@ -1422,8 +1491,33 @@ export default function Home() {
     products.length, products[0]?.id ?? "", products.at(-1)?.id ?? "",
   ]), [activeFilter, aiItems, attributeQuery, fitFilter, includeRejected, materialFilter, maxPrice, minPrice, mode, priceFilter, products, scope, selectedOutfitBoardId, selectedSizes, sourceFilter, stockFilter, xAxis, yAxis]);
   const renderLimit = renderWindow.signature === renderSignature ? renderWindow.limit : ATLAS_PAGE_SIZE;
-  const renderedProducts = useMemo(() => mode === "space" ? products : products.slice(0, renderLimit), [mode, products, renderLimit]);
-  const spaceLayout = useMemo(() => atlasSpaceLayout(products, xAxis, yAxis, atlasViewport.width, atlasViewport.height, zoom, imageMode), [atlasViewport.height, atlasViewport.width, imageMode, products, xAxis, yAxis, zoom]);
+  const baseSpaceLayout = useMemo(() => {
+    let layouts = atlasLayoutCacheRef.current.get(products);
+    if (!layouts) { layouts = new Map(); atlasLayoutCacheRef.current.set(products, layouts); }
+    const key = `${xAxis}:${yAxis}:${atlasViewport.width}:${atlasViewport.height}:${imageMode}`;
+    const cached = layouts.get(key);
+    if (cached) return cached;
+    const layout = atlasSpaceLayout(products, xAxis, yAxis, atlasViewport.width, atlasViewport.height, imageMode);
+    layouts.set(key, layout);
+    return layout;
+  }, [atlasViewport.height, atlasViewport.width, imageMode, products, xAxis, yAxis]);
+  const spaceLayout = useMemo(() => atlasScaledLayout(baseSpaceLayout, zoom), [baseSpaceLayout, zoom]);
+  const renderedProducts = useMemo(() => {
+    if (mode === "grid") return products.slice(0, renderLimit);
+    const overscan = 360;
+    const minimumX = atlasView.left - overscan;
+    const maximumX = atlasView.left + atlasView.width + overscan;
+    const minimumY = atlasView.top - overscan;
+    const maximumY = atlasView.top + atlasView.height + overscan;
+    return products.filter((item) => {
+      const rectangle = spaceLayout.positions.get(item.id);
+      if (!rectangle) return false;
+      return rectangle.left + rectangle.width / 2 >= minimumX
+        && rectangle.left - rectangle.width / 2 <= maximumX
+        && rectangle.top + rectangle.height / 2 >= minimumY
+        && rectangle.top - rectangle.height / 2 <= maximumY;
+    });
+  }, [atlasView.height, atlasView.left, atlasView.top, atlasView.width, mode, products, renderLimit, spaceLayout.positions]);
   const categoryCounts = useMemo(() => Object.fromEntries(atlasCategories.map((filter) => [filter, filter === "Tout" ? quickFilteredCatalog.length : quickFilteredCatalog.filter((item) => item.category === filter).length])), [quickFilteredCatalog]);
   const compareItems = useMemo(() => [...compareIds].map((id) => catalogItems.find((item) => item.id === id) ?? visibleCatalog.find((item) => item.id === id)).filter(Boolean) as AtlasItem[], [catalogItems, compareIds, visibleCatalog]);
   const outfitDraftItems = useMemo(() => [...outfitDraftIds].map((id) => catalogItems.find((item) => item.id === id)).filter(Boolean) as AtlasItem[], [catalogItems, outfitDraftIds]);
@@ -1431,10 +1525,33 @@ export default function Home() {
   const wardrobeGaps = useMemo(() => ["Vestes", "Pantalons", "Mailles", "Chemises", "Chaussures"].filter((category) => !ownedItems.some((item) => item.category === category)), [ownedItems]);
   const staleCount = useMemo(() => catalogItems.filter((item) => item.kind === "shop" && atlasIsStale(item.stockCheckedAt)).length, [catalogItems]);
 
+  function scheduleAtlasView(element: HTMLDivElement) {
+    const next = { left: element.scrollLeft, top: element.scrollTop, width: element.clientWidth, height: element.clientHeight };
+    const current = atlasViewRef.current;
+    const escapedOverscan = Math.abs(next.left - current.left) > 250 || Math.abs(next.top - current.top) > 250;
+    if (atlasScrollTimerRef.current !== null) window.clearTimeout(atlasScrollTimerRef.current);
+    if (escapedOverscan) {
+      atlasScrollTimerRef.current = null;
+      atlasViewRef.current = next;
+      setAtlasView(next);
+      return;
+    }
+    atlasScrollTimerRef.current = window.setTimeout(() => {
+      atlasScrollTimerRef.current = null;
+      atlasViewRef.current = next;
+      setAtlasView(next);
+    }, 140);
+  }
+
   useEffect(() => {
     const atlas = atlasElementRef.current;
     if (!atlas) return;
-    const update = () => setAtlasViewport({ width: atlas.clientWidth, height: atlas.clientHeight });
+    const update = () => {
+      setAtlasViewport({ width: atlas.clientWidth, height: atlas.clientHeight });
+      const next = { left: atlas.scrollLeft, top: atlas.scrollTop, width: atlas.clientWidth, height: atlas.clientHeight };
+      atlasViewRef.current = next;
+      setAtlasView(next);
+    };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(atlas);
@@ -1450,9 +1567,40 @@ export default function Home() {
         left: Math.max(0, (atlas.scrollWidth - atlas.clientWidth) / 2),
         top: Math.max(0, (atlas.scrollHeight - atlas.clientHeight) / 2),
       });
+      const next = { left: atlas.scrollLeft, top: atlas.scrollTop, width: atlas.clientWidth, height: atlas.clientHeight };
+      atlasViewRef.current = next;
+      setAtlasView(next);
     });
     return () => cancelAnimationFrame(frame);
   }, [imageMode, mode, renderSignature]);
+
+  useEffect(() => {
+    const canvas = atlasMinimapRef.current;
+    if (!canvas || mode !== "space") return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    const width = canvas.width;
+    const height = canvas.height;
+    const scaleX = width / Math.max(1, spaceLayout.width);
+    const scaleY = height / Math.max(1, spaceLayout.height);
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = "rgba(239, 235, 226, .94)";
+    context.fillRect(0, 0, width, height);
+    for (const item of products) {
+      const rectangle = spaceLayout.positions.get(item.id);
+      if (!rectangle) continue;
+      context.fillStyle = item.decision === "saved" ? "#9a6148" : item.kind === "reference" ? "#66705d" : "#8b8377";
+      context.fillRect(
+        (rectangle.left - rectangle.width / 2) * scaleX,
+        (rectangle.top - rectangle.height / 2) * scaleY,
+        Math.max(1.5, rectangle.width * scaleX),
+        Math.max(1.5, rectangle.height * scaleY),
+      );
+    }
+    context.strokeStyle = "#332c24";
+    context.lineWidth = 3;
+    context.strokeRect(atlasView.left * scaleX, atlasView.top * scaleY, atlasView.width * scaleX, atlasView.height * scaleY);
+  }, [atlasView.height, atlasView.left, atlasView.top, atlasView.width, mode, products, spaceLayout]);
 
   useEffect(() => {
     const target = loadMoreRef.current;
@@ -1657,6 +1805,23 @@ export default function Home() {
     return () => atlas.removeEventListener("wheel", handleNativeWheel);
   }, [mode]);
 
+  function navigateAtlasMinimap(event: ReactPointerEvent<HTMLCanvasElement>) {
+    if (event.type === "pointermove" && event.buttons !== 1) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.type === "pointerdown") event.currentTarget.setPointerCapture(event.pointerId);
+    const atlas = atlasElementRef.current;
+    if (!atlas) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const ratioX = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
+    const ratioY = Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height));
+    atlas.scrollTo({
+      left: ratioX * atlas.scrollWidth - atlas.clientWidth / 2,
+      top: ratioY * atlas.scrollHeight - atlas.clientHeight / 2,
+    });
+    scheduleAtlasView(atlas);
+  }
+
   function startAtlasPan(event: ReactPointerEvent<HTMLDivElement>) {
     const target = event.target as HTMLElement;
     if (mode !== "space" || event.button !== 0 || target.closest("button, input, select, textarea") || (target.closest("a") && !target.closest(".productLinkOverlay"))) return;
@@ -1738,11 +1903,12 @@ export default function Home() {
     atlasHoverTimerRef.current = null;
     clearNaturalPreviewGeometry(atlasHoverCardRef.current);
     atlasHoverCardRef.current = null;
-  }, [mode, zoom]);
+  }, [imageMode, mode, zoom]);
 
   useEffect(() => () => {
     if (atlasHoverTimerRef.current !== null) window.clearTimeout(atlasHoverTimerRef.current);
     if (atlasZoomFrameRef.current !== null) cancelAnimationFrame(atlasZoomFrameRef.current);
+    if (atlasScrollTimerRef.current !== null) window.clearTimeout(atlasScrollTimerRef.current);
     if (atlasInertiaFrameRef.current !== null) cancelAnimationFrame(atlasInertiaFrameRef.current);
     discoveryMonitorRef.current += 1;
   }, []);
@@ -2254,7 +2420,7 @@ export default function Home() {
           </div>}
         </div>
 
-        <div ref={atlasElementRef} className={`${mode === "space" ? "atlas spaceMode" : "atlas gridMode"}${dragging ? " dragging" : ""}`} onPointerDown={startAtlasPan} onPointerMove={atlasPan} onPointerUp={stopAtlasPan} onPointerCancel={stopAtlasPan}>
+        <div ref={atlasElementRef} className={`${mode === "space" ? "atlas spaceMode" : "atlas gridMode"}${dragging ? " dragging" : ""}`} onScroll={(event) => scheduleAtlasView(event.currentTarget)} onPointerDown={startAtlasPan} onPointerMove={atlasPan} onPointerUp={stopAtlasPan} onPointerCancel={stopAtlasPan}>
           <div className="atlasCanvas" style={mode === "space" ? ({ width: spaceLayout.width, height: spaceLayout.height } as CSSProperties) : undefined}>
             {renderedProducts.map((item, index) => (
               <article
@@ -2273,7 +2439,7 @@ export default function Home() {
                   <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={item.decision === "rejected" ? "active reject" : "reject"} onClick={() => void setAtlasDecision(item, "rejected")} aria-label={`Rejeter ${item.name}`} title="Rejeter (R)">×</button>
                 </div>
                 {item.url && item.kind === "shop" && <a tabIndex={index === effectiveFocusedIndex ? 0 : -1} className="productLinkOverlay" href={item.url} target="_blank" rel="noopener noreferrer" aria-label={`Ouvrir ${item.brand} — ${item.name}`} onClick={(event) => { if (!atlasSuppressClickRef.current) return; event.preventDefault(); atlasSuppressClickRef.current = false; }} />}
-                <div className="productImage" style={{ backgroundPosition: item.crop }}>{item.image && <img src={item.image} alt="" loading="lazy" decoding="async" onLoad={(event) => {
+                <div className={`productImage${item.image ? " hasImage" : ""}`} style={{ backgroundPosition: item.crop }}>{item.image && <img src={item.image} alt="" loading="lazy" decoding="async" onLoad={(event) => {
                   const card = event.currentTarget.closest<HTMLElement>(".productCard");
                   if (mode === "space" && card && atlasHoverCardRef.current === card && card.matches(":hover") && card.style.getPropertyValue("--hover-scale")) applyNaturalPreviewGeometry(card);
                 }} />}</div>
@@ -2297,6 +2463,7 @@ export default function Home() {
             {mode === "grid" && renderLimit < products.length && <button ref={loadMoreRef} className="loadMore" onClick={() => setRenderWindow((current) => ({ signature: renderSignature, limit: Math.min((current.signature === renderSignature ? current.limit : ATLAS_PAGE_SIZE) + ATLAS_PAGE_SIZE, products.length) }))}>Afficher {Math.min(ATLAS_PAGE_SIZE, products.length - renderLimit)} de plus</button>}
           </div>
         </div>
+        {mode === "space" && <canvas ref={atlasMinimapRef} className="atlasMinimap" width={360} height={220} aria-label="Minimap du board" onPointerDown={navigateAtlasMinimap} onPointerMove={navigateAtlasMinimap} />}
 
         <footer className="boardFooter atlasBoardFooter"><span><b>{products.length}</b> pièces · {renderedProducts.length} rendues{staleCount ? ` · ${staleCount} à vérifier` : ""}</span><span>Flèches naviguent · S garde · R rejette · C compare · ⌘Z annule</span><span>Placement X/Y · voisinage visuel</span></footer>
       </section>
