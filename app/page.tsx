@@ -1568,6 +1568,9 @@ export default function Home() {
   const sizeFacetCatalog = useMemo(() => catalogBeforeSize.filter((item) => activeFilter === "Tout" || item.category === activeFilter), [activeFilter, catalogBeforeSize]);
   const knownSizeCount = useMemo(() => sizeFacetCatalog.filter((item) => item.kind === "shop" && item.decision !== "owned"
     && item.sizeAvailabilityKnown && item.stockStatus === "in_stock" && !atlasIsStale(item.sizesCheckedAt)).length, [sizeFacetCatalog]);
+  const uncheckedGarmentItems = useMemo(() => sizeFacetCatalog.filter((item) => item.kind === "shop" && item.decision !== "owned"
+    && ["Vestes", "Pantalons", "Mailles", "Chemises", "T-shirts"].includes(item.category)
+    && (!item.sizeAvailabilityKnown || atlasIsStale(item.sizesCheckedAt))), [sizeFacetCatalog]);
   const sizeCounts = useMemo(() => Object.fromEntries(sizeOptions.map((size) => [size, sizeFacetCatalog.filter((item) => atlasHasSize(item, size)).length])), [sizeFacetCatalog, sizeOptions]);
   const selectedSizeMatchCount = useMemo(() => sizeFacetCatalog.filter((item) => {
     if (!selectedSizes.length || item.kind !== "shop" || item.decision === "owned") return true;
@@ -2277,14 +2280,28 @@ export default function Home() {
   }
 
   async function startAtlasRefresh(productIds: string[]) {
-    const ids = [...new Set(productIds)].filter((id) => catalogItems.some((item) => item.id === id && item.kind === "shop"));
-    if (!ids.length || refreshJob && !(refreshJob.terminal ?? ATLAS_TERMINAL_REFRESH_STATUSES.includes(refreshJob.status))) return;
+    // Callers already derive IDs from shop-only AtlasItem collections. Keep the
+    // request independent from a possibly stale catalog closure after a reload;
+    // the API remains the authority and drops non-shop IDs defensively.
+    const ids = [...new Set(productIds)].filter(Boolean).slice(0, 120);
+    if (!ids.length) return;
     setToast(`Rafraîchissement de ${ids.length} fiche${ids.length > 1 ? "s" : ""}…`);
     try {
       const response = await fetch(`${ATLAS_API}/acquisition/jobs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ productIds: ids }) });
-      if (!response.ok) throw new Error("queue unavailable");
+      if (!response.ok) throw new Error(await response.text() || "queue unavailable");
       await monitorAtlasRefresh(await response.json() as AtlasAcquisitionJob);
-    } catch { setToast("Rafraîchissement interrompu — reprise disponible"); }
+    } catch (error) { setToast(`Rafraîchissement indisponible — ${error instanceof Error ? error.message : "reprise disponible"}`); }
+  }
+
+  async function startAtlasUnknownSizeRefresh() {
+    setToast("Préparation de 120 fiches M/L…");
+    try {
+      const response = await fetch(`${ATLAS_API}/acquisition/jobs/unknown-sizes`, { method: "POST" });
+      if (!response.ok) throw new Error(await response.text() || "queue unavailable");
+      await monitorAtlasRefresh(await response.json() as AtlasAcquisitionJob);
+    } catch (error) {
+      setToast(`Vérification M/L indisponible — ${error instanceof Error ? error.message : "réessaie plus tard"}`);
+    }
   }
 
   async function retryAtlasRefresh() {
@@ -2512,6 +2529,7 @@ export default function Home() {
               <div className="sizeFilterHeader"><strong>Disponibilité exacte</strong><span>{knownSizeCount} fiches fraîches</span></div>
               <div className="sizeChoiceGrid">{sizeOptions.map((size) => <button type="button" key={size} className={selectedSizes.includes(size) ? "active" : ""} aria-pressed={selectedSizes.includes(size)} onClick={() => toggleAtlasSize(size)}><span>{size}</span><b>{sizeCounts[size] ?? 0}</b></button>)}</div>
               <div className="sizeFilterActions"><button type="button" onClick={() => setSelectedSizes([])}>Toutes</button><button type="button" onClick={() => setSelectedSizes(["M", "L"])}>M ou L</button></div>
+              {uncheckedGarmentItems.length > 0 && <button type="button" className="sizeRefreshButton" disabled={Boolean(refreshJob && !(refreshJob.terminal ?? ATLAS_TERMINAL_REFRESH_STATUSES.includes(refreshJob.status)))} onClick={() => void startAtlasUnknownSizeRefresh()}>↻ Vérifier M/L · {Math.min(120, uncheckedGarmentItems.length)}/{uncheckedGarmentItems.length}</button>}
               <p>OU entre les tailles · stock connu · vérifié sous 48 h.</p>
             </div>
           </details>
@@ -2539,7 +2557,7 @@ export default function Home() {
               <button className="attachButton" type="button" onClick={() => atlasImageInputRef.current?.click()} aria-label="Ajouter des images" title="Ajouter ou coller un mood board">＋ img</button>
               <select className="reasoningSelect" value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as "low" | "medium")} aria-label="Niveau de réflexion Luna"><option value="low">Luna low</option><option value="medium">Luna medium</option></select>
               <button type="button" className="filterButton" onClick={() => void askAtlasCodex()}>Filtrer</button>
-              <button type="button" className="discoverButton" disabled={discoveryBusy || !aiPrompt.trim()} aria-busy={discoveryBusy} onClick={() => void startAtlasDiscovery()} title="Faire planifier puis exécuter une recherche locale sur les shops">{discoveryBusy ? "Trouve…" : "Trouver"}</button>
+              <button type="button" className="discoverButton" disabled={discoveryBusy || !aiPrompt.trim()} aria-busy={discoveryBusy} onClick={() => void startAtlasDiscovery()} title="Planifier une recherche locale · Zalando s’ouvre dans un Chrome visible, AliExpress reste en arrière-plan">{discoveryBusy ? "Trouve…" : "Trouver"}</button>
               <button type="button" className="visionButton" title="Vision 1×1 ou Planche + détail" disabled={visualBusy} onClick={() => void askAtlasVision()}>{visualBusy ? "Analyse…" : "Vision"}</button>
             </label>
             {(promptImages.length > 0 || aiStatus) && (
@@ -2568,7 +2586,7 @@ export default function Home() {
               <article
                 className={`productCard ${item.kind === "reference" ? "referenceCard" : ""} decision-${item.decision}${compareIds.has(item.id) ? " comparing" : ""}${outfitDraftIds.has(item.id) ? " inOutfit" : ""}`}
                 key={item.id} style={mode === "space" ? atlasSpaceCardStyle(item, spaceLayout) : undefined} title={item.reason}
-                data-card-index={index} data-product-id={item.id} tabIndex={index === effectiveFocusedIndex ? 0 : -1}
+                data-card-index={index} data-product-id={item.id} data-source={item.kind === "shop" ? item.source : undefined} tabIndex={index === effectiveFocusedIndex ? 0 : -1}
                 aria-label={`${item.brand}, ${item.name}, ${atlasDecisionLabel(item.decision)}`}
                 onFocus={() => setFocusedIndex(index)} onKeyDown={(event) => handleAtlasCardKey(event, item, index)} onPointerEnter={prepareAtlasPreview}
                 onPointerLeave={(event) => cancelAtlasPreview(event.currentTarget)}
@@ -2714,6 +2732,7 @@ export default function Home() {
                 {!previewProduct.images.length && !previewProduct.image && <div className="productPreviewNoImage">Aucune image capturée</div>}
               </div>
               <aside className="productPreviewFacts">
+                <section><span>Prix</span><strong>{previewProduct.price == null ? "Inconnu" : <>{previewProduct.currency} {previewProduct.price.toFixed(2)}{previewProduct.originalPrice && previewProduct.originalPrice > previewProduct.price ? <del>{previewProduct.currency} {previewProduct.originalPrice.toFixed(2)}</del> : null}</>}</strong><small>Prix {atlasTimestamp(previewProduct.priceCheckedAt)}</small></section>
                 <section><span>Disponibilité</span><strong>{previewProduct.stockStatus === "in_stock" ? "En stock" : previewProduct.stockStatus === "out_of_stock" ? "Épuisé" : "À vérifier"}</strong><small>Stock {atlasTimestamp(previewProduct.stockCheckedAt)}</small></section>
                 <section><span>Tailles</span><div className="productPreviewSizes">{previewProduct.sizeAvailabilityKnown ? previewProduct.sizes.length ? previewProduct.sizes.map((size) => <b key={size}>{size}</b>) : <em>Épuisé</em> : <em>Pas encore vérifiées</em>}</div><small>Tailles {atlasTimestamp(previewProduct.sizesCheckedAt)}</small></section>
                 <section><span>Détails</span><dl><div><dt>Catégorie</dt><dd>{previewProduct.category}</dd></div><div><dt>Couleur</dt><dd>{previewProduct.color}</dd></div><div><dt>Coupe</dt><dd>{previewProduct.fit}</dd></div><div><dt>Matière</dt><dd>{previewProduct.materials.join(", ") || "Inconnue"}</dd></div><div><dt>Retours</dt><dd>{previewProduct.returnsLabel ?? (previewProduct.returnsWindowDays ? `${previewProduct.returnsWindowDays} jours` : "Inconnus")}</dd></div></dl></section>

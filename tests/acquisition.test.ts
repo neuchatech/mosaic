@@ -171,7 +171,7 @@ test("a reliable detail observation updates stock, raw/canonical sizes and disti
   assert.deepEqual(merged.attributes.rawSizes, ["Taille: XL", "W 32 / L 34"]);
 });
 
-test("the detail queue is serial, retries transient failures, and only retries blocks explicitly", async () => {
+test("the detail queue is serial, retries transient failures, and stops at a shop-level block", async () => {
   const products = [product("one"), product("two"), product("three")];
   const repository = new MemoryRepository(products);
   const calls = new Map<string, number>();
@@ -215,10 +215,10 @@ test("the detail queue is serial, retries transient failures, and only retries b
 
   assert.equal(maxActive, 1);
   assert.equal(firstRun.status, "blocked");
-  assert.equal(firstRun.progress, 1);
+  assert.equal(firstRun.progress, 2 / 3);
   assert.equal(firstRun.items.find((item) => item.productId === "one")?.attempts, 2);
   assert.equal(firstRun.items.find((item) => item.productId === "two")?.attempts, 1);
-  assert.equal(firstRun.items.find((item) => item.productId === "three")?.status, "succeeded");
+  assert.equal(firstRun.items.find((item) => item.productId === "three")?.status, "queued");
   assert.equal(repository.getProduct("one")?.decision, "saved");
 
   service.retry(started.id);
@@ -250,6 +250,37 @@ test("automatic retries are capped at two after the initial attempt", async () =
   assert.equal(finished.status, "failed");
   assert.equal(calls, 3);
   assert.equal(finished.items[0]?.attempts, 3);
+  await service.close();
+});
+
+test("HTTP 429 pauses the same item before retrying instead of hammering later products", async () => {
+  const products = [product("limited"), product("after-limit")];
+  const repository = new MemoryRepository(products);
+  const calls: string[] = [];
+  const cooldowns: number[] = [];
+  let clock = Date.parse(observed);
+  const service = new AcquisitionService(repository, {
+    fetcher: {
+      async fetch(target) {
+        calls.push(target.productId);
+        if (target.productId === "limited" && calls.length === 1) {
+          throw new AcquisitionBlockedError("Shop access stopped with HTTP 429; no bypass was attempted.");
+        }
+        return { url: target.url, name: target.productId, stockStatus: "unknown" };
+      },
+    },
+    sameDomainDelayMs: 0,
+    rateLimitCooldownMs: 30_000,
+    maxRateLimitRetries: 1,
+    now: () => new Date(clock),
+    sleep: async (milliseconds) => { cooldowns.push(milliseconds); clock += milliseconds; },
+    idFactory: ids(),
+  });
+  const started = service.start({ targets: products.map(({ id, url }) => ({ productId: id, url })) });
+  const finished = await service.waitFor(started.id);
+  assert.equal(finished.status, "succeeded");
+  assert.deepEqual(calls, ["limited", "limited", "after-limit"]);
+  assert.deepEqual(cooldowns, [30_000]);
   await service.close();
 });
 

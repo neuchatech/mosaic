@@ -159,6 +159,7 @@ test("AliExpress helpers keep canonical public item identity and only parse visi
   assert.equal(parseAliExpressChfPrice("Offer CHF 12.40 - CHF 19.00"), 12.4);
   assert.equal(parseAliExpressChfPrice("Prix Fr. 1’234,50"), 1234.5);
   assert.equal(parseAliExpressChfPrice("US $12.40"), null);
+  assert.equal(parseAliExpressChfPrice("CHF 32 21 vendus"), 32);
   assert.match(classifyAliExpressAccessBlock({
     pageUrl: "https://www.aliexpress.com/p/captcha/verify",
     title: "Security verification",

@@ -32,9 +32,13 @@ function parseLocalizedNumber(value: string): number | null {
 
 /** Only returns a price when the public text explicitly labels it as CHF. */
 export function parseAliExpressChfPrice(text: string): number | null {
-  const prefix = text.match(/(?:CHF|Fr\.?)\s*([0-9][0-9\s\u00a0'’.,]*)/i);
+  // Card text often places sales/count labels immediately after the price.
+  // Capture one localized number instead of greedily joining every following
+  // digit (for example `CHF 32 21 sold` must stay CHF 32, not CHF 3'221).
+  const localized = String.raw`(?:\d{1,3}(?:[\s\u00a0'’]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)`;
+  const prefix = text.match(new RegExp(String.raw`(?:CHF|Fr\.?)\s*(${localized})`, "i"));
   if (prefix) return parseLocalizedNumber(prefix[1]);
-  const suffix = text.match(/([0-9][0-9\s\u00a0'’.,]*)\s*(?:CHF|Fr\.?)(?![a-z])/i);
+  const suffix = text.match(new RegExp(String.raw`(${localized})\s*(?:CHF|Fr\.?)(?![a-z])`, "i"));
   return suffix ? parseLocalizedNumber(suffix[1]) : null;
 }
 

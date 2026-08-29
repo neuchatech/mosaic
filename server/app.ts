@@ -137,6 +137,17 @@ export function createApp(
   const discoveryForJob = (id: string) => interactiveDiscoveryJobs.has(id)
     ? getInteractiveDiscovery()
     : discovery;
+  const startDiscoveryIntents = (intents: DiscoveryIntent[]) => {
+    const backgroundIntents = intents.filter((intent) => intent.source !== "zalando-ch");
+    const visibleIntents = intents.filter((intent) => intent.source === "zalando-ch");
+    const jobs = backgroundIntents.length ? discovery.startBatch({ intents: backgroundIntents }) : [];
+    if (visibleIntents.length) {
+      const visibleJobs = getInteractiveDiscovery().startBatch({ intents: visibleIntents });
+      visibleJobs.forEach((job) => interactiveDiscoveryJobs.add(job.id));
+      jobs.push(...visibleJobs);
+    }
+    return jobs;
+  };
   app.use("/api/*", cors({ origin: ["http://localhost:3000", "http://127.0.0.1:3000"] }));
 
   app.get("/health", (context) => context.json({ ok: true }));
@@ -359,7 +370,7 @@ export function createApp(
     const body = await context.req.json<{ intent?: DiscoveryIntent; intents?: DiscoveryIntent[] }>();
     const intents = body.intents ?? (body.intent ? [body.intent] : []);
     try {
-      const jobs = discovery.startBatch({ intents });
+      const jobs = startDiscoveryIntents(intents);
       return context.json({ jobs }, 202);
     } catch (error) {
       return context.json({ error: error instanceof Error ? error.message : "discovery unavailable" }, 400);
@@ -397,13 +408,38 @@ export function createApp(
   });
   app.post("/api/acquisition/jobs", async (context) => {
     const body = z.object({ productIds: z.array(z.string().min(1)).min(1).max(120) }).parse(await context.req.json());
+    const seenUrls = new Set<string>();
     const targets = body.productIds.flatMap((id) => {
       const product = repository.getProduct(id);
-      return product?.kind === "shop" ? [{ productId: product.id, url: product.url }] : [];
+      if (product?.kind !== "shop" || seenUrls.has(product.url)) return [];
+      seenUrls.add(product.url);
+      return [{ productId: product.id, url: product.url }];
     });
     if (!targets.length) return context.json({ error: "no refreshable shop products" }, 400);
     try { return context.json(acquisitionClientView(acquisition.start({ targets })), 202); }
     catch (error) { return context.json({ error: error instanceof Error ? error.message : "acquisition unavailable" }, 400); }
+  });
+  app.post("/api/acquisition/jobs/unknown-sizes", (context) => {
+    const garmentCategories = new Set(["Vestes", "Pantalons", "Mailles", "Chemises", "T-shirts"]);
+    const freshAfter = Date.now() - 48 * 60 * 60 * 1_000;
+    const seenUrls = new Set<string>();
+    const targets = repository.listProducts({ limit: 10_000 })
+      .filter((product) => product.kind === "shop" && product.decision !== "owned" && garmentCategories.has(product.category))
+      .filter((product) => !product.sizesCheckedAt || Date.parse(product.sizesCheckedAt) < freshAfter)
+      .sort((left, right) => {
+        const leftPriority = left.decision === "saved" ? 0 : 1;
+        const rightPriority = right.decision === "saved" ? 0 : 1;
+        return leftPriority - rightPriority || left.importedAt.localeCompare(right.importedAt);
+      })
+      .flatMap((product) => {
+        if (seenUrls.has(product.url)) return [];
+        seenUrls.add(product.url);
+        return [{ productId: product.id, url: product.url }];
+      })
+      .slice(0, 120);
+    if (!targets.length) return context.json({ error: "no garment needs a size refresh" }, 400);
+    try { return context.json(acquisitionClientView(acquisition.start({ targets, source: "size-enrichment" })), 202); }
+    catch (error) { return context.json({ error: error instanceof Error ? error.message : "size acquisition unavailable" }, 400); }
   });
   app.get("/api/acquisition/jobs/:id", (context) => {
     const job = acquisition.get(context.req.param("id"));
@@ -503,7 +539,7 @@ export function createApp(
         ...(search.minPrice > 0 ? { minPrice: search.minPrice } : {}),
         ...(search.maxPrice > 0 ? { maxPrice: search.maxPrice } : {}),
       }));
-      const jobs = discovery.startBatch({ intents });
+      const jobs = startDiscoveryIntents(intents);
       return context.json({ plan, jobs }, 202);
     } catch (error) {
       console.error(error);

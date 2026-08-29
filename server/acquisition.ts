@@ -142,6 +142,8 @@ type MutableJob = AcquisitionJobSnapshot & {
 type AcquisitionServiceOptions = {
   fetcher?: DetailFetcher;
   sameDomainDelayMs?: number;
+  rateLimitCooldownMs?: number;
+  maxRateLimitRetries?: number;
   maxRetries?: number;
   now?: () => Date;
   sleep?: (milliseconds: number) => Promise<void>;
@@ -320,6 +322,8 @@ export function acquisitionClientView(job: AcquisitionJobSnapshot): AcquisitionC
 export class AcquisitionService {
   private readonly fetcher: DetailFetcher;
   private readonly sameDomainDelayMs: number;
+  private readonly rateLimitCooldownMs: number;
+  private readonly maxRateLimitRetries: number;
   private readonly maxRetries: number;
   private readonly now: () => Date;
   private readonly sleep: (milliseconds: number) => Promise<void>;
@@ -329,11 +333,14 @@ export class AcquisitionService {
   private readonly runs = new Map<string, Promise<void>>();
   private readonly activeRuns = new Set<string>();
   private readonly lastRequestAt = new Map<string, number>();
+  private readonly blockedHostsUntil = new Map<string, number>();
   private queue: Promise<void> = Promise.resolve();
 
   constructor(private readonly repository: AcquisitionRepository, options: AcquisitionServiceOptions = {}) {
     this.fetcher = options.fetcher ?? new PlaywrightDetailFetcher();
-    this.sameDomainDelayMs = Math.max(0, options.sameDomainDelayMs ?? 1_500);
+    this.sameDomainDelayMs = Math.max(0, options.sameDomainDelayMs ?? 5_000);
+    this.rateLimitCooldownMs = Math.max(0, options.rateLimitCooldownMs ?? 5 * 60_000);
+    this.maxRateLimitRetries = Math.max(0, options.maxRateLimitRetries ?? 12);
     this.maxRetries = Math.min(2, Math.max(0, options.maxRetries ?? 2));
     this.now = options.now ?? (() => new Date());
     this.sleep = options.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
@@ -557,7 +564,7 @@ export class AcquisitionService {
     const run = this.queue
       .then(() => this.run(job))
       .catch((error) => {
-        if (!terminal(job.status)) this.finish(job, "failed", errorMessage(error));
+        if (!terminal(job.status)) this.finish(job, error instanceof AcquisitionBlockedError ? "blocked" : "failed", errorMessage(error));
       })
       .finally(() => this.activeRuns.delete(job.id));
     this.queue = run.catch(() => undefined);
@@ -602,6 +609,7 @@ export class AcquisitionService {
     this.emit(job);
 
     let retries = 0;
+    let rateLimitRetries = 0;
     while (retries <= this.maxRetries) {
       if (job.cancelRequested) {
         this.cancelRunningItem(job, item);
@@ -640,13 +648,34 @@ export class AcquisitionService {
           return;
         }
         if (error instanceof AcquisitionBlockedError) {
+          if (/HTTP 429/i.test(error.message) && rateLimitRetries < this.maxRateLimitRetries) {
+            const host = new URL(item.url).hostname;
+            const blockedUntil = this.now().getTime() + this.rateLimitCooldownMs;
+            this.blockedHostsUntil.set(host, blockedUntil);
+            rateLimitRetries += 1;
+            item.error = `${error.message} Paused until ${new Date(blockedUntil).toISOString()}.`;
+            this.emit(job);
+            try {
+              await this.waitForCooldown(job.abortController.signal);
+            } catch {
+              this.cancelRunningItem(job, item);
+              return;
+            }
+            continue;
+          }
           item.status = "blocked";
           item.error = error.message;
           item.finishedAt = this.now().toISOString();
+          if (/HTTP 429/i.test(error.message)) {
+            this.blockedHostsUntil.set(new URL(item.url).hostname, this.now().getTime() + this.rateLimitCooldownMs);
+          }
           this.repository.blockAcquisitionItem?.(job.id, item.id, error.message);
           this.recount(job);
           this.emit(job);
-          return;
+          // A shop-level block applies to the whole domain, not just this
+          // product. Leave the remaining items queued for an explicit resume
+          // instead of repeating the same rejected request dozens of times.
+          throw error;
         }
         item.error = errorMessage(error);
         retries += 1;
@@ -676,12 +705,33 @@ export class AcquisitionService {
   private async throttle(url: string): Promise<void> {
     const host = new URL(url).hostname;
     const now = this.now().getTime();
+    const blockedUntil = this.blockedHostsUntil.get(host) ?? 0;
+    if (blockedUntil > now) {
+      throw new AcquisitionBlockedError(`Shop rate-limit cooldown active until ${new Date(blockedUntil).toISOString()}; resume later.`);
+    }
+    if (blockedUntil) this.blockedHostsUntil.delete(host);
     const last = this.lastRequestAt.get(host);
     if (last !== undefined) {
       const remaining = this.sameDomainDelayMs - (now - last);
       if (remaining > 0) await this.sleep(remaining);
     }
     this.lastRequestAt.set(host, this.now().getTime());
+  }
+
+  private async waitForCooldown(signal: AbortSignal): Promise<void> {
+    if (this.rateLimitCooldownMs <= 0) return;
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        callback();
+      };
+      const onAbort = () => finish(() => reject(new AcquisitionCancelledError("Acquisition cancelled during shop cooldown.")));
+      signal.addEventListener("abort", onAbort, { once: true });
+      void this.sleep(this.rateLimitCooldownMs).then(() => finish(resolve), (error) => finish(() => reject(error)));
+    });
   }
 
   private recount(job: MutableJob): void {

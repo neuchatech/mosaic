@@ -272,6 +272,11 @@ button { color: inherit; font: inherit; }
 .sizeFilterActions button, .resetFilters {
   min-height: 27px; border: 1px solid var(--line); border-radius: 6px; background: white; color: #696158; cursor: pointer; font-size: 7px;
 }
+.sizeRefreshButton {
+  width: 100%; min-height: 31px; border: 1px solid #aa8069; border-radius: 7px; background: #f2e5dc; color: #684a3b;
+  cursor: pointer; font-size: 8px; font-weight: 700;
+}
+.sizeRefreshButton:disabled { cursor: wait; opacity: .55; }
 .sizeFilterPopover p { margin: 0; color: #8c8479; font-size: 7px; line-height: 1.35; }
 .atlasFilterBar .imageModeButton { min-width: 76px; height: 31px; padding: 3px 6px; }
 .atlasFilterBar .imageModeButton strong { overflow: hidden; text-overflow: ellipsis; }
@@ -375,7 +380,14 @@ button { color: inherit; font: inherit; }
 }
 .atlasBoardPanel .productCard.decision-rejected { filter: saturate(.4) brightness(.77); }
 .atlasBoardPanel .productCard.decision-rejected:hover { filter: saturate(.6) brightness(.9); }
-.atlasBoardPanel .productCard.decision-saved { box-shadow: inset 0 0 0 1px #f4dec7a6; }
+.atlasBoardPanel .productCard.decision-saved { outline: 2px solid #c94d44; outline-offset: -2px; }
+.atlasBoardPanel .productCard[data-source="zalando-ch"]::after,
+.atlasBoardPanel .productCard[data-source="aliexpress"]::after {
+  content: ""; position: absolute; z-index: 6; right: 0; bottom: 0; left: 0; height: 3px;
+  pointer-events: none;
+}
+.atlasBoardPanel .productCard[data-source="zalando-ch"]::after { background: #e66f42; }
+.atlasBoardPanel .productCard[data-source="aliexpress"]::after { background: #7254a2; }
 
 .cardActions {
   position: absolute; z-index: 7; top: 4px; right: 4px; display: flex; gap: 2px;
@@ -390,8 +402,7 @@ button { color: inherit; font: inherit; }
 .cardActions button.reject.active, .cardActions button.reject:hover { background: #774235; color: #fff; }
 .atlasBoardPanel .productLinkOverlay { z-index: 3; top: 31px; }
 .atlasBoardPanel .productMeta { pointer-events: none; }
-.imageMode-cropped .spaceMode .productCard:hover .productImage { background: #f1eee7; }
-.imageMode-cropped .spaceMode .productCard:hover .productImage img { object-fit: contain; }
+.imageMode-cropped .spaceMode .productCard:hover .productImage img { width: 100%; height: 100%; object-fit: cover; }
 .imageMode-cropped .spaceMode .productMeta { inset: auto auto 5px 5px; width: auto; padding: 0; background: none; }
 .imageMode-cropped .spaceMode .productMeta .scoreRow,
 .imageMode-cropped .spaceMode .productMeta h3,
@@ -548,6 +559,7 @@ body:has(.compareDock) .toast { bottom: 61px; }
 .productPreviewFacts section:first-child { padding-top: 0; }
 .productPreviewFacts section > span { color: #938a7c; font: 700 7px/1.1 var(--font-geist-mono); letter-spacing: .08em; text-transform: uppercase; }
 .productPreviewFacts section > strong { color: #413b33; font: 500 18px/1.15 Georgia, serif; }
+.productPreviewFacts section > strong del { margin-left: 7px; color: #9a9185; font: 500 9px/1 var(--font-geist-mono); }
 .productPreviewFacts section > small { color: #968e83; font-size: 7px; }
 .productPreviewSizes { display: flex; flex-wrap: wrap; gap: 4px; }
 .productPreviewSizes b { min-width: 27px; padding: 5px 6px; border: 1px solid #c9c1b5; border-radius: 5px; background: white; color: #554d43; font-size: 8px; text-align: center; }
