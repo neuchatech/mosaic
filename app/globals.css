@@ -427,7 +427,7 @@ button { color: inherit; font: inherit; }
 }
 .cardActions button:hover, .cardActions button:focus-visible, .cardActions button.active { background: #f8f3e9; color: var(--clay); outline: none; }
 .cardActions button.reject.active, .cardActions button.reject:hover { background: #774235; color: #fff; }
-.atlasBoardPanel .productLinkOverlay { z-index: 3; top: 31px; }
+.atlasBoardPanel .productLinkOverlay { z-index: 3; }
 .atlasBoardPanel .productMeta { pointer-events: none; }
 .imageMode-cropped .spaceMode .productCard:hover .productImage img { width: 100%; height: 100%; object-fit: cover; }
 .imageMode-cropped .spaceMode .productMeta { inset: auto auto 5px 5px; width: auto; padding: 0; background: none; }
