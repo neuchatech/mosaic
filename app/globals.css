@@ -493,7 +493,7 @@ body:has(.compareDock) .toast { bottom: 61px; }
 .iconDanger:hover { background: #f6ebe5; }
 
 .personalForm { display: grid; align-content: start; gap: 10px; }
-.kindSwitch { display: grid; grid-template-columns: 1fr 1fr; }
+.kindSwitch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .kindSwitch button { min-height: 31px; }
 .imageDrop { min-height: 115px; display: grid; place-content: center; justify-items: center; gap: 4px; border: 1px dashed #bdb4a7; border-radius: 9px; background: #f5f2eb; color: #736b60; cursor: pointer; }
 .imageDrop > span { font-size: 20px; font-weight: 300; }

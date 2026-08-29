@@ -85,5 +85,12 @@ export type ShopAdapter = {
   matches(url: URL): boolean;
   extractListing(page: Page): Promise<RawProduct[]>;
   extractDetail(page: Page): Promise<RawProduct | null>;
+  /**
+   * Optional server-rendered HTML readers. They let a shop expose its public
+   * structured data without first navigating an automated browser. Dynamic
+   * shops can omit them and keep using the Playwright fallback.
+   */
+  extractListingHtml?(html: string, pageUrl: string): Promise<RawProduct[]> | RawProduct[];
+  extractDetailHtml?(html: string, pageUrl: string): Promise<RawProduct | null> | RawProduct | null;
   discovery?: ShopDiscoveryAdapter;
 };

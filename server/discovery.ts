@@ -19,6 +19,7 @@ import type {
   RawProduct,
 } from "../collector/types";
 import { classifyAccessBlock } from "./acquisition";
+import { fetchPublicHtml } from "./public-html";
 
 export type DiscoveryStatus =
   | "queued"
@@ -872,6 +873,43 @@ export class PlaywrightDiscoveryFetcher implements DiscoveryFetcher {
 
   async fetch(request: DiscoveryFetchRequest, context: DiscoveryFetchContext): Promise<RawProduct[]> {
     if (context.signal.aborted) throw new DiscoveryCancelledError("Discovery cancelled.");
+    const requestedAdapter = adapterFor(new URL(request.target.url), false);
+    if (requestedAdapter.id !== request.source) {
+      throw new DiscoveryFetchError(`Listing target does not match the ${request.source} adapter.`);
+    }
+    if (requestedAdapter.extractListingHtml) {
+      const response = await fetchPublicHtml(request.target.url, {
+        signal: context.signal,
+        allowedHost: (hostname) => requestedAdapter.allowedHosts.includes(hostname),
+      });
+      const finalUrl = new URL(response.url);
+      if (!requestedAdapter.matches(finalUrl)) {
+        throw new DiscoveryFetchError(`Listing redirected outside the ${request.source} adapter.`);
+      }
+      const plainText = response.html.replace(/<script\b[\s\S]*?<\/script\s*>/gi, " ")
+        .replace(/<style\b[\s\S]*?<\/style\s*>/gi, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .slice(0, 8_000);
+      const block = requestedAdapter.discovery?.classifyAccessBlock?.({
+        pageUrl: finalUrl.href,
+        status: response.status,
+        bodyText: plainText,
+      }) ?? classifyAccessBlock({ pageUrl: finalUrl.href, status: response.status, bodyText: plainText });
+      if (block) throw new DiscoveryBlockedError(block);
+      if (response.status < 200 || response.status >= 300) {
+        throw new DiscoveryFetchError(`Shop listing returned HTTP ${response.status}.`);
+      }
+      if (!response.contentType.toLocaleLowerCase().includes("html")) {
+        throw new DiscoveryFetchError(`Shop listing returned ${response.contentType || "an unknown content type"}.`);
+      }
+      const products = await requestedAdapter.extractListingHtml(response.html, finalUrl.href);
+      if (products.length > 0) {
+        return products.slice(0, Math.min(600, Math.max(request.limit, request.limit * 3)));
+      }
+      // A healthy but unstructured response may still be hydrated client-side.
+      // Only then do we pay for an isolated Playwright navigation.
+    }
     const browser = await this.getBrowser();
     const browserContext = await browser.newContext({ locale: "fr-CH", timezoneId: "Europe/Zurich" });
     const closeOnAbort = () => { void browserContext.close().catch(() => undefined); };

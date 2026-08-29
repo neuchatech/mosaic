@@ -1364,7 +1364,7 @@ export default function Home() {
   const [discoveryBusy, setDiscoveryBusy] = useState(false);
   const [discoveryRecovered, setDiscoveryRecovered] = useState(false);
   const [renderWindow, setRenderWindow] = useState({ signature: "", limit: ATLAS_PAGE_SIZE });
-  const [personalKind, setPersonalKind] = useState<"owned" | "reference">("owned");
+  const [personalKind, setPersonalKind] = useState<"owned" | "reference" | "shop">("owned");
   const [personalImages, setPersonalImages] = useState<AtlasPromptImage[]>([]);
   const [personalBusy, setPersonalBusy] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(0);
@@ -2230,7 +2230,8 @@ export default function Home() {
     try {
       const resumed = await Promise.allSettled(resumable.map(async (job) => {
         const action = ["failed", "blocked"].includes(job.status) ? "retry" : "resume";
-        const response = await fetch(`${ATLAS_API}/discovery/jobs/${encodeURIComponent(job.id)}/${action}`, { method: "POST" });
+        const interactive = job.status === "blocked" && job.source === "zalando-ch";
+        const response = await fetch(`${ATLAS_API}/discovery/jobs/${encodeURIComponent(job.id)}/${action}${interactive ? "?interactive=1" : ""}`, { method: "POST" });
         if (!response.ok) throw new Error(`${action} ${job.id} unavailable`);
         return response.json() as Promise<AtlasDiscoveryJob>;
       }));
@@ -2341,24 +2342,29 @@ export default function Home() {
 
   async function addAtlasPersonalItem(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!personalImages.length || personalBusy) { setToast("Ajoute au moins une image"); return; }
+    if ((personalKind !== "shop" && !personalImages.length) || personalBusy) { setToast("Ajoute au moins une image"); return; }
     const form = new FormData(event.currentTarget);
     setPersonalBusy(true);
     try {
-      const response = await fetch(`${ATLAS_API}/personal-items`, {
+      const response = await fetch(`${ATLAS_API}/${personalKind === "shop" ? "products/import-url" : "personal-items"}`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify(personalKind === "shop" ? {
+          url: String(form.get("url") ?? "").trim(),
+        } : {
           kind: personalKind, name: String(form.get("name") ?? "").trim(), images: personalImages.map((image) => image.dataUrl),
           category: String(form.get("category") ?? "Autre"), color: String(form.get("color") ?? "Inconnue"),
           fit: String(form.get("fit") ?? "unknown"), tags: String(form.get("tags") ?? "").split(",").map((tag) => tag.trim()).filter(Boolean),
         }),
       });
-      if (!response.ok) throw new Error("create failed");
+      if (!response.ok) {
+        const failure = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(failure.error ?? "create failed");
+      }
       const created = atlasApiToItem(await response.json() as AtlasApiProduct);
       setCatalogItems((current) => [created, ...current.filter((item) => item.id !== created.id)]);
-      setPersonalImages([]); event.currentTarget.reset(); setDrawer(null); setScope(personalKind === "owned" ? "owned" : "reference");
-      setToast(personalKind === "owned" ? "Vêtement ajouté au dressing" : "Référence ajoutée");
-    } catch { setToast("Ajout impossible — API locale indisponible"); }
+      setPersonalImages([]); event.currentTarget.reset(); setDrawer(null); setScope(personalKind === "owned" ? "owned" : personalKind === "reference" ? "reference" : "catalogue");
+      setToast(personalKind === "owned" ? "Vêtement ajouté au dressing" : personalKind === "reference" ? "Référence ajoutée" : "Fiche shop importée");
+    } catch (error) { setToast(error instanceof Error ? `Ajout impossible — ${error.message}` : "Ajout impossible — API locale indisponible"); }
     finally { setPersonalBusy(false); }
   }
 
@@ -2428,6 +2434,7 @@ export default function Home() {
   const discoveryHasActive = discoveryJobs.some((job) => !ATLAS_TERMINAL_DISCOVERY_STATUSES.has(job.status));
   const discoveryCanResume = !discoveryBusy && discoveryJobs.some((job) => ["queued", "running", "failed", "blocked"].includes(job.status));
   const discoveryHasFailures = discoveryJobs.some((job) => ["failed", "blocked"].includes(job.status));
+  const discoveryNeedsInteractive = discoveryJobs.some((job) => job.status === "blocked" && job.source === "zalando-ch");
   const discoveryWasCancelled = discoveryJobs.length > 0 && discoveryJobs.every((job) => ["succeeded", "cancelled"].includes(job.status))
     && discoveryJobs.some((job) => job.status === "cancelled");
   const discoveryStatusText = discoveryRecovered ? "Session retrouvée · reprise manuelle"
@@ -2551,7 +2558,7 @@ export default function Home() {
             <span className="discoveryFill" style={{ width: `${Math.round(discoveryProgress * 100)}%` }} />
             <div className="discoveryPlanInfo"><b>{discoveryPlan?.name ?? "Découverte agentique"}</b><small>Tailles {discoverySizes} · {discoverySources.join(" + ") || "shops locaux"}{discoveryPlan?.targetCount ? ` · cible ${discoveryPlan.targetCount}` : ""} · {discoveryStatusText}</small></div>
             <em><b>{discoveryDiscovered}</b> nouveau{discoveryDiscovered > 1 ? "x" : ""}{discoveryDiscarded > 0 ? ` · ${discoveryDiscarded} écartés` : ""}</em>
-            <div className="discoveryActions">{discoveryBusy && discoveryHasActive && <button type="button" onClick={() => void cancelAtlasDiscovery()}>Arrêter</button>}{discoveryCanResume && <button type="button" onClick={() => void resumeAtlasDiscovery()}>Reprendre</button>}</div>
+            <div className="discoveryActions">{discoveryBusy && discoveryHasActive && <button type="button" onClick={() => void cancelAtlasDiscovery()}>Arrêter</button>}{discoveryCanResume && <button type="button" title={discoveryNeedsInteractive ? "Ouvre un Chrome visible local, sans login ni contournement" : undefined} onClick={() => void resumeAtlasDiscovery()}>{discoveryNeedsInteractive ? "Reprendre dans Chrome" : "Reprendre"}</button>}</div>
           </div>}
         </div>
 
@@ -2655,14 +2662,19 @@ export default function Home() {
 
             {drawer === "add" && (
               <form className="drawerBody personalForm" onSubmit={(event) => void addAtlasPersonalItem(event)}>
-                <div className="kindSwitch segmented"><button type="button" className={personalKind === "owned" ? "active" : ""} onClick={() => setPersonalKind("owned")}>◆ Vêtement possédé</button><button type="button" className={personalKind === "reference" ? "active" : ""} onClick={() => setPersonalKind("reference")}>◈ Référence visuelle</button></div>
-                <input ref={personalImageInputRef} className="hiddenImageInput" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={async (event) => { try { const next = await atlasReadImages(Array.from(event.target.files ?? []), personalImages.length, true); setPersonalImages((current) => [...current, ...next].slice(0, ATLAS_MAX_IMAGES)); } catch (error) { setToast(error instanceof Error ? error.message : "Images invalides"); } event.target.value = ""; }} />
-                <button type="button" className="imageDrop" onClick={() => personalImageInputRef.current?.click()}><span>＋</span><strong>Ajouter des photos</strong><small>JPG, PNG ou WebP · 6 images · 24 MB max</small></button>
-                {personalImages.length > 0 && <div className="personalPreviews">{personalImages.map((image) => <span key={image.id}><img src={image.dataUrl} alt="" /><button type="button" onClick={() => setPersonalImages((current) => current.filter((item) => item.id !== image.id))} aria-label={`Retirer ${image.name}`}>×</button></span>)}</div>}
-                <label>Nom<input name="name" required placeholder={personalKind === "owned" ? "Mon cardigan brun" : "Silhouette courte / pantalon ample"} /></label>
-                <div className="formColumns"><label>Catégorie<select name="category"><option>Vestes</option><option>Pantalons</option><option>Mailles</option><option>Chemises</option><option>T-shirts</option><option>Chaussures</option><option>Accessoires</option><option>Autre</option></select></label><label>Couleur<input name="color" placeholder="Chocolat" /></label></div>
-                <div className="formColumns"><label>Coupe<input name="fit" placeholder="Large, courte…" /></label><label>Tags<input name="tags" placeholder="automne, texture" /></label></div>
-                <button className="primaryButton submitPersonal" disabled={personalBusy}>{personalBusy ? "Ajout…" : personalKind === "owned" ? "Ajouter au dressing" : "Ajouter comme référence"}</button>
+                <div className="kindSwitch segmented"><button type="button" className={personalKind === "owned" ? "active" : ""} onClick={() => setPersonalKind("owned")}>◆ Possédé</button><button type="button" className={personalKind === "reference" ? "active" : ""} onClick={() => setPersonalKind("reference")}>◈ Référence</button><button type="button" className={personalKind === "shop" ? "active" : ""} onClick={() => setPersonalKind("shop")}>↗ Lien shop</button></div>
+                {personalKind === "shop" ? <>
+                  <label>URL de la fiche produit<input name="url" type="url" required placeholder="https://www.arket.com/…" /></label>
+                  <p className="drawerHint">Importe les données publiques structurées : nom, prix, images, matière et tailles si le shop les expose. Aucun login ni panier.</p>
+                </> : <>
+                  <input ref={personalImageInputRef} className="hiddenImageInput" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={async (event) => { try { const next = await atlasReadImages(Array.from(event.target.files ?? []), personalImages.length, true); setPersonalImages((current) => [...current, ...next].slice(0, ATLAS_MAX_IMAGES)); } catch (error) { setToast(error instanceof Error ? error.message : "Images invalides"); } event.target.value = ""; }} />
+                  <button type="button" className="imageDrop" onClick={() => personalImageInputRef.current?.click()}><span>＋</span><strong>Ajouter des photos</strong><small>JPG, PNG ou WebP · 6 images · 24 MB max</small></button>
+                  {personalImages.length > 0 && <div className="personalPreviews">{personalImages.map((image) => <span key={image.id}><img src={image.dataUrl} alt="" /><button type="button" onClick={() => setPersonalImages((current) => current.filter((item) => item.id !== image.id))} aria-label={`Retirer ${image.name}`}>×</button></span>)}</div>}
+                  <label>Nom<input name="name" required placeholder={personalKind === "owned" ? "Mon cardigan brun" : "Silhouette courte / pantalon ample"} /></label>
+                  <div className="formColumns"><label>Catégorie<select name="category"><option>Vestes</option><option>Pantalons</option><option>Mailles</option><option>Chemises</option><option>T-shirts</option><option>Chaussures</option><option>Accessoires</option><option>Autre</option></select></label><label>Couleur<input name="color" placeholder="Chocolat" /></label></div>
+                  <div className="formColumns"><label>Coupe<input name="fit" placeholder="Large, courte…" /></label><label>Tags<input name="tags" placeholder="automne, texture" /></label></div>
+                </>}
+                <button className="primaryButton submitPersonal" disabled={personalBusy}>{personalBusy ? "Ajout…" : personalKind === "owned" ? "Ajouter au dressing" : personalKind === "reference" ? "Ajouter comme référence" : "Importer la fiche"}</button>
               </form>
             )}
 

@@ -5,15 +5,17 @@ import { z } from "zod";
 import { decisionSchema, filterSpecSchema, productPatchSchema, productSchema } from "../src/domain/catalog";
 import { stableProductId } from "../src/domain/ids";
 import { normalizeProduct } from "../collector/normalize";
+import { adapterFor } from "../collector/registry";
 import type { DiscoveryIntent, RawProduct } from "../collector/types";
 import { AcquisitionService, acquisitionClientView } from "./acquisition";
 import { catalogMediaPath, catalogMediaType, persistCatalogImages } from "./media";
 import { generateOutfits } from "./outfit-generator";
 import { projectCompactCached } from "./projection-cache";
+import { fetchPublicHtml } from "./public-html";
 import { CatalogRepository } from "./repository";
 import { createFilterWithCodex } from "./codex-bridge";
 import { createDiscoveryPlanWithCodex } from "./codex-discovery";
-import { DiscoveryService, FileDiscoveryJobStore } from "./discovery";
+import { DiscoveryService, FileDiscoveryJobStore, PlaywrightDiscoveryFetcher } from "./discovery";
 import { getEmbeddingJob, startEmbeddingJob } from "./embedding-job";
 import { attachImageAspectRatios } from "./image-aspect-ratios";
 import { getVisualSelection, startVisualSelection } from "./visual-selection";
@@ -40,6 +42,37 @@ const referenceItemSchema = catalogItemFieldsSchema.extend({
   ).optional(),
 });
 
+const publicProductUrlSchema = z.object({
+  url: z.string().url().max(2_000),
+});
+
+const GENERIC_PRODUCT_HOSTS = [
+  "aboutyou.ch",
+  "arket.com",
+  "asos.com",
+  "bluetomato.com",
+  "breuninger.com",
+  "cos.com",
+  "farfetch.com",
+  "galaxus.ch",
+  "globus.ch",
+  "hm.com",
+  "mango.com",
+  "manor.ch",
+  "massimodutti.com",
+  "mrporter.com",
+  "pkz.ch",
+  "ssense.com",
+  "uniqlo.com",
+  "yoox.com",
+  "zalando.ch",
+  "zara.com",
+] as const;
+
+function allowedPublicProductHost(hostname: string): boolean {
+  return GENERIC_PRODUCT_HOSTS.some((host) => hostname === host || hostname.endsWith(`.${host}`));
+}
+
 function outfitView(board: ReturnType<CatalogRepository["saveOutfitBoard"]>) {
   return {
     ...board,
@@ -56,8 +89,10 @@ function planSearchUsesGarmentSizes(search: { source: string; category: string; 
 function createDiscoveryService(
   repository: CatalogRepository,
   acquisition: AcquisitionService,
+  options: { headed?: boolean } = {},
 ): DiscoveryService {
   return new DiscoveryService({
+    ...(options.headed ? { fetcher: new PlaywrightDiscoveryFetcher({ headed: true }) } : {}),
     store: new FileDiscoveryJobStore(),
     isKnownProduct(raw: RawProduct, source) {
       return repository.listProducts({ limit: 10_000 }).some((product) => (
@@ -93,6 +128,15 @@ export function createApp(
   discovery = createDiscoveryService(repository, acquisition),
 ) {
   const app = new Hono();
+  let interactiveDiscovery: DiscoveryService | null = null;
+  const interactiveDiscoveryJobs = new Set<string>();
+  const getInteractiveDiscovery = () => {
+    interactiveDiscovery ??= createDiscoveryService(repository, acquisition, { headed: true });
+    return interactiveDiscovery;
+  };
+  const discoveryForJob = (id: string) => interactiveDiscoveryJobs.has(id)
+    ? getInteractiveDiscovery()
+    : discovery;
   app.use("/api/*", cors({ origin: ["http://localhost:3000", "http://127.0.0.1:3000"] }));
 
   app.get("/health", (context) => context.json({ ok: true }));
@@ -119,6 +163,43 @@ export function createApp(
     const body = await context.req.json();
     const products = productSchema.array().parse(body.products ?? body);
     return context.json({ imported: repository.upsertProducts(products) }, 201);
+  });
+  app.post("/api/products/import-url", async (context) => {
+    const parsed = publicProductUrlSchema.safeParse(await context.req.json());
+    if (!parsed.success) return context.json({ error: "invalid product URL", issues: parsed.error.issues }, 400);
+    const requested = new URL(parsed.data.url);
+    if (requested.protocol !== "https:" || !allowedPublicProductHost(requested.hostname)) {
+      return context.json({
+        error: "shop host is not enabled for generic import",
+        supportedHosts: GENERIC_PRODUCT_HOSTS,
+      }, 400);
+    }
+    try {
+      const response = await fetchPublicHtml(requested.href, {
+        signal: context.req.raw.signal,
+        allowedHost: allowedPublicProductHost,
+      });
+      const current = new URL(response.url);
+      if (!allowedPublicProductHost(current.hostname)) {
+        throw new Error(`Product page redirected to unsupported host ${current.hostname}.`);
+      }
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(`Product page returned HTTP ${response.status}.`);
+      }
+      if (!response.contentType.toLocaleLowerCase().includes("html")) {
+        throw new Error(`Product page returned ${response.contentType || "an unknown content type"}.`);
+      }
+      const adapter = adapterFor(current, true);
+      if (!adapter.extractDetailHtml) throw new Error("This shop needs a dedicated interactive reader.");
+      const raw = await adapter.extractDetailHtml(response.html, current.href);
+      if (!raw) throw new Error("No public Product JSON-LD was found on this page.");
+      const product = normalizeProduct(adapter.id, raw);
+      repository.upsertCollectedProducts([product]);
+      repository.replaceCoordinates(projectCompactCached(repository.listProducts({ limit: 10_000 })));
+      return context.json(product, 201);
+    } catch (error) {
+      return context.json({ error: error instanceof Error ? error.message : "product import failed" }, 422);
+    }
   });
   app.post("/api/query", async (context) => {
     const filter = filterSpecSchema.parse(await context.req.json());
@@ -269,7 +350,10 @@ export function createApp(
     const limit = Number.isFinite(requestedLimit)
       ? Math.min(100, Math.max(1, Math.trunc(requestedLimit)))
       : 20;
-    return context.json(discovery.list(limit));
+    const normal = discovery.list(limit);
+    if (!interactiveDiscovery) return context.json(normal);
+    const interactiveById = new Map(interactiveDiscovery.list(limit).map((job) => [job.id, job]));
+    return context.json(normal.map((job) => interactiveDiscoveryJobs.has(job.id) ? interactiveById.get(job.id) ?? job : job));
   });
   app.post("/api/discovery/jobs", async (context) => {
     const body = await context.req.json<{ intent?: DiscoveryIntent; intents?: DiscoveryIntent[] }>();
@@ -282,19 +366,25 @@ export function createApp(
     }
   });
   app.get("/api/discovery/jobs/:id", (context) => {
-    const job = discovery.get(context.req.param("id"));
+    const job = discoveryForJob(context.req.param("id")).get(context.req.param("id"));
     return job ? context.json(job) : context.json({ error: "discovery job not found" }, 404);
   });
   app.post("/api/discovery/jobs/:id/cancel", (context) => {
-    try { return context.json(discovery.cancel(context.req.param("id"))); }
+    try { return context.json(discoveryForJob(context.req.param("id")).cancel(context.req.param("id"))); }
     catch (error) { return context.json({ error: error instanceof Error ? error.message : "cancel failed" }, 404); }
   });
   app.post("/api/discovery/jobs/:id/retry", (context) => {
-    try { return context.json(discovery.retry(context.req.param("id")), 202); }
+    const id = context.req.param("id");
+    const interactive = context.req.query("interactive") === "1";
+    if (interactive) interactiveDiscoveryJobs.add(id);
+    try { return context.json(discoveryForJob(id).retry(id), 202); }
     catch (error) { return context.json({ error: error instanceof Error ? error.message : "retry failed" }, 409); }
   });
   app.post("/api/discovery/jobs/:id/resume", (context) => {
-    try { return context.json(discovery.resume(context.req.param("id")), 202); }
+    const id = context.req.param("id");
+    const interactive = context.req.query("interactive") === "1";
+    if (interactive) interactiveDiscoveryJobs.add(id);
+    try { return context.json(discoveryForJob(id).resume(id), 202); }
     catch (error) { return context.json({ error: error instanceof Error ? error.message : "resume failed" }, 409); }
   });
 

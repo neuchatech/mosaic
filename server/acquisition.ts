@@ -4,6 +4,7 @@ import { chromium } from "playwright";
 import { adapterFor } from "../collector/registry";
 import type { CollectedStockStatus, RawProduct } from "../collector/types";
 import { productSchema, type Product } from "../src/domain/catalog";
+import { fetchPublicHtml } from "./public-html";
 
 export type AcquisitionStatus =
   | "queued"
@@ -765,6 +766,38 @@ export class PlaywrightDetailFetcher implements DetailFetcher {
     if (signal.aborted) throw new AcquisitionCancelledError("Acquisition cancelled.");
     const requestedUrl = new URL(target.url);
     const adapter = adapterFor(requestedUrl, false);
+    if (adapter.extractDetailHtml) {
+      const response = await fetchPublicHtml(requestedUrl.href, {
+        signal,
+        timeoutMs: this.options.timeoutMs ?? 60_000,
+        allowedHost: (hostname) => adapter.allowedHosts.includes(hostname),
+      });
+      if (signal.aborted) throw new AcquisitionCancelledError("Acquisition cancelled.");
+      const currentUrl = new URL(response.url);
+      const plainText = response.html.replace(/<script\b[\s\S]*?<\/script\s*>/gi, " ")
+        .replace(/<style\b[\s\S]*?<\/style\s*>/gi, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .slice(0, 8_000);
+      const blocked = classifyAccessBlock({
+        pageUrl: currentUrl.href,
+        status: response.status,
+        bodyText: plainText,
+      });
+      if (blocked) throw new AcquisitionBlockedError(blocked);
+      if (!adapter.matches(currentUrl)) {
+        throw new AcquisitionFetchError(`Shop redirected outside its allowed hosts to ${currentUrl.hostname}.`);
+      }
+      if (response.status < 200 || response.status >= 300) {
+        throw new AcquisitionFetchError(`Shop product page returned HTTP ${response.status}.`);
+      }
+      if (!response.contentType.toLocaleLowerCase().includes("html")) {
+        throw new AcquisitionFetchError(`Shop product page returned ${response.contentType || "an unknown content type"}.`);
+      }
+      const parsed = await adapter.extractDetailHtml(response.html, currentUrl.href);
+      if (parsed) return parsed;
+      // Keep the existing browser reader as a fallback for client-rendered data.
+    }
     this.browser ??= await chromium.launch({
       headless: !this.options.headed,
       channel: "chrome",

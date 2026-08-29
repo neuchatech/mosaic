@@ -1,8 +1,10 @@
 import type {
   DiscoveryIntent,
   DiscoveryListingTarget,
+  RawProduct,
   ShopAdapter,
 } from "../types";
+import { jsonCallArgumentsFromHtml, jsonLdValuesFromHtml, visitJson } from "../html";
 
 const LETTER_SIZE_PATTERN = /^(?:XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|[2-6]XL)$/i;
 const NUMBER_SIZE_PATTERN = /^(?:(?:EU|IT|FR|UK|US)\s*)?\d{1,3}(?:[.,]5)?$/i;
@@ -12,6 +14,8 @@ function cleanSizeLabel(value: string): string {
   return value
     .replace(/^(?:taille|size|grösse)\s*:?\s*/i, "")
     .replace(/\s+(?:disponible|available|verfügbar)$/i, "")
+    // Zalando's JSON-LD uses MxR/LxR for the regular-length variant.
+    .replace(/\s*x\s*R$/i, "")
     .trim();
 }
 
@@ -52,6 +56,218 @@ function pricesFromText(text: string): number[] {
   return [...text.matchAll(/(?:CHF|Fr\.?)[\s\u00a0]*([0-9'’.,]+)/gi)]
     .map((match) => Number(match[1].replace(/[’']/g, "").replace(",", ".")))
     .filter(Number.isFinite);
+}
+
+export function zalandoSourceIdFromUrl(value: string | URL): string | undefined {
+  const url = value instanceof URL ? value : new URL(value);
+  const stem = url.pathname.split("/").pop()?.replace(/\.html$/i, "") ?? "";
+  return stem.match(/([a-z0-9]{8,}-[a-z0-9]{3})$/i)?.[1]?.toUpperCase();
+}
+
+type JsonRecord = Record<string, unknown>;
+
+function record(value: unknown): JsonRecord | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : null;
+}
+
+function records(value: unknown): JsonRecord[] {
+  if (Array.isArray(value)) return value.map(record).filter((item): item is JsonRecord => Boolean(item));
+  const item = record(value);
+  return item ? [item] : [];
+}
+
+function text(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function finiteNumber(value: unknown): number | null {
+  const result = Number(value);
+  return value !== null && value !== undefined && String(value).trim() && Number.isFinite(result) && result >= 0
+    ? result
+    : null;
+}
+
+function availability(value: unknown): "in_stock" | "out_of_stock" | "unknown" {
+  const normalized = String(value ?? "").toLocaleLowerCase();
+  if (normalized.includes("instock") || normalized.includes("limitedavailability") || normalized.includes("preorder")) {
+    return "in_stock";
+  }
+  return normalized.includes("outofstock") ? "out_of_stock" : "unknown";
+}
+
+function imageUrl(value: unknown): string | undefined {
+  const direct = text(value);
+  if (direct) return direct;
+  return text(record(value)?.uri);
+}
+
+function listingImage(product: JsonRecord): string | undefined {
+  const gallery = records(product.multiSizeGallery);
+  return imageUrl(record(gallery[0]?.mediumMedia)?.uri)
+    ?? imageUrl(record(gallery[0]?.largeMedia)?.uri)
+    ?? imageUrl(record(product.mediumModelImage)?.uri)
+    ?? imageUrl(record(product.largeModelImage)?.uri)
+    ?? imageUrl(record(product.mediumPackshotImage)?.uri);
+}
+
+function canonicalZalandoUrl(value: unknown, fallback: string): string | null {
+  try {
+    const url = new URL(text(value) ?? fallback, fallback);
+    if (!["fr.zalando.ch", "www.zalando.ch", "zalando.ch"].includes(url.hostname)) return null;
+    if (!url.pathname.endsWith(".html")) return null;
+    url.hash = "";
+    url.search = "";
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+/** Parse the product-card cache Zalando embeds in its server-rendered listing. */
+export function extractZalandoListingHtml(html: string, pageUrl: string): RawProduct[] {
+  const products = new Map<string, RawProduct>();
+  const payloads = [
+    ...jsonCallArgumentsFromHtml(html, "runtime['hydratePartial']"),
+    ...jsonCallArgumentsFromHtml(html, "window.__hydrationDataConsume"),
+  ];
+  for (const payload of payloads) {
+    visitJson(payload, (candidate) => {
+      const product = record(record(candidate.data)?.product);
+      if (!product) return;
+      const name = text(product.name);
+      const url = canonicalZalandoUrl(product.uri, pageUrl);
+      const sourceId = text(product.sku) ?? text(product.id)?.replace(/^ern:product::/, "");
+      if (!name || !url || !sourceId) return;
+      const brand = text(record(product.brand)?.name) ?? "Unknown";
+      const displayPrice = record(product.displayPrice);
+      const current = finiteNumber(displayPrice?.trackingCurrentAmount)
+        ?? (finiteNumber(record(displayPrice?.promotional)?.amount) ?? 0) / 100;
+      const originalAmount = finiteNumber(record(displayPrice?.original)?.amount);
+      const listedOriginal = originalAmount === null ? null : originalAmount / 100;
+      const originalPrice = listedOriginal !== null && current > 0 && listedOriginal > current ? listedOriginal : null;
+      const image = listingImage(product);
+      products.set(sourceId, {
+        sourceId,
+        url,
+        brand,
+        name,
+        price: current > 0 ? current : null,
+        originalPrice,
+        currency: text(record(displayPrice?.original)?.currency) ?? "CHF",
+        images: image ? [image] : [],
+        rawSizes: [],
+        sizes: [],
+        stockStatus: "unknown",
+        attributes: {
+          discoveryOnly: true,
+          sizeAvailabilityKnown: false,
+          ...(text(product.silhouette) ? { silhouette: text(product.silhouette)! } : {}),
+        },
+      });
+    });
+  }
+  return [...products.values()];
+}
+
+function returnPolicyFields(product: JsonRecord, offers: JsonRecord[]): {
+  returnsLabel?: string;
+  returnsWindowDays?: number;
+} {
+  const rawPolicy = offers[0]?.hasMerchantReturnPolicy ?? product.hasMerchantReturnPolicy;
+  const policy = records(rawPolicy)[0];
+  if (!policy) return {};
+  const days = finiteNumber(policy.merchantReturnDays);
+  const category = String(policy.returnPolicyCategory ?? "").toLocaleLowerCase();
+  return {
+    returnsLabel: category.includes("notpermitted")
+      ? "Retours non acceptés"
+      : days !== null ? `${days} jours` : "Politique de retour disponible",
+    ...(days !== null ? { returnsWindowDays: days } : {}),
+  };
+}
+
+/** Parse Product or ProductGroup JSON-LD, including exact in-stock variants. */
+export function extractZalandoDetailHtml(
+  html: string,
+  pageUrl: string,
+  observedAt = new Date().toISOString(),
+): RawProduct | null {
+  const values = jsonLdValuesFromHtml(html);
+  const product = values.map(record).find((value) => value?.["@type"] === "ProductGroup")
+    ?? values.map(record).find((value) => value?.["@type"] === "Product");
+  if (!product) return null;
+
+  const variants = product["@type"] === "ProductGroup" ? records(product.hasVariant) : [product];
+  const variantObservations = variants.map((variant) => {
+    const offers = records(variant.offers);
+    const states = offers.map((offer) => availability(offer.availability));
+    const state = states.includes("in_stock")
+      ? "in_stock" as const
+      : states.length > 0 && states.every((value) => value === "out_of_stock")
+        ? "out_of_stock" as const
+        : "unknown" as const;
+    return { variant, offers, state };
+  });
+  const knownVariants = variantObservations.filter((item) => item.state !== "unknown");
+  const anyInStock = variantObservations.some((item) => item.state === "in_stock");
+  const allOutOfStock = variantObservations.length > 0
+    && knownVariants.length === variantObservations.length
+    && knownVariants.every((item) => item.state === "out_of_stock");
+  const stockStatus = anyInStock ? "in_stock" as const
+    : allOutOfStock ? "out_of_stock" as const
+      : "unknown" as const;
+  const rawSizes = variantObservations
+    .filter((item) => item.state === "in_stock")
+    .flatMap((item) => [text(item.variant.size), ...item.offers.map((offer) => text(offer.size))])
+    .filter((value): value is string => Boolean(value));
+  const sizes = normalizeZalandoSizes(rawSizes);
+  const allOffers = variantObservations.flatMap((item) => item.offers);
+  const pricedOffers = (anyInStock
+    ? variantObservations.filter((item) => item.state === "in_stock").flatMap((item) => item.offers)
+    : allOffers)
+    .map((offer) => ({ price: finiteNumber(offer.price), currency: text(offer.priceCurrency) }))
+    .filter((offer): offer is { price: number; currency: string | undefined } => offer.price !== null);
+  const cheapest = pricedOffers.sort((left, right) => left.price - right.price)[0];
+  const images = (Array.isArray(product.image) ? product.image : [product.image])
+    .map(imageUrl)
+    .filter((value): value is string => Boolean(value));
+  const brand = text(product.brand) ?? text(record(product.brand)?.name);
+  const sourceId = text(product.productGroupID) ?? text(product.sku) ?? text(product.productID);
+  const url = canonicalZalandoUrl(product.url, pageUrl) ?? canonicalZalandoUrl(pageUrl, pageUrl);
+  const name = text(product.name);
+  if (!sourceId || !url || !name) return null;
+  const sizeAvailabilityKnown = sizes.length > 0 || stockStatus === "out_of_stock";
+  const policies = returnPolicyFields(product, allOffers);
+  const materials = (Array.isArray(product.material) ? product.material : [product.material])
+    .map(text)
+    .filter((value): value is string => Boolean(value));
+  return {
+    sourceId,
+    url,
+    brand: brand ?? "Unknown",
+    name,
+    description: text(product.description),
+    color: text(product.color),
+    materials,
+    images,
+    price: cheapest?.price ?? null,
+    currency: cheapest?.currency ?? "CHF",
+    stockStatus,
+    rawSizes: [...new Set(rawSizes)],
+    sizes,
+    ...(stockStatus !== "unknown" ? {
+      available: stockStatus === "in_stock",
+      stockCheckedAt: observedAt,
+    } : {}),
+    ...(cheapest ? { priceCheckedAt: observedAt } : {}),
+    ...(sizeAvailabilityKnown ? { sizesCheckedAt: observedAt } : {}),
+    attributes: {
+      detailCaptured: true,
+      sizeAvailabilityKnown,
+      rawSizes: [...new Set(rawSizes)],
+      ...policies,
+    },
+  };
 }
 
 const ZALANDO_CATEGORY_PATHS: Record<string, string> = {
@@ -180,7 +396,8 @@ export const zalandoAdapter: ShopAdapter = {
     return cards.map((card) => {
       const prices = pricesFromText(card.text);
       const price = prices[0] ?? priceFromText(card.text);
-      const sourceId = new URL(card.url).pathname.split("/").pop()?.replace(/\.html$/, "");
+      const sourceId = zalandoSourceIdFromUrl(card.url)
+        ?? new URL(card.url).pathname.split("/").pop()?.replace(/\.html$/, "");
       return {
         sourceId,
         url: card.url,
@@ -201,140 +418,14 @@ export const zalandoAdapter: ShopAdapter = {
       };
     });
   },
+  extractListingHtml(html, pageUrl) {
+    return extractZalandoListingHtml(html, pageUrl);
+  },
   async extractDetail(page) {
-    const raw = await page.evaluate(() => {
-      const scripts = Array.from(document.querySelectorAll<HTMLScriptElement>('script[type="application/ld+json"]'));
-      const values = scripts.flatMap((script) => {
-        try {
-          const parsed = JSON.parse(script.textContent ?? "null");
-          return Array.isArray(parsed) ? parsed : [parsed];
-        } catch {
-          return [];
-        }
-      });
-      const product = values.find((value) => value?.["@type"] === "Product");
-      if (!product) return null;
-      const offers = Array.isArray(product.offers) ? product.offers : product.offers ? [product.offers] : [];
-      const offer = offers[0];
-      const rawReturnPolicy = offer?.hasMerchantReturnPolicy ?? product.hasMerchantReturnPolicy;
-      const returnPolicy = Array.isArray(rawReturnPolicy) ? rawReturnPolicy[0] : rawReturnPolicy;
-      const rawReturnDays = returnPolicy?.merchantReturnDays;
-      const returnWindowDays = Number.isFinite(Number(rawReturnDays)) && Number(rawReturnDays) >= 0
-        ? Number(rawReturnDays)
-        : null;
-      const returnPolicyCategory = String(returnPolicy?.returnPolicyCategory ?? "").toLowerCase();
-      const returnsLabel = returnPolicyCategory.includes("notpermitted")
-        ? "Retours non acceptés"
-        : returnWindowDays !== null
-          ? `${returnWindowDays} jours`
-          : returnPolicy
-            ? "Politique de retour disponible"
-            : null;
-      const sizeCandidates: string[] = [];
-      const addSize = (value: unknown) => {
-        if (typeof value === "string") sizeCandidates.push(value);
-        if (Array.isArray(value)) value.forEach(addSize);
-      };
-      const normalizedAvailability = (value: unknown) => String(value ?? "").toLowerCase();
-      const offerInStock = (value: unknown) => {
-        const availability = normalizedAvailability(value);
-        return availability.includes("instock")
-          || availability.includes("limitedavailability")
-          || availability.includes("preorder");
-      };
-      const offerOutOfStock = (value: unknown) => normalizedAvailability(value).includes("outofstock");
-      let offerSizesObserved = false;
-      for (const candidateOffer of offers) {
-        if (!offerInStock(candidateOffer?.availability)) continue;
-        const before = sizeCandidates.length;
-        addSize(candidateOffer?.size);
-        addSize(candidateOffer?.itemOffered?.size);
-        for (const property of candidateOffer?.itemOffered?.additionalProperty ?? []) {
-          if (/size|taille|grösse/i.test(String(property?.name ?? ""))) addSize(property?.value);
-        }
-        if (sizeCandidates.length > before) offerSizesObserved = true;
-      }
-      const sizeSelectors = [
-        '[data-testid*="size" i] button:not([disabled]):not([aria-disabled="true"])',
-        '[data-testid*="size" i] option:not([disabled])',
-        'select[name*="size" i] option:not([disabled])',
-        'select[aria-label*="taille" i] option:not([disabled])',
-        'select[aria-label*="size" i] option:not([disabled])',
-      ];
-      const availableSizeElements = document.querySelectorAll<HTMLElement>(sizeSelectors.join(","));
-      for (const element of availableSizeElements) {
-        addSize(element.getAttribute("value"));
-        addSize(element.getAttribute("aria-label"));
-        addSize(element.textContent);
-      }
-      const allSizeSelectors = [
-        '[data-testid*="size" i] button',
-        '[data-testid*="size" i] option',
-        'select[name*="size" i] option',
-        'select[aria-label*="taille" i] option',
-        'select[aria-label*="size" i] option',
-      ];
-      const anySizeControl = document.querySelectorAll(allSizeSelectors.join(",")).length > 0;
-      const explicitInStock = offers.some((candidateOffer: { availability?: unknown }) => offerInStock(candidateOffer?.availability));
-      const explicitOutOfStock = offers.length > 0
-        && offers.every((candidateOffer: { availability?: unknown }) => offerOutOfStock(candidateOffer?.availability));
-      const stockStatus: "in_stock" | "out_of_stock" | "unknown" = explicitInStock
-        ? "in_stock"
-        : explicitOutOfStock
-          ? "out_of_stock"
-          : "unknown";
-      const rawPrice = offer?.price;
-      const price = rawPrice === null || rawPrice === undefined || String(rawPrice).trim() === ""
-        ? Number.NaN
-        : Number(rawPrice);
-      return {
-        sourceId: String(product.sku ?? product.productID ?? ""),
-        url: location.href,
-        brand: typeof product.brand === "string" ? product.brand : product.brand?.name,
-        name: product.name,
-        description: product.description,
-        color: product.color,
-        material: product.material,
-        images: Array.isArray(product.image) ? product.image : product.image ? [product.image] : [],
-        price: Number.isFinite(price) && price >= 0 ? price : null,
-        currency: offer?.priceCurrency,
-        returnWindowDays,
-        returnsLabel,
-        stockStatus,
-        sizesObserved: offerSizesObserved || anySizeControl || explicitOutOfStock,
-        sizeCandidates,
-      };
-    });
-    if (!raw?.name) return null;
-    const rawSizes = [...new Set(raw.sizeCandidates.map(cleanSizeLabel).filter(Boolean))];
-    const sizes = normalizeZalandoSizes(rawSizes);
-    const observedAt = new Date().toISOString();
-    const stockStatus = raw.stockStatus === "unknown" && sizes.length > 0
-      ? "in_stock"
-      : raw.stockStatus;
-    const stockReliable = stockStatus === "in_stock" || stockStatus === "out_of_stock";
-    const sizesReliable = sizes.length > 0 || stockStatus === "out_of_stock";
-    return {
-      ...raw,
-      stockStatus,
-      rawSizes,
-      sizes,
-      materials: raw.material ? [String(raw.material)] : [],
-      colorFamily: raw.color ?? "unknown",
-      ...(stockReliable ? {
-        available: stockStatus === "in_stock",
-        stockCheckedAt: observedAt,
-      } : {}),
-      ...(raw.price !== null ? { priceCheckedAt: observedAt } : {}),
-      ...(sizesReliable ? { sizesCheckedAt: observedAt } : {}),
-      attributes: {
-        detailCaptured: true,
-        sizeAvailabilityKnown: sizesReliable,
-        rawSizes,
-        ...(raw.returnsLabel ? { returnsLabel: raw.returnsLabel } : {}),
-        ...(raw.returnWindowDays !== null ? { returnsWindowDays: raw.returnWindowDays } : {}),
-      },
-    };
+    return extractZalandoDetailHtml(await page.content(), page.url());
+  },
+  extractDetailHtml(html, pageUrl) {
+    return extractZalandoDetailHtml(html, pageUrl);
   },
   discovery: {
     buildListingTargets: buildZalandoDiscoveryTargets,

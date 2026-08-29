@@ -12,7 +12,13 @@ import {
   normalizeAliExpressListingCard,
   parseAliExpressChfPrice,
 } from "../collector/adapters/aliexpress";
-import { buildZalandoDiscoveryTargets } from "../collector/adapters/zalando";
+import { extractGenericJsonLdProduct } from "../collector/adapters/generic-jsonld";
+import {
+  buildZalandoDiscoveryTargets,
+  extractZalandoDetailHtml,
+  extractZalandoListingHtml,
+  zalandoSourceIdFromUrl,
+} from "../collector/adapters/zalando";
 import { adapterFor, discoveryAdapterFor } from "../collector/registry";
 import type { DiscoveryIntent, RawProduct } from "../collector/types";
 import {
@@ -20,10 +26,15 @@ import {
   DiscoveryCancelledError,
   DiscoveryService,
   FileDiscoveryJobStore,
+  PlaywrightDiscoveryFetcher,
   type DiscoveryFetcher,
   type DiscoveryJobSnapshot,
   type DiscoveryJobStore,
 } from "../server/discovery";
+
+const zalandoListingHtml = `<!doctype html><script>window.__hydrationDataConsume({"graphqlCache":{"card":{"data":{"product":{"id":"ern:product::TEST22Q001-O11","sku":"TEST22Q001-O11","name":"BOXY CARDIGAN - Gilet - brown","brand":{"name":"Test Brand"},"displayPrice":{"trackingCurrentAmount":79,"original":{"amount":9900,"currency":"CHF"}},"mediumModelImage":{"uri":"https://img.example.test/cardigan.jpg"},"uri":"https://fr.zalando.ch/test-boxy-cardigan-test22q001-o11.html","silhouette":"CARDIGAN"}}}}})</script>`;
+
+const zalandoProductGroupHtml = `<!doctype html><script type="application/ld+json">[{"@context":"https://schema.org/","@type":"ProductGroup","brand":{"@type":"Brand","name":"Test Brand"},"name":"BOXY CARDIGAN - Gilet - brown","productGroupID":"TEST22Q001-O11","url":"https://fr.zalando.ch/test-boxy-cardigan-test22q001-o11.html","image":["https://img.example.test/cardigan.jpg"],"hasVariant":[{"@type":"Product","size":"MxR","offers":{"@type":"Offer","priceCurrency":"CHF","price":"79","availability":"https://schema.org/InStock"}},{"@type":"Product","size":"LxR","offers":{"@type":"Offer","priceCurrency":"CHF","price":"79","availability":"https://schema.org/OutOfStock"}}]}]</script>`;
 
 function ids(): () => string {
   let index = 0;
@@ -44,6 +55,10 @@ function product(sourceId: string, overrides: Partial<RawProduct> = {}): RawProd
 }
 
 test("Zalando M OR L is a finite union of public size listings", () => {
+  assert.equal(
+    zalandoSourceIdFromUrl("https://fr.zalando.ch/redefined-rebel-gilet-mole-r0622q08v-o11.html?size=M"),
+    "R0622Q08V-O11",
+  );
   const targets = buildZalandoDiscoveryTargets({
     source: "zalando-ch",
     query: "cardigan court brun",
@@ -68,6 +83,66 @@ test("Zalando M OR L is a finite union of public size listings", () => {
   });
   assert.equal(impossibleIntersection.length, 1);
   assert.equal(impossibleIntersection[0]!.appliedFilters.sizes, "intent_only");
+});
+
+test("Zalando server HTML exposes listing cards and exact ProductGroup stock", () => {
+  const listing = extractZalandoListingHtml(
+    zalandoListingHtml,
+    "https://fr.zalando.ch/pulls-gilets-homme/__taille-M/",
+  );
+  assert.equal(listing.length, 1);
+  assert.equal(listing[0]!.sourceId, "TEST22Q001-O11");
+  assert.equal(listing[0]!.price, 79);
+  assert.equal(listing[0]!.originalPrice, 99);
+  assert.equal(listing[0]!.stockStatus, "unknown");
+
+  const detail = extractZalandoDetailHtml(
+    zalandoProductGroupHtml,
+    "https://fr.zalando.ch/test-boxy-cardigan-test22q001-o11.html",
+    "2026-08-29T12:00:00.000Z",
+  );
+  assert.ok(detail);
+  assert.equal(detail.stockStatus, "in_stock");
+  assert.deepEqual(detail.rawSizes, ["MxR"]);
+  assert.deepEqual(detail.sizes, ["M"]);
+  assert.equal(detail.attributes?.sizeAvailabilityKnown, true);
+  assert.equal(detail.sizesCheckedAt, "2026-08-29T12:00:00.000Z");
+});
+
+test("HTTP-first discovery uses structured HTML without launching a browser", async (t) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(zalandoListingHtml, {
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
+  const fetcher = new PlaywrightDiscoveryFetcher({ maxScrolls: 0 });
+  t.after(async () => {
+    globalThis.fetch = originalFetch;
+    await fetcher.close();
+  });
+  const products = await fetcher.fetch({
+    source: "zalando-ch",
+    intent: { source: "zalando-ch", maxItems: 3, sizes: ["M", "L"], sizeMode: "any" },
+    target: {
+      url: "https://fr.zalando.ch/pulls-gilets-homme/__taille-M/",
+      matchedSizeIntent: "M",
+      appliedFilters: { query: "unsupported", category: "listing", sizes: "listing", price: "unsupported" },
+    },
+    limit: 3,
+  }, { signal: new AbortController().signal });
+  assert.deepEqual(products.map((product) => product.sourceId), ["TEST22Q001-O11"]);
+});
+
+test("generic JSON-LD import understands public product variants", () => {
+  const product = extractGenericJsonLdProduct(
+    zalandoProductGroupHtml.replaceAll("fr.zalando.ch", "www.arket.com"),
+    "https://www.arket.com/en-ch/product/test-cardigan",
+    "2026-08-29T12:00:00.000Z",
+  );
+  assert.ok(product);
+  assert.equal(product.stockStatus, "in_stock");
+  assert.deepEqual(product.sizes, ["MXR"]);
+  assert.equal(product.price, 79);
 });
 
 test("AliExpress helpers keep canonical public item identity and only parse visible CHF", () => {

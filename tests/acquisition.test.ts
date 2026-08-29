@@ -91,6 +91,7 @@ function ids(): () => string {
 test("Zalando sizes stay exact and canonicalize jeans width/length", () => {
   assert.equal(canonicalizeZalandoSize("L"), "L");
   assert.equal(canonicalizeZalandoSize("XL"), "XL");
+  assert.equal(canonicalizeZalandoSize("MxR"), "M");
   assert.equal(canonicalizeZalandoSize("W 32 / L 34"), "W32/L34");
   assert.equal(canonicalizeZalandoSize("32/34"), "W32/L34");
   assert.deepEqual(
