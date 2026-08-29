@@ -216,7 +216,8 @@ export async function startVisualSelection(input: {
   const constraints = visualConstraintsSchema.parse(input.constraints ?? {}) as VisualConstraints;
   const candidates = filterVisualCandidates(repository.listProducts({ limit: 10_000 }), constraints).slice(0, 2_000);
   if (candidates.length === 0) {
-    const sizeNote = constraints.size ? ` in size ${constraints.size} with fresh availability` : "";
+    const requestedSizes = [...new Set([...(constraints.size ? [constraints.size] : []), ...(constraints.sizes ?? [])])];
+    const sizeNote = requestedSizes.length ? ` in any of sizes ${requestedSizes.join(" or ")} with fresh availability` : "";
     throw new Error(`No catalog products satisfy the hard constraints${sizeNote}.`);
   }
   const maxInspections = Math.min(Math.max(input.maxCandidates ?? 48, 1), 160, candidates.length);

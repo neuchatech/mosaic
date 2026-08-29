@@ -10,7 +10,7 @@ import { seedProducts } from "../src/catalog/seed";
 import { filterSpecSchema } from "../src/domain/catalog";
 import { applyFilter } from "../src/domain/filter";
 import { compactProjection } from "../src/projection/compact";
-import { projectProducts } from "../src/projection/pca";
+import { projectProducts, projectProductsWithVectors } from "../src/projection/pca";
 import { normalizeZalandoSizes } from "../collector/adapters/zalando";
 import { guessCategory, guessColorFamily, guessFit, guessTags } from "../collector/normalize";
 
@@ -108,6 +108,17 @@ test("PCA projection tolerates a corpus with constant feature dimensions", () =>
   const projected = projectProducts(identical);
   assert.equal(projected.length, 3);
   assert.ok(projected.every((product) => product.x === .5 && product.y === .5));
+});
+
+test("hybrid PCA accepts visual rows and metadata-only fallbacks without erasing block weights", () => {
+  const products = seedProducts.slice(0, 3);
+  const vectors = new Map([
+    [products[0]!.id, [1, 0, .2, .4]],
+    [products[1]!.id, [0, 1, .3, .1]],
+  ]);
+  const projected = projectProductsWithVectors(products, { vectorsById: vectors, scale: false });
+  assert.equal(projected.length, 3);
+  assert.ok(projected.every((product) => Number.isFinite(product.x) && Number.isFinite(product.y)));
 });
 
 test("Codex filter conversion removes placeholder clauses from groups", () => {

@@ -49,6 +49,12 @@ test("visual constraints enforce exact fresh size, budget, kind, and rejection",
   assert.deepEqual(selected.map((product) => product.id), ["m"]);
   const withSaved = filterVisualCandidates(products, { size: "M", maxPrice: 120, includeRejected: false, includeSaved: true }, now);
   assert.deepEqual(withSaved.map((product) => product.id), ["m", "saved"]);
+  const mediumOrLarge = filterVisualCandidates([
+    ...products,
+    checkedProduct("l", "L", 95),
+    checkedProduct("s", "S", 95),
+  ], { sizes: ["M", "L"], maxPrice: 120 }, now);
+  assert.deepEqual(mediumOrLarge.map((product) => product.id), ["m", "l"]);
 });
 
 test("outfit generation prioritizes owned complementary garments and reports gaps", () => {

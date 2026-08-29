@@ -1,4 +1,8 @@
-import type { ShopAdapter } from "../types";
+import type {
+  DiscoveryIntent,
+  DiscoveryListingTarget,
+  ShopAdapter,
+} from "../types";
 
 const LETTER_SIZE_PATTERN = /^(?:XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|[2-6]XL)$/i;
 const NUMBER_SIZE_PATTERN = /^(?:(?:EU|IT|FR|UK|US)\s*)?\d{1,3}(?:[.,]5)?$/i;
@@ -50,6 +54,97 @@ function pricesFromText(text: string): number[] {
     .filter(Number.isFinite);
 }
 
+const ZALANDO_CATEGORY_PATHS: Record<string, string> = {
+  all: "mode-homme",
+  clothing: "mode-homme",
+  clothes: "mode-homme",
+  vetements: "mode-homme",
+  vêtements: "mode-homme",
+  jackets: "vestes-homme",
+  jacket: "vestes-homme",
+  vestes: "vestes-homme",
+  veste: "vestes-homme",
+  trousers: "pantalons-homme",
+  pants: "pantalons-homme",
+  pantalons: "pantalons-homme",
+  pantalon: "pantalons-homme",
+  jeans: "jeans-homme",
+  knitwear: "pulls-gilets-homme",
+  knits: "pulls-gilets-homme",
+  mailles: "pulls-gilets-homme",
+  maille: "pulls-gilets-homme",
+  cardigans: "pulls-gilets-homme",
+  cardigan: "pulls-gilets-homme",
+  accessories: "accessoires-homme",
+  accessoires: "accessoires-homme",
+};
+
+function discoveryCategoryPath(category?: string): string {
+  if (!category?.trim()) return ZALANDO_CATEGORY_PATHS.all;
+  const key = category.trim().toLocaleLowerCase("fr-CH");
+  return ZALANDO_CATEGORY_PATHS[key] ?? ZALANDO_CATEGORY_PATHS.all;
+}
+
+function cleanDiscoverySize(size: string): string | null {
+  const normalized = canonicalizeZalandoSize(size);
+  // Listing path filters are only used for the stable, simple clothing sizes.
+  return normalized && LETTER_SIZE_PATTERN.test(normalized) ? normalized : null;
+}
+
+function withoutKnownSizeFilter(url: URL): URL {
+  const result = new URL(url);
+  result.pathname = result.pathname.replace(/\/__taille-[^/]+\/?$/i, "/");
+  return result;
+}
+
+function withZalandoListingSize(url: URL, size: string): URL {
+  const result = withoutKnownSizeFilter(url);
+  result.pathname = `${result.pathname.replace(/\/+$/, "")}/__taille-${encodeURIComponent(size)}/`;
+  return result;
+}
+
+/**
+ * Builds a finite listing plan. M OR L deliberately becomes two known public
+ * Zalando filters whose results are unioned by DiscoveryService. We do not
+ * claim an undocumented multi-size URL syntax.
+ */
+export function buildZalandoDiscoveryTargets(intent: DiscoveryIntent): DiscoveryListingTarget[] {
+  if (intent.source !== "zalando-ch") throw new Error("Zalando discovery requires source 'zalando-ch'.");
+  const base = intent.listingUrl
+    ? new URL(intent.listingUrl)
+    : new URL(`https://fr.zalando.ch/${discoveryCategoryPath(intent.category)}/`);
+  if (!["fr.zalando.ch", "www.zalando.ch", "zalando.ch"].includes(base.hostname)) {
+    throw new Error(`Zalando discovery does not allow host ${base.hostname}.`);
+  }
+  if (base.protocol !== "https:") {
+    throw new Error(`Zalando discovery requires HTTPS, not ${base.protocol}`);
+  }
+  if (intent.query?.trim()) base.searchParams.set("q", intent.query.trim());
+
+  const sizes = [...new Set((intent.sizes ?? []).map(cleanDiscoverySize).filter((size): size is string => Boolean(size)))];
+  const common = {
+    query: intent.query?.trim() ? "listing" as const : "unsupported" as const,
+    category: intent.category?.trim() || !intent.listingUrl ? "listing" as const : "unsupported" as const,
+    price: intent.minPrice !== undefined || intent.maxPrice !== undefined
+      ? "post_fetch" as const
+      : "unsupported" as const,
+  };
+  if (sizes.length === 0 || (intent.sizeMode === "all" && sizes.length > 1)) {
+    return [{
+      url: base.href,
+      appliedFilters: {
+        ...common,
+        sizes: sizes.length > 0 ? "intent_only" : "unsupported",
+      },
+    }];
+  }
+  return sizes.map((size) => ({
+    url: withZalandoListingSize(base, size).href,
+    matchedSizeIntent: size,
+    appliedFilters: { ...common, sizes: "listing" },
+  }));
+}
+
 export const zalandoAdapter: ShopAdapter = {
   id: "zalando-ch",
   label: "Zalando Suisse",
@@ -95,7 +190,14 @@ export const zalandoAdapter: ShopAdapter = {
         originalPrice: prices.length > 1 ? prices.at(-1) : null,
         currency: "CHF",
         images: card.image ? [card.image] : [],
-        attributes: { listingText: card.text.slice(0, 500) },
+        rawSizes: [],
+        sizes: [],
+        stockStatus: "unknown" as const,
+        attributes: {
+          listingText: card.text.slice(0, 500),
+          discoveryOnly: true,
+          sizeAvailabilityKnown: false,
+        },
       };
     });
   },
@@ -233,5 +335,14 @@ export const zalandoAdapter: ShopAdapter = {
         ...(raw.returnWindowDays !== null ? { returnsWindowDays: raw.returnWindowDays } : {}),
       },
     };
+  },
+  discovery: {
+    buildListingTargets: buildZalandoDiscoveryTargets,
+    canonicalProductUrl(url) {
+      const canonical = new URL(url);
+      canonical.hash = "";
+      canonical.search = "";
+      return canonical.href;
+    },
   },
 };

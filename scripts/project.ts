@@ -1,8 +1,7 @@
 import { CatalogRepository } from "../server/repository";
-import { projectProducts } from "../src/projection/pca";
-import { compactProjection } from "../src/projection/compact";
+import { projectCompactCached } from "../server/projection-cache";
 
 const repository = new CatalogRepository();
 const products = repository.listProducts({ limit: 10_000 });
-const updated = repository.replaceCoordinates(compactProjection(projectProducts(products)));
-console.log(`Projected ${updated} products with PCA.`);
+const updated = repository.replaceCoordinates(projectCompactCached(products));
+console.log(`Projected ${updated} products with hybrid CLIP/metadata PCA when cached, metadata PCA otherwise.`);

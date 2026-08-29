@@ -30,6 +30,54 @@ export type RawProduct = {
   attributes?: Product["attributes"];
 };
 
+export type DiscoverySource = "zalando-ch" | "aliexpress";
+export type DiscoverySizeMode = "any" | "all";
+
+/**
+ * A bounded, user-supervised discovery request. `sizes` is an intent applied
+ * to a shop listing when the adapter knows a stable public URL filter; it is
+ * never proof that a particular product variant is currently available.
+ */
+export type DiscoveryIntent = {
+  source: DiscoverySource;
+  query?: string;
+  category?: string;
+  sizes?: string[];
+  sizeMode?: DiscoverySizeMode;
+  minPrice?: number;
+  maxPrice?: number;
+  /** Required hard cap across every listing target in this discovery job. */
+  maxItems: number;
+  /** Optional exact public listing URL. The adapter still validates its host. */
+  listingUrl?: string;
+};
+
+export type DiscoveryFilterApplication = "listing" | "post_fetch" | "intent_only" | "unsupported";
+
+export type DiscoveryListingTarget = {
+  url: string;
+  appliedFilters: {
+    query: DiscoveryFilterApplication;
+    category: DiscoveryFilterApplication;
+    sizes: DiscoveryFilterApplication;
+    price: DiscoveryFilterApplication;
+  };
+  /** One branch of an OR-size listing union, e.g. M then L. */
+  matchedSizeIntent?: string;
+};
+
+export type ShopDiscoveryAdapter = {
+  buildListingTargets(intent: DiscoveryIntent): DiscoveryListingTarget[];
+  canonicalProductUrl?(url: URL): string;
+  classifyAccessBlock?(input: {
+    pageUrl: string;
+    status?: number;
+    title?: string;
+    bodyText?: string;
+    hasBlockingElement?: boolean;
+  }): string | null;
+};
+
 export type ShopAdapter = {
   id: string;
   label: string;
@@ -37,4 +85,5 @@ export type ShopAdapter = {
   matches(url: URL): boolean;
   extractListing(page: Page): Promise<RawProduct[]>;
   extractDetail(page: Page): Promise<RawProduct | null>;
+  discovery?: ShopDiscoveryAdapter;
 };

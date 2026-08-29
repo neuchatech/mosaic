@@ -45,6 +45,7 @@ yarn-error.log*
 /data/*.sqlite*
 /data/codex-jobs/
 /data/contact-sheets/
+/data/discovery-jobs/
 /data/image-cache/
 /data/media/
 /data/backups/

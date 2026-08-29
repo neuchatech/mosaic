@@ -133,6 +133,9 @@ button { color: inherit; font: inherit; }
 .dragging .productCard:hover { transform: translateZ(0); box-shadow: none; }
 .productImage { height: 100%; min-height: 100%; background-color: #e9e5dc; background-image: url('/seed/reference-board.png'); background-size: 500%; filter: saturate(.8) contrast(.98); }
 .productImage img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.imageMode-cropped .productImage img { object-fit: cover; }
+.imageMode-full .productImage { background-color: #f1eee7; }
+.imageMode-full .productImage img { object-fit: contain; }
 .heart { position: absolute; z-index: 4; top: 5px; right: 5px; width: 22px; height: 22px; border: 0; border-radius: 50%; background: #1917128f; color: #fff; cursor: pointer; backdrop-filter: blur(5px); opacity: .75; }
 .heart.liked { color: var(--clay); }
 .spaceMode .productMeta { position: absolute; z-index: 2; inset: auto 0 0; padding: 28px 7px 7px; color: white; background: linear-gradient(transparent, #17140fc7); }
@@ -216,7 +219,7 @@ button { color: inherit; font: inherit; }
 .atlasBoardPanel {
   height: calc(100vh - 55px); min-height: 0; padding: 7px 8px 5px;
   grid-template-rows: auto auto auto minmax(0, 1fr) auto;
-  overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+  overflow: visible; border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
   box-shadow: 0 10px 34px #483b280e;
 }
 .atlasBoardToolbar { min-height: 34px; padding: 0 1px 5px; }
@@ -235,15 +238,46 @@ button { color: inherit; font: inherit; }
 .atlasFilterBar .quickFilter { min-width: 64px; height: 31px; padding: 3px 5px; }
 .atlasFilterBar .quickFilter small { max-width: 82px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .atlasFilterBar .quickFilter select { max-width: 78px; }
-.atlasFilterBar .sizeFilter { min-width: 82px; }
+.atlasFilterBar .sizeMultiFilter { min-width: 92px; padding: 0; position: relative; }
+.sizeMultiFilter > summary {
+  height: 100%; display: grid; align-content: center; gap: 2px; padding: 3px 6px; cursor: pointer; list-style: none;
+}
+.sizeMultiFilter > summary::-webkit-details-marker { display: none; }
+.sizeMultiFilter[open] { z-index: 40; border-color: #a99d8c; }
+.sizeFilterValue { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 5px; color: var(--ink); font: 700 8px/1.1 Arial, sans-serif; white-space: nowrap; }
+.sizeFilterValue b { color: #9a9184; font-size: 7px; }
+.sizeFilterPopover {
+  position: absolute; z-index: 45; top: calc(100% + 5px); left: 0; width: 246px; display: grid; gap: 8px;
+  padding: 9px; border: 1px solid var(--line); border-radius: 9px; background: #fffdf9; box-shadow: 0 16px 42px #31271a2b;
+}
+.sizeFilterHeader { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.sizeFilterHeader strong { font-size: 9px; }
+.sizeFilterHeader span { color: #91897e; font-size: 7px; }
+.sizeChoiceGrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; max-height: 144px; overflow: auto; }
+.sizeChoiceGrid button {
+  min-width: 0; min-height: 29px; display: flex; align-items: center; justify-content: space-between; gap: 3px; padding: 4px 6px;
+  border: 1px solid #ded8cd; border-radius: 6px; background: #f7f4ee; color: #5e584f; cursor: pointer; font-size: 8px;
+}
+.sizeChoiceGrid button b { min-width: 14px; color: #9a9287; font-size: 6px; text-align: right; }
+.sizeChoiceGrid button.active { border-color: #9a674e; background: #eee1d6; color: #653f2e; box-shadow: inset 0 0 0 1px #9a674e20; }
+.sizeChoiceGrid button.active b { color: #79513d; }
+.sizeFilterActions { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.sizeFilterActions button, .resetFilters {
+  min-height: 27px; border: 1px solid var(--line); border-radius: 6px; background: white; color: #696158; cursor: pointer; font-size: 7px;
+}
+.sizeFilterPopover p { margin: 0; color: #8c8479; font-size: 7px; line-height: 1.35; }
+.atlasFilterBar .imageModeButton { min-width: 76px; height: 31px; padding: 3px 6px; }
+.atlasFilterBar .imageModeButton strong { overflow: hidden; text-overflow: ellipsis; }
+.atlasFilterBar .imageModeButton[aria-pressed="true"] { border-color: #b8aa98; background: #f4eee6; }
 
 .advancedFilters { position: relative; flex: none; }
 .advancedFilters > summary {
-  height: 31px; display: grid; place-items: center; padding: 0 8px; border: 1px solid var(--line);
+  height: 31px; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 0 8px; border: 1px solid var(--line);
   border-radius: 7px; background: #fff; color: #6f685d; cursor: pointer; font-size: 8px; list-style: none;
 }
 .advancedFilters > summary::-webkit-details-marker { display: none; }
 .advancedFilters[open] > summary { border-color: #a99d8c; color: var(--ink); }
+.advancedFilters > summary b { min-width: 14px; padding: 2px 4px; border-radius: 999px; background: var(--clay); color: white; font-size: 6px; text-align: center; }
 .filterPopover {
   position: absolute; z-index: 30; top: calc(100% + 4px); right: 0; width: 246px;
   display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 9px;
@@ -261,6 +295,8 @@ button { color: inherit; font: inherit; }
 .priceRange, .formColumns { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .filterPopover .checkboxLine { display: flex; align-items: center; gap: 7px; color: var(--ink); font: 9px/1.2 Arial, sans-serif; text-transform: none; }
 .filterPopover .checkboxLine input { width: 14px; min-height: 14px; margin: 0; accent-color: var(--clay); }
+.mobileFilterFallbacks { display: none; }
+.filterPopover .resetFilters { width: 100%; background: #faf7f1; }
 .refreshActions { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
 .refreshActions button, .drawerFooter > button {
   min-height: 29px; border: 1px solid var(--line); border-radius: 6px; background: #f5f2eb;
@@ -270,6 +306,8 @@ button { color: inherit; font: inherit; }
 .atlasAiComposer { min-width: 280px; gap: 2px; }
 .atlasAiComposer .aiFilter { min-height: 31px; padding-block: 2px; }
 .atlasAiComposer .aiFilter button { min-height: 25px; padding: 4px 7px; }
+.atlasAiComposer .aiFilter .discoverButton { background: #665242; }
+.atlasAiComposer .aiFilter .discoverButton:disabled[aria-busy="false"] { cursor: not-allowed; }
 .reasoningSelect {
   max-width: 75px; min-height: 23px; padding: 0 3px; border: 1px solid #ccd1c3; border-radius: 5px;
   outline: 0; background: #fffef9; color: #5f6559; font-size: 7px;
@@ -280,6 +318,10 @@ button { color: inherit; font: inherit; }
   border: 0; box-shadow: none; background: transparent; text-overflow: ellipsis; white-space: nowrap;
 }
 .aiSubline .analysisMode { margin-left: 2px; }
+
+.operationStack { min-width: 0; display: grid; gap: 3px; margin: 0 1px 4px; }
+.operationStack:empty { height: 0; margin: 0; }
+.operationStack .jobProgress { margin: 0; }
 
 .jobProgress {
   position: relative; height: 20px; display: flex; align-items: center; justify-content: space-between;
@@ -293,6 +335,28 @@ button { color: inherit; font: inherit; }
 .jobProgress.jobError { border-color: #d9bcae; background: #f7ede8; color: #7a4c3a; }
 .jobProgress.jobError > span { background: #eed9cf; }
 .jobProgress.jobError > button { background: #844e3a; }
+
+.discoveryProgress {
+  position: relative; min-width: 0; min-height: 27px; display: flex; align-items: center; gap: 9px;
+  overflow: hidden; padding: 3px 6px; border: 1px solid #c9d0bf; border-radius: 6px;
+  background: #f0f3e9; color: #525a4b; font-size: 7px;
+}
+.discoveryFill { position: absolute; z-index: 0; inset: 0 auto 0 0; background: #dce7d0; transition: width .3s ease; }
+.discoveryPlanInfo, .discoveryProgress > em, .discoveryActions { position: relative; z-index: 1; }
+.discoveryPlanInfo { min-width: 0; flex: 1; display: grid; gap: 1px; }
+.discoveryPlanInfo > b { overflow: hidden; color: #34402f; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.discoveryPlanInfo > small { overflow: hidden; color: #71796b; font-size: 6px; text-overflow: ellipsis; white-space: nowrap; }
+.discoveryProgress > em { flex: none; color: #646c5e; font-style: normal; white-space: nowrap; }
+.discoveryProgress > em b { color: #374331; font-size: 8px; }
+.discoveryActions { flex: none; display: flex; gap: 3px; }
+.discoveryActions button {
+  min-height: 19px; padding: 2px 7px; border: 0; border-radius: 4px; background: #4f5b49; color: white; cursor: pointer; font-size: 6px;
+}
+.discoveryProgress.discoveryError { border-color: #d8b9a9; background: #f7ece6; color: #764b39; }
+.discoveryProgress.discoveryError .discoveryFill { background: #edd6cb; }
+.discoveryProgress.discoveryError .discoveryPlanInfo > b, .discoveryProgress.discoveryError > em b { color: #6f4433; }
+.discoveryProgress.discoveryCancelled { border-color: #d6cec0; background: #f3f0e9; }
+.discoveryProgress.discoveryCancelled .discoveryFill { background: #e6e0d5; }
 
 .atlasBoardPanel .atlas { border-radius: 6px; }
 .atlasBoardPanel .productCard { content-visibility: auto; contain-intrinsic-size: 120px 180px; outline: none; }
@@ -455,6 +519,7 @@ body:has(.compareDock) .toast { bottom: 61px; }
   .atlasBoardPanel .productCard.decision-rejected:hover { filter: saturate(.4) brightness(.77); }
   .cardActions button { width: 28px; height: 28px; }
   .scopeNav button, .atlasTopbar .topActions button { min-height: 34px; }
+  .atlasAiComposer .aiFilter button, .discoveryActions button { min-height: 30px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -492,11 +557,20 @@ body:has(.compareDock) .toast { bottom: 61px; }
   .atlasFilterBar .quickFilter:nth-of-type(3), .atlasFilterBar .quickFilter:nth-of-type(4), .atlasFilterBar .quickFilter:nth-of-type(5) { display: none; }
   .atlasFilterBar .quickFilter { flex: 1; }
   .atlasFilterBar .quickFilter select { max-width: none; }
+  .atlasFilterBar .sizeMultiFilter { flex: 1.15; min-width: 96px; }
+  .sizeFilterPopover { width: min(246px, calc(100vw - 14px)); }
+  .atlasFilterBar .imageModeButton { min-width: 68px; }
   .advancedFilters { order: 3; }
+  .mobileFilterFallbacks { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+  .mobileFilterFallbacks label:last-child { grid-column: 1 / -1; }
   .atlasAiComposer { order: 4; flex-basis: 100%; }
   .atlasAiComposer .aiFilter { min-width: 0; }
+  .atlasAiComposer .aiFilter input { min-width: 40px; }
   .reasoningSelect { display: none; }
-  .atlasAiComposer .aiFilter > button:not(.visionButton):not(.attachButton) { display: none; }
+  .atlasAiComposer .aiFilter > button { padding-inline: 5px; }
+  .discoveryProgress { gap: 5px; }
+  .discoveryPlanInfo > small { max-width: 45vw; }
+  .discoveryProgress > em { max-width: 92px; overflow: hidden; text-overflow: ellipsis; }
   .atlasBoardPanel .atlas { min-height: 0; }
   .atlasBoardFooter span:nth-child(2), .atlasBoardFooter span:nth-child(3) { display: none; }
   .drawer { width: 100%; max-width: none; }

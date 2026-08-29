@@ -4,12 +4,17 @@ import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { decisionSchema, filterSpecSchema, productPatchSchema, productSchema } from "../src/domain/catalog";
 import { stableProductId } from "../src/domain/ids";
+import { normalizeProduct } from "../collector/normalize";
+import type { DiscoveryIntent, RawProduct } from "../collector/types";
 import { AcquisitionService, acquisitionClientView } from "./acquisition";
 import { catalogMediaPath, catalogMediaType, persistCatalogImages } from "./media";
 import { generateOutfits } from "./outfit-generator";
 import { projectCompactCached } from "./projection-cache";
 import { CatalogRepository } from "./repository";
 import { createFilterWithCodex } from "./codex-bridge";
+import { createDiscoveryPlanWithCodex } from "./codex-discovery";
+import { DiscoveryService, FileDiscoveryJobStore } from "./discovery";
+import { getEmbeddingJob, startEmbeddingJob } from "./embedding-job";
 import { getVisualSelection, startVisualSelection } from "./visual-selection";
 
 const catalogItemFieldsSchema = z.object({
@@ -41,9 +46,50 @@ function outfitView(board: ReturnType<CatalogRepository["saveOutfitBoard"]>) {
   };
 }
 
+function planSearchUsesGarmentSizes(search: { source: string; category: string; query: string }): boolean {
+  if (search.source !== "zalando-ch") return false;
+  return !/access|chauss|shoe|sneaker|boot|collier|necklace|jewel|bijou|bonnet|beanie|casquette|sac|bag|ceinture|belt|écharpe|scarf|lunette/i
+    .test(`${search.category} ${search.query}`);
+}
+
+function createDiscoveryService(
+  repository: CatalogRepository,
+  acquisition: AcquisitionService,
+): DiscoveryService {
+  return new DiscoveryService({
+    store: new FileDiscoveryJobStore(),
+    isKnownProduct(raw: RawProduct, source) {
+      return repository.listProducts({ limit: 10_000 }).some((product) => (
+        product.source === source
+        && ((raw.sourceId && product.sourceId === raw.sourceId) || product.url === raw.url)
+      ));
+    },
+    async onProducts(rawProducts, context) {
+      const products = rawProducts.map((raw) => normalizeProduct(context.intent.source, raw));
+      repository.upsertCollectedProducts(products);
+      const allProducts = repository.listProducts({ limit: 10_000 });
+      repository.replaceCoordinates(projectCompactCached(allProducts));
+      if (!context.intent.sizes?.length) return;
+      for (let offset = 0; offset < products.length; offset += 120) {
+        const targets = products.slice(offset, offset + 120).map((product) => ({
+          productId: product.id,
+          url: product.url,
+        }));
+        if (targets.length) {
+          const detailJob = acquisition.start({ targets, source: `discovery:${context.jobId}` });
+          // Keep listing and product-detail traffic serialized on the same local
+          // workflow; this avoids two independent workers hitting Zalando at once.
+          await acquisition.waitFor(detailJob.id);
+        }
+      }
+    },
+  });
+}
+
 export function createApp(
   repository = new CatalogRepository(),
   acquisition = new AcquisitionService(repository),
+  discovery = createDiscoveryService(repository, acquisition),
 ) {
   const app = new Hono();
   app.use("/api/*", cors({ origin: ["http://localhost:3000", "http://127.0.0.1:3000"] }));
@@ -61,6 +107,8 @@ export function createApp(
     }
   });
   app.get("/api/stats", (context) => context.json(repository.stats()));
+  app.get("/api/embeddings/job", (context) => context.json(getEmbeddingJob()));
+  app.post("/api/embeddings/job", (context) => context.json(startEmbeddingJob(repository), 202));
   app.get("/api/products", (context) => {
     const search = context.req.query("search");
     const limit = Number(context.req.query("limit") ?? 1000);
@@ -215,6 +263,40 @@ export function createApp(
     ? context.json({ deleted: true })
     : context.json({ error: "view not found" }, 404));
 
+  app.get("/api/discovery/jobs", (context) => {
+    const requestedLimit = Number(context.req.query("limit") ?? 20);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(100, Math.max(1, Math.trunc(requestedLimit)))
+      : 20;
+    return context.json(discovery.list(limit));
+  });
+  app.post("/api/discovery/jobs", async (context) => {
+    const body = await context.req.json<{ intent?: DiscoveryIntent; intents?: DiscoveryIntent[] }>();
+    const intents = body.intents ?? (body.intent ? [body.intent] : []);
+    try {
+      const jobs = discovery.startBatch({ intents });
+      return context.json({ jobs }, 202);
+    } catch (error) {
+      return context.json({ error: error instanceof Error ? error.message : "discovery unavailable" }, 400);
+    }
+  });
+  app.get("/api/discovery/jobs/:id", (context) => {
+    const job = discovery.get(context.req.param("id"));
+    return job ? context.json(job) : context.json({ error: "discovery job not found" }, 404);
+  });
+  app.post("/api/discovery/jobs/:id/cancel", (context) => {
+    try { return context.json(discovery.cancel(context.req.param("id"))); }
+    catch (error) { return context.json({ error: error instanceof Error ? error.message : "cancel failed" }, 404); }
+  });
+  app.post("/api/discovery/jobs/:id/retry", (context) => {
+    try { return context.json(discovery.retry(context.req.param("id")), 202); }
+    catch (error) { return context.json({ error: error instanceof Error ? error.message : "retry failed" }, 409); }
+  });
+  app.post("/api/discovery/jobs/:id/resume", (context) => {
+    try { return context.json(discovery.resume(context.req.param("id")), 202); }
+    catch (error) { return context.json({ error: error instanceof Error ? error.message : "resume failed" }, 409); }
+  });
+
   app.get("/api/acquisition/jobs", (context) => {
     const requestedLimit = Number(context.req.query("limit") ?? 20);
     const limit = Number.isFinite(requestedLimit)
@@ -303,6 +385,38 @@ export function createApp(
     } catch (error) {
       console.error(error);
       return context.json({ error: error instanceof Error ? error.message : "Codex bridge failed" }, 500);
+    }
+  });
+  app.post("/api/codex/discovery-plan", async (context) => {
+    const body = await context.req.json<{ prompt?: string }>();
+    if (!body.prompt?.trim()) return context.json({ error: "prompt is required" }, 400);
+    try {
+      return context.json(await createDiscoveryPlanWithCodex(body.prompt), 201);
+    } catch (error) {
+      console.error(error);
+      return context.json({ error: error instanceof Error ? error.message : "Codex discovery planning failed" }, 500);
+    }
+  });
+  app.post("/api/codex/discover", async (context) => {
+    const body = await context.req.json<{ prompt?: string }>();
+    if (!body.prompt?.trim()) return context.json({ error: "prompt is required" }, 400);
+    try {
+      const plan = await createDiscoveryPlanWithCodex(body.prompt);
+      const intents: DiscoveryIntent[] = plan.searches.map((search) => ({
+        source: search.source,
+        query: search.query,
+        category: search.category,
+        maxItems: search.maxItems,
+        sizeMode: plan.sizeMode,
+        ...(planSearchUsesGarmentSizes(search) ? { sizes: plan.sizes } : {}),
+        ...(search.minPrice > 0 ? { minPrice: search.minPrice } : {}),
+        ...(search.maxPrice > 0 ? { maxPrice: search.maxPrice } : {}),
+      }));
+      const jobs = discovery.startBatch({ intents });
+      return context.json({ plan, jobs }, 202);
+    } catch (error) {
+      console.error(error);
+      return context.json({ error: error instanceof Error ? error.message : "Codex discovery failed" }, 500);
     }
   });
   app.post("/api/codex/visual-select", async (context) => {

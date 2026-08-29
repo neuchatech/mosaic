@@ -3,6 +3,7 @@ import type { Product } from "../src/domain/catalog";
 
 export const visualConstraintsSchema = z.object({
   size: z.string().trim().min(1).optional(),
+  sizes: z.array(z.string().trim().min(1)).min(1).max(20).optional(),
   minPrice: z.number().nonnegative().optional(),
   maxPrice: z.number().nonnegative().optional(),
   sources: z.array(z.string().min(1)).max(20).optional(),
@@ -13,6 +14,7 @@ export const visualConstraintsSchema = z.object({
 });
 
 export type VisualConstraints = z.infer<typeof visualConstraintsSchema>;
+export type VisualConstraintsInput = z.input<typeof visualConstraintsSchema>;
 
 function canonical(value: string): string {
   return value.trim().toLocaleUpperCase("fr-CH").replace(/^TAILLE\s+/i, "");
@@ -26,7 +28,7 @@ function withinHours(value: string | null | undefined, hours: number, now: numbe
 
 export function matchesVisualConstraints(
   product: Product,
-  input: VisualConstraints,
+  input: VisualConstraintsInput,
   now = Date.now(),
 ): boolean {
   const constraints = visualConstraintsSchema.parse(input);
@@ -39,13 +41,16 @@ export function matchesVisualConstraints(
   if (constraints.minPrice !== undefined && (product.price === null || product.price < constraints.minPrice)) return false;
   if (constraints.maxPrice !== undefined && (product.price === null || product.price > constraints.maxPrice)) return false;
 
-  if (constraints.size) {
+  const requestedSizes = [...new Set([
+    ...(constraints.size ? [constraints.size] : []),
+    ...(constraints.sizes ?? []),
+  ].map(canonical))];
+  if (requestedSizes.length) {
     const freshWithinHours = constraints.freshWithinHours ?? 24 * 7;
     if (product.stockStatus !== "in_stock" || !product.available) return false;
     if (product.attributes.sizeAvailabilityKnown !== true) return false;
     if (!withinHours(product.sizesCheckedAt, freshWithinHours, now)) return false;
-    const requested = canonical(constraints.size);
-    if (!product.sizes.some((size) => canonical(size) === requested)) return false;
+    if (!product.sizes.some((size) => requestedSizes.includes(canonical(size)))) return false;
   } else if (constraints.freshWithinHours !== undefined) {
     if (!withinHours(product.stockCheckedAt, constraints.freshWithinHours, now)) return false;
   }
@@ -54,7 +59,7 @@ export function matchesVisualConstraints(
 
 export function filterVisualCandidates(
   products: Product[],
-  constraints: VisualConstraints,
+  constraints: VisualConstraintsInput,
   now = Date.now(),
 ): Product[] {
   return products.filter((product) => matchesVisualConstraints(product, constraints, now));

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Wardrobe Atlas discovery plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "description", "targetCount", "searches"],
+  "properties": {
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "targetCount": { "type": "integer", "minimum": 1, "maximum": 300 },
+    "searches": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "query", "category", "minPrice", "maxPrice", "maxItems", "reason"],
+        "properties": {
+          "source": { "enum": ["zalando-ch", "aliexpress"] },
+          "query": { "type": "string" },
+          "category": { "type": "string" },
+          "minPrice": { "type": "number", "minimum": 0 },
+          "maxPrice": { "type": "number", "minimum": 0 },
+          "maxItems": { "type": "integer", "minimum": 1, "maximum": 60 },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  }
+}

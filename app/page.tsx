@@ -231,6 +231,7 @@ export function LegacyHome() {
     if (sourceFilter === "shop" && item.kind === "reference") return false;
     if (sourceFilter === "reference" && item.kind !== "reference") return false;
     if (sourceFilter === "zalando" && item.source !== "zalando-ch") return false;
+    if (sourceFilter === "aliexpress" && item.source !== "aliexpress") return false;
     if (priceFilter !== "all") {
       if (item.price === null) return false;
       if (priceFilter === "under50" && item.price >= 50) return false;
@@ -566,7 +567,7 @@ export function LegacyHome() {
           </div>
 
           <div className="filterBar">
-            <label className="quickFilter"><small>Source</small><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">Toutes</option><option value="shop">Tous shops</option><option value="zalando">Zalando</option><option value="reference">Références</option></select></label>
+            <label className="quickFilter"><small>Source</small><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">Toutes</option><option value="shop">Tous shops</option><option value="zalando">Zalando</option><option value="aliexpress">AliExpress</option><option value="reference">Références</option></select></label>
             <label className="quickFilter"><small>Prix</small><select value={priceFilter} onChange={(event) => setPriceFilter(event.target.value)}><option value="all">Tous</option><option value="under50">&lt; 50</option><option value="50to100">50–100</option><option value="100to180">100–180</option><option value="over180">&gt; 180</option></select></label>
             <label className="quickFilter"><small>Coupe</small><select value={fitFilter} onChange={(event) => setFitFilter(event.target.value)}><option value="all">Toutes</option><option value="large">Large</option><option value="courte">Courte</option><option value="droite">Droite</option><option value="unknown">Inconnue</option></select></label>
             <label className="quickFilter"><small>Matière</small><select value={materialFilter} onChange={(event) => setMaterialFilter(event.target.value)}><option value="all">Toutes</option><option value="knit">Maille</option><option value="linen">Lin</option><option value="cotton">Coton</option><option value="leather">Cuir</option></select></label>
@@ -716,6 +717,7 @@ type AtlasDecision = "unseen" | "saved" | "rejected" | "owned";
 type AtlasKind = "shop" | "reference" | "owned";
 type AtlasScope = "catalogue" | "saved" | "owned" | "reference" | "outfits";
 type AtlasDrawer = "compare" | "views" | "add" | "outfits" | null;
+type AtlasImageMode = "cropped" | "full";
 
 type AtlasItem = {
   id: string;
@@ -806,7 +808,8 @@ type AtlasSavedView = {
   priceFilter: string;
   fitFilter: string;
   materialFilter: string;
-  sizeFilter: string;
+  sizeFilters: string[];
+  sizeFilter?: string;
   stockFilter: string;
   attributeQuery: string;
   minPrice: string;
@@ -815,6 +818,7 @@ type AtlasSavedView = {
   xAxis: AxisField;
   yAxis: AxisField;
   mode: "space" | "grid";
+  imageMode: AtlasImageMode;
 };
 
 type AtlasOutfitBoard = {
@@ -857,6 +861,47 @@ type AtlasAcquisitionJob = {
   error?: string;
 };
 
+type AtlasDiscoveryStatus = "queued" | "running" | "succeeded" | "failed" | "blocked" | "cancelled";
+
+type AtlasDiscoverySearch = {
+  source: string;
+  query?: string;
+  category?: string;
+  minPrice?: number;
+  maxPrice?: number;
+  maxItems: number;
+  reason?: string;
+};
+
+type AtlasDiscoveryPlan = {
+  id: string;
+  name: string;
+  description: string;
+  targetCount: number;
+  sizes: string[];
+  sizeMode: "any";
+  searches: AtlasDiscoverySearch[];
+};
+
+type AtlasDiscoveryJob = {
+  id: string;
+  source: string;
+  intent: AtlasDiscoverySearch & { sizes?: string[]; sizeMode?: "any" | "all" };
+  status: AtlasDiscoveryStatus;
+  total: number;
+  completed: number;
+  progress: number;
+  discovered: number;
+  duplicates: number;
+  filtered: number;
+  invalid: number;
+  error?: string;
+  results: unknown[];
+  createdAt?: string;
+};
+
+type AtlasDiscoverySession = { plan: AtlasDiscoveryPlan; jobIds: string[] };
+
 const ATLAS_API = "http://localhost:8788/api";
 const ATLAS_ORIGIN = ATLAS_API.slice(0, -4);
 const ATLAS_PAGE_SIZE = 240;
@@ -865,6 +910,10 @@ const ATLAS_MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const ATLAS_MAX_TOTAL_BYTES = 24 * 1024 * 1024;
 const ATLAS_DEMO_FRESH_AT = "2026-08-28T12:00:00.000Z";
 const ATLAS_TERMINAL_REFRESH_STATUSES = ["complete", "error", "blocked", "cancelled"];
+const ATLAS_PREFERENCES_KEY = "wardrobe-atlas:board-preferences:v2";
+const ATLAS_DISCOVERY_SESSION_KEY = "wardrobe-atlas:discovery-session:v1";
+const ATLAS_TERMINAL_DISCOVERY_STATUSES = new Set<AtlasDiscoveryStatus>(["succeeded", "failed", "blocked", "cancelled"]);
+const ATLAS_DISCOVERY_SOURCE_LABELS: Record<string, string> = { "zalando-ch": "Zalando CH", aliexpress: "AliExpress" };
 
 const atlasSeedItems: AtlasItem[] = [
   { id: "demo_worker", brand: "Selected", name: "Veste worker raccourcie", price: 129, currency: "CHF", color: "Tabac", category: "Vestes", fit: "Courte", score: 94, x: 6, y: 8, crop: "4% 6%", images: [], kind: "shop", decision: "saved", source: "demo", materials: ["Coton"], sizes: ["S", "M", "L"], tags: [], sizeAvailabilityKnown: true, available: true, stockStatus: "in_stock", sizesCheckedAt: ATLAS_DEMO_FRESH_AT },
@@ -941,7 +990,9 @@ function atlasApiToItem(item: AtlasApiProduct, index = 0): AtlasItem {
     kind: item.kind ?? "shop", decision: item.decision ?? (item.kind === "owned" ? "owned" : "unseen"),
     source: item.source ?? "local", materials: item.materials ?? [], sizes, tags: item.tags ?? [],
     sizeAvailabilityKnown, available: item.available ?? stockStatus === "in_stock",
-    stockStatus: stockStatus === "unknown" && sizeAvailabilityKnown ? (sizes.length ? "in_stock" : "out_of_stock") : stockStatus,
+    // Do not infer stock from the mere presence of a size list. Exact-size
+    // filtering is intentionally gated by the canonical in_stock status.
+    stockStatus,
     stockCheckedAt: item.stockCheckedAt, priceCheckedAt: item.priceCheckedAt,
     sizesCheckedAt: item.sizesCheckedAt, updatedAt: item.updatedAt,
     returnsLabel: typeof returnsLabel === "string" ? returnsLabel : undefined,
@@ -1008,13 +1059,19 @@ async function atlasReadImages(files: File[], existingCount = 0, personal = fals
 
 function atlasNormalizeView(raw: Partial<AtlasSavedView> & { state?: Partial<AtlasSavedView> }): AtlasSavedView {
   const value = { ...raw.state, ...raw };
+  const legacySize = typeof value.sizeFilter === "string" && !["all", "known"].includes(value.sizeFilter)
+    ? atlasNormalizedSize(value.sizeFilter) : null;
+  const sizeFilters = [...new Set((Array.isArray(value.sizeFilters) ? value.sizeFilters : legacySize ? [legacySize] : [])
+    .filter((size): size is string => typeof size === "string" && Boolean(size.trim()))
+    .map(atlasNormalizedSize))];
   return {
     id: String(value.id ?? crypto.randomUUID()), name: value.name ?? "Vue sans nom", scope: value.scope ?? "catalogue",
     activeFilter: value.activeFilter ?? "Tout", sourceFilter: value.sourceFilter ?? "all", priceFilter: value.priceFilter ?? "all",
-    fitFilter: value.fitFilter ?? "all", materialFilter: value.materialFilter ?? "all", sizeFilter: value.sizeFilter ?? "all",
+    fitFilter: value.fitFilter ?? "all", materialFilter: value.materialFilter ?? "all", sizeFilters,
+    sizeFilter: sizeFilters.length === 1 ? sizeFilters[0] : "all",
     stockFilter: value.stockFilter ?? "all", attributeQuery: value.attributeQuery ?? "", minPrice: value.minPrice ?? "",
     maxPrice: value.maxPrice ?? "", includeRejected: value.includeRejected ?? false, xAxis: value.xAxis ?? "pca",
-    yAxis: value.yAxis ?? "pca", mode: value.mode ?? "space",
+    yAxis: value.yAxis ?? "pca", mode: value.mode ?? "space", imageMode: value.imageMode === "full" ? "full" : "cropped",
   };
 }
 
@@ -1041,7 +1098,9 @@ export default function Home() {
   const [priceFilter, setPriceFilter] = useState("all");
   const [fitFilter, setFitFilter] = useState("all");
   const [materialFilter, setMaterialFilter] = useState("all");
-  const [sizeFilter, setSizeFilter] = useState("all");
+  const [selectedSizes, setSelectedSizes] = useState<string[]>([]);
+  const [imageMode, setImageMode] = useState<AtlasImageMode>("cropped");
+  const [preferencesReady, setPreferencesReady] = useState(false);
   const [stockFilter, setStockFilter] = useState("all");
   const [attributeQuery, setAttributeQuery] = useState("");
   const [minPrice, setMinPrice] = useState("");
@@ -1061,6 +1120,10 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const [refreshJob, setRefreshJob] = useState<AtlasAcquisitionJob | null>(null);
   const [refreshRecovered, setRefreshRecovered] = useState(false);
+  const [discoveryPlan, setDiscoveryPlan] = useState<AtlasDiscoveryPlan | null>(null);
+  const [discoveryJobs, setDiscoveryJobs] = useState<AtlasDiscoveryJob[]>([]);
+  const [discoveryBusy, setDiscoveryBusy] = useState(false);
+  const [discoveryRecovered, setDiscoveryRecovered] = useState(false);
   const [renderWindow, setRenderWindow] = useState({ signature: "", limit: ATLAS_PAGE_SIZE });
   const [personalKind, setPersonalKind] = useState<"owned" | "reference">("owned");
   const [personalImages, setPersonalImages] = useState<AtlasPromptImage[]>([]);
@@ -1082,6 +1145,7 @@ export default function Home() {
   const atlasDraggingRef = useRef(false);
   const atlasHoverTimerRef = useRef<number | null>(null);
   const atlasHoverCardRef = useRef<HTMLElement | null>(null);
+  const discoveryMonitorRef = useRef(0);
 
   async function reloadAtlasCatalog() {
     const response = await fetch(`${ATLAS_API}/products?limit=10000`);
@@ -1116,11 +1180,74 @@ export default function Home() {
         const recoverable = jobs.find((job) => job.canResume && ["queued", "running", "error"].includes(job.status));
         if (recoverable) { setRefreshJob(recoverable); setRefreshRecovered(true); }
       }),
+      fetch(`${ATLAS_API}/discovery/jobs?limit=20`, { signal: controller.signal }).then(async (response) => {
+        if (!response.ok) return;
+        const payload = await response.json() as AtlasDiscoveryJob[] | { jobs?: AtlasDiscoveryJob[] };
+        const recentJobs = Array.isArray(payload) ? payload : payload.jobs ?? [];
+        if (!recentJobs.length) return;
+        let session: AtlasDiscoverySession | null = null;
+        try {
+          const stored = window.localStorage.getItem(ATLAS_DISCOVERY_SESSION_KEY);
+          if (stored) {
+            const candidate = JSON.parse(stored) as Partial<AtlasDiscoverySession>;
+            if (candidate.plan && Array.isArray(candidate.jobIds)) session = candidate as AtlasDiscoverySession;
+          }
+        } catch { /* A stale local session must not hide server-side jobs. */ }
+        const jobsById = new Map(recentJobs.map((job) => [job.id, job]));
+        const sessionJobs = session?.jobIds.map((id) => jobsById.get(id)).filter(Boolean) as AtlasDiscoveryJob[] | undefined;
+        const newestCreatedAt = Date.parse(recentJobs[0]?.createdAt ?? "");
+        const fallbackJobs = Number.isFinite(newestCreatedAt)
+          ? recentJobs.filter((job) => Math.abs(newestCreatedAt - Date.parse(job.createdAt ?? "")) < 5000).slice(0, 8)
+          : recentJobs.slice(0, 1);
+        const jobs = sessionJobs?.length ? sessionJobs : fallbackJobs;
+        if (!jobs.length) return;
+        const plan = session?.plan ?? {
+          id: "recovered", name: "Découverte locale retrouvée", description: "Derniers jobs persistés par source.",
+          targetCount: jobs.reduce((sum, job) => sum + (job.intent.maxItems ?? 0), 0), sizes: ["M", "L"], sizeMode: "any" as const,
+          searches: jobs.map((job) => job.intent),
+        };
+        setDiscoveryPlan(plan);
+        setDiscoveryJobs(jobs);
+        setDiscoveryRecovered(jobs.some((job) => !ATLAS_TERMINAL_DISCOVERY_STATUSES.has(job.status) || ["failed", "blocked"].includes(job.status)));
+      }),
     ]).then((results) => {
       if (results[0]?.status === "rejected" && !(results[0].reason instanceof DOMException && results[0].reason.name === "AbortError")) setCatalogStatus("démo · API hors ligne");
     });
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let storedSizes: string[] | null = null;
+    let storedImageMode: AtlasImageMode | null = null;
+    try {
+      const stored = window.localStorage.getItem(ATLAS_PREFERENCES_KEY);
+      if (stored) {
+        const preferences = JSON.parse(stored) as { selectedSizes?: unknown; imageMode?: unknown };
+        if (Array.isArray(preferences.selectedSizes)) {
+          storedSizes = [...new Set(preferences.selectedSizes
+            .filter((size): size is string => typeof size === "string" && Boolean(size.trim()))
+            .map(atlasNormalizedSize))].slice(0, 12);
+        }
+        if (preferences.imageMode === "cropped" || preferences.imageMode === "full") storedImageMode = preferences.imageMode;
+      }
+    } catch {
+      // Preferences are optional; malformed local data must never block the catalog.
+    }
+    queueMicrotask(() => {
+      if (cancelled) return;
+      if (storedSizes) setSelectedSizes(storedSizes);
+      if (storedImageMode) setImageMode(storedImageMode);
+      setPreferencesReady(true);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!preferencesReady) return;
+    try { window.localStorage.setItem(ATLAS_PREFERENCES_KEY, JSON.stringify({ selectedSizes, imageMode })); }
+    catch { /* Private browsing or a full quota should not affect the board. */ }
+  }, [imageMode, preferencesReady, selectedSizes]);
 
   const visibleCatalog = aiItems ?? catalogItems;
   const activeOutfitIds = useMemo(() => {
@@ -1136,12 +1263,13 @@ export default function Home() {
     return true;
   }), [activeOutfitIds, scope, visibleCatalog]);
 
-  const quickFilteredCatalog = useMemo(() => scopeCatalog.filter((item) => {
+  const catalogBeforeSize = useMemo(() => scopeCatalog.filter((item) => {
     if (!includeRejected && item.decision === "rejected") return false;
     if (sourceFilter === "shop" && item.kind !== "shop") return false;
     if (sourceFilter === "reference" && item.kind !== "reference") return false;
     if (sourceFilter === "owned" && item.kind !== "owned") return false;
     if (sourceFilter === "zalando" && (item.kind !== "shop" || item.source !== "zalando-ch")) return false;
+    if (sourceFilter === "aliexpress" && (item.kind !== "shop" || item.source !== "aliexpress")) return false;
     if (priceFilter !== "all") {
       if (item.price === null) return false;
       if (priceFilter === "under50" && item.price >= 50) return false;
@@ -1160,8 +1288,6 @@ export default function Home() {
       };
       if (!aliases[materialFilter]?.some((term) => haystack.includes(term))) return false;
     }
-    if (sizeFilter === "known" && (!item.sizeAvailabilityKnown || atlasIsStale(item.sizesCheckedAt))) return false;
-    if (sizeFilter !== "all" && sizeFilter !== "known" && !atlasHasSize(item, sizeFilter)) return false;
     if (stockFilter === "available" && (!item.available || item.stockStatus !== "in_stock")) return false;
     if (stockFilter === "stale" && !atlasIsStale(item.stockCheckedAt)) return false;
     if (stockFilter === "fresh" && atlasIsStale(item.stockCheckedAt)) return false;
@@ -1171,7 +1297,12 @@ export default function Home() {
       if (!terms.every((term) => haystack.includes(term))) return false;
     }
     return true;
-  }), [attributeQuery, fitFilter, includeRejected, materialFilter, maxPrice, minPrice, priceFilter, scopeCatalog, sizeFilter, sourceFilter, stockFilter]);
+  }), [attributeQuery, fitFilter, includeRejected, materialFilter, maxPrice, minPrice, priceFilter, scopeCatalog, sourceFilter, stockFilter]);
+
+  const quickFilteredCatalog = useMemo(() => catalogBeforeSize.filter((item) => {
+    if (!selectedSizes.length || item.kind !== "shop" || item.decision === "owned") return true;
+    return selectedSizes.some((size) => atlasHasSize(item, size));
+  }), [catalogBeforeSize, selectedSizes]);
 
   const sizeOptions = useMemo(() => {
     const discovered = [...new Set(visibleCatalog.flatMap((item) => item.sizes).map(atlasNormalizedSize))];
@@ -1187,17 +1318,23 @@ export default function Home() {
     });
   }, [visibleCatalog]);
 
-  const knownSizeCount = useMemo(() => visibleCatalog.filter((item) => item.sizeAvailabilityKnown && !atlasIsStale(item.sizesCheckedAt)).length, [visibleCatalog]);
-  const sizeCounts = useMemo(() => Object.fromEntries(sizeOptions.map((size) => [size, visibleCatalog.filter((item) => atlasHasSize(item, size)).length])), [sizeOptions, visibleCatalog]);
+  const sizeFacetCatalog = useMemo(() => catalogBeforeSize.filter((item) => activeFilter === "Tout" || item.category === activeFilter), [activeFilter, catalogBeforeSize]);
+  const knownSizeCount = useMemo(() => sizeFacetCatalog.filter((item) => item.kind === "shop" && item.decision !== "owned"
+    && item.sizeAvailabilityKnown && item.stockStatus === "in_stock" && !atlasIsStale(item.sizesCheckedAt)).length, [sizeFacetCatalog]);
+  const sizeCounts = useMemo(() => Object.fromEntries(sizeOptions.map((size) => [size, sizeFacetCatalog.filter((item) => atlasHasSize(item, size)).length])), [sizeFacetCatalog, sizeOptions]);
+  const selectedSizeMatchCount = useMemo(() => sizeFacetCatalog.filter((item) => {
+    if (!selectedSizes.length || item.kind !== "shop" || item.decision === "owned") return true;
+    return selectedSizes.some((size) => atlasHasSize(item, size));
+  }).length, [selectedSizes, sizeFacetCatalog]);
   const products = useMemo(() => atlasArrange(quickFilteredCatalog.filter((item) => activeFilter === "Tout" || item.category === activeFilter), xAxis, yAxis), [activeFilter, quickFilteredCatalog, xAxis, yAxis]);
   const renderSignature = useMemo(() => JSON.stringify([
     aiItems ? "ai" : "catalogue", scope, selectedOutfitBoardId, activeFilter, sourceFilter, priceFilter, fitFilter,
-    materialFilter, sizeFilter, stockFilter, attributeQuery, minPrice, maxPrice, includeRejected, xAxis, yAxis, mode,
+    materialFilter, selectedSizes, stockFilter, attributeQuery, minPrice, maxPrice, includeRejected, xAxis, yAxis, mode,
     products.length, products[0]?.id ?? "", products.at(-1)?.id ?? "",
-  ]), [activeFilter, aiItems, attributeQuery, fitFilter, includeRejected, materialFilter, maxPrice, minPrice, mode, priceFilter, products, scope, selectedOutfitBoardId, sizeFilter, sourceFilter, stockFilter, xAxis, yAxis]);
+  ]), [activeFilter, aiItems, attributeQuery, fitFilter, includeRejected, materialFilter, maxPrice, minPrice, mode, priceFilter, products, scope, selectedOutfitBoardId, selectedSizes, sourceFilter, stockFilter, xAxis, yAxis]);
   const renderLimit = renderWindow.signature === renderSignature ? renderWindow.limit : ATLAS_PAGE_SIZE;
   const renderedProducts = useMemo(() => products.slice(0, renderLimit), [products, renderLimit]);
-  const categoryCounts = useMemo(() => Object.fromEntries(atlasCategories.map((filter) => [filter, filter === "Tout" ? scopeCatalog.length : scopeCatalog.filter((item) => item.category === filter).length])), [scopeCatalog]);
+  const categoryCounts = useMemo(() => Object.fromEntries(atlasCategories.map((filter) => [filter, filter === "Tout" ? quickFilteredCatalog.length : quickFilteredCatalog.filter((item) => item.category === filter).length])), [quickFilteredCatalog]);
   const compareItems = useMemo(() => [...compareIds].map((id) => catalogItems.find((item) => item.id === id) ?? visibleCatalog.find((item) => item.id === id)).filter(Boolean) as AtlasItem[], [catalogItems, compareIds, visibleCatalog]);
   const outfitDraftItems = useMemo(() => [...outfitDraftIds].map((id) => catalogItems.find((item) => item.id === id)).filter(Boolean) as AtlasItem[], [catalogItems, outfitDraftIds]);
   const ownedItems = useMemo(() => catalogItems.filter((item) => item.kind === "owned" || item.decision === "owned"), [catalogItems]);
@@ -1347,6 +1484,18 @@ export default function Home() {
     });
   }
 
+  function toggleAtlasSize(rawSize: string) {
+    const size = atlasNormalizedSize(rawSize);
+    setSelectedSizes((current) => current.includes(size)
+      ? current.filter((item) => item !== size)
+      : [...current, size].sort((left, right) => sizeOptions.indexOf(left) - sizeOptions.indexOf(right)));
+  }
+
+  function resetAtlasFilters() {
+    setActiveFilter("Tout"); setSourceFilter("all"); setPriceFilter("all"); setFitFilter("all"); setMaterialFilter("all");
+    setSelectedSizes(["M", "L"]); setStockFilter("all"); setAttributeQuery(""); setMinPrice(""); setMaxPrice(""); setIncludeRejected(false);
+  }
+
   function changeAtlasZoom(nextValue: number, anchor?: { x: number; y: number }) {
     const atlas = atlasElementRef.current;
     const next = Math.min(2.5, Math.max(.65, Math.round(nextValue * 100) / 100));
@@ -1453,6 +1602,7 @@ export default function Home() {
   useEffect(() => () => {
     if (atlasHoverTimerRef.current !== null) window.clearTimeout(atlasHoverTimerRef.current);
     if (atlasZoomFrameRef.current !== null) cancelAnimationFrame(atlasZoomFrameRef.current);
+    discoveryMonitorRef.current += 1;
   }, []);
 
   function focusAtlasCard(index: number) {
@@ -1501,6 +1651,7 @@ export default function Home() {
     const effectiveMinPrice = requestedMin === undefined ? presetRange.min : Math.max(requestedMin, presetRange.min ?? 0);
     const effectiveMaxPrice = requestedMax === undefined ? presetRange.max : Math.min(requestedMax, presetRange.max ?? Number.MAX_SAFE_INTEGER);
     const constrainedSources = sourceFilter === "zalando" ? ["zalando-ch"]
+      : sourceFilter === "aliexpress" ? ["aliexpress"]
       : sourceFilter === "owned" ? [...new Set(visibleCatalog.filter((item) => item.kind === "owned").map((item) => item.source))]
         : sourceFilter === "reference" ? [...new Set(visibleCatalog.filter((item) => item.kind === "reference").map((item) => item.source))]
           : undefined;
@@ -1513,7 +1664,8 @@ export default function Home() {
           prompt: aiPrompt.trim() || "Trouve des vêtements visuellement proches du mood board joint.", maxCandidates: 72, topN: 30,
           threshold: .5, analysisMode: visualMode, reasoningEffort,
           constraints: {
-            size: sizeFilter !== "all" && sizeFilter !== "known" ? sizeFilter : undefined,
+            sizes: selectedSizes.length ? selectedSizes : undefined,
+            freshWithinHours: selectedSizes.length ? 48 : undefined,
             minPrice: effectiveMinPrice, maxPrice: effectiveMaxPrice,
             categories: activeFilter === "Tout" ? undefined : [activeFilter], sources: constrainedSources?.length ? constrainedSources : undefined,
             includeRejected,
@@ -1535,6 +1687,119 @@ export default function Home() {
       setAiItems(atlasMergeItems(job.products, catalogItems)); setAiStatus(`${job.message} · score > ${job.threshold.toFixed(2)}`);
     } catch (error) { setAiStatus(`Vision indisponible — ${error instanceof Error ? error.message : "erreur locale"}`); }
     finally { setVisualBusy(false); }
+  }
+
+  function persistAtlasDiscovery(plan: AtlasDiscoveryPlan, jobs: AtlasDiscoveryJob[]) {
+    try {
+      window.localStorage.setItem(ATLAS_DISCOVERY_SESSION_KEY, JSON.stringify({ plan, jobIds: jobs.map((job) => job.id) } satisfies AtlasDiscoverySession));
+    } catch { /* Server snapshots remain recoverable if browser storage is unavailable. */ }
+  }
+
+  async function monitorAtlasDiscovery(initialJobs: AtlasDiscoveryJob[]) {
+    const monitorId = discoveryMonitorRef.current + 1;
+    discoveryMonitorRef.current = monitorId;
+    let jobs = initialJobs;
+    setDiscoveryJobs(jobs);
+    setDiscoveryBusy(true);
+    setDiscoveryRecovered(false);
+    try {
+      while (jobs.some((job) => !ATLAS_TERMINAL_DISCOVERY_STATUSES.has(job.status))) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        if (discoveryMonitorRef.current !== monitorId) return;
+        const snapshots = await Promise.all(jobs.map(async (job) => {
+          if (ATLAS_TERMINAL_DISCOVERY_STATUSES.has(job.status)) return job;
+          const response = await fetch(`${ATLAS_API}/discovery/jobs/${encodeURIComponent(job.id)}`);
+          if (!response.ok) throw new Error(`job ${job.id} unavailable`);
+          return response.json() as Promise<AtlasDiscoveryJob>;
+        }));
+        if (discoveryMonitorRef.current !== monitorId) return;
+        jobs = snapshots;
+        setDiscoveryJobs(jobs);
+      }
+      if (discoveryMonitorRef.current !== monitorId) return;
+      const discovered = jobs.reduce((sum, job) => sum + job.discovered, 0);
+      if (discovered > 0) {
+        try { await reloadAtlasCatalog(); }
+        catch { setToast(`${discovered} article${discovered > 1 ? "s" : ""} trouvé${discovered > 1 ? "s" : ""}, catalogue à recharger`); return; }
+      }
+      const failed = jobs.filter((job) => ["failed", "blocked"].includes(job.status)).length;
+      const cancelled = jobs.filter((job) => job.status === "cancelled").length;
+      if (failed) setToast(`${discovered} nouveau${discovered > 1 ? "x" : ""} · ${failed} recherche${failed > 1 ? "s" : ""} à reprendre`);
+      else if (cancelled) setToast(discovered ? `${discovered} article${discovered > 1 ? "s" : ""} ajouté${discovered > 1 ? "s" : ""} avant l’arrêt` : "Découverte arrêtée · relance Trouver pour recommencer");
+      else setToast(discovered ? `${discovered} ${discovered > 1 ? "nouveaux" : "nouvel"} article${discovered > 1 ? "s" : ""} ajouté${discovered > 1 ? "s" : ""}` : "Aucun nouvel article trouvé");
+    } finally {
+      if (discoveryMonitorRef.current === monitorId) setDiscoveryBusy(false);
+    }
+  }
+
+  async function startAtlasDiscovery() {
+    const prompt = aiPrompt.trim();
+    if (!prompt || discoveryBusy) return;
+    discoveryMonitorRef.current += 1;
+    setDiscoveryBusy(true);
+    setDiscoveryRecovered(false);
+    setDiscoveryJobs([]);
+    setDiscoveryPlan(null);
+    setAiStatus("Luna prépare un plan de recherche local M ou L…");
+    try {
+      const response = await fetch(`${ATLAS_API}/codex/discover`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt }),
+      });
+      if (!response.ok) throw new Error(await response.text() || "discovery unavailable");
+      const payload = await response.json() as { plan: AtlasDiscoveryPlan; jobs: AtlasDiscoveryJob[] };
+      if (!payload.plan || !payload.jobs?.length) throw new Error("Le plan n’a créé aucune recherche");
+      setDiscoveryPlan(payload.plan);
+      persistAtlasDiscovery(payload.plan, payload.jobs);
+      setAiStatus("");
+      await monitorAtlasDiscovery(payload.jobs);
+    } catch (error) {
+      setAiStatus(`Découverte indisponible — ${error instanceof Error ? error.message : "erreur locale"}`);
+      setDiscoveryBusy(false);
+    }
+  }
+
+  async function cancelAtlasDiscovery() {
+    const activeJobs = discoveryJobs.filter((job) => !ATLAS_TERMINAL_DISCOVERY_STATUSES.has(job.status));
+    if (!activeJobs.length) return;
+    discoveryMonitorRef.current += 1;
+    setDiscoveryBusy(true);
+    try {
+      const cancelled = await Promise.allSettled(activeJobs.map(async (job) => {
+        const response = await fetch(`${ATLAS_API}/discovery/jobs/${encodeURIComponent(job.id)}/cancel`, { method: "POST" });
+        if (!response.ok) throw new Error(`cancel ${job.id} unavailable`);
+        return response.json() as Promise<AtlasDiscoveryJob>;
+      }));
+      const snapshots = new Map(cancelled.flatMap((result) => result.status === "fulfilled" ? [[result.value.id, result.value] as const] : []));
+      const nextJobs = discoveryJobs.map((job) => snapshots.get(job.id) ?? job);
+      if (!snapshots.size) throw new Error("cancel unavailable");
+      await monitorAtlasDiscovery(nextJobs);
+    } catch {
+      setDiscoveryBusy(false);
+      setToast("Impossible d’arrêter toutes les recherches");
+    }
+  }
+
+  async function resumeAtlasDiscovery() {
+    const resumable = discoveryJobs.filter((job) => ["queued", "running", "failed", "blocked"].includes(job.status));
+    if (!resumable.length || discoveryBusy) return;
+    discoveryMonitorRef.current += 1;
+    setDiscoveryBusy(true);
+    setDiscoveryRecovered(false);
+    try {
+      const resumed = await Promise.allSettled(resumable.map(async (job) => {
+        const action = ["failed", "blocked"].includes(job.status) ? "retry" : "resume";
+        const response = await fetch(`${ATLAS_API}/discovery/jobs/${encodeURIComponent(job.id)}/${action}`, { method: "POST" });
+        if (!response.ok) throw new Error(`${action} ${job.id} unavailable`);
+        return response.json() as Promise<AtlasDiscoveryJob>;
+      }));
+      const snapshots = new Map(resumed.flatMap((result) => result.status === "fulfilled" ? [[result.value.id, result.value] as const] : []));
+      const nextJobs = discoveryJobs.map((job) => snapshots.get(job.id) ?? job);
+      if (!snapshots.size) throw new Error("resume unavailable");
+      await monitorAtlasDiscovery(nextJobs);
+    } catch {
+      setDiscoveryBusy(false);
+      setToast("Reprise de la découverte indisponible");
+    }
   }
 
   async function addAtlasPromptImages(files: File[]) {
@@ -1602,8 +1867,8 @@ export default function Home() {
   function currentAtlasView(): AtlasSavedView {
     return atlasNormalizeView({
       id: crypto.randomUUID(), name: viewName.trim() || `Vue ${savedViews.length + 1}`, scope, activeFilter, sourceFilter,
-      priceFilter, fitFilter, materialFilter, sizeFilter, stockFilter, attributeQuery, minPrice, maxPrice,
-      includeRejected, xAxis, yAxis, mode,
+      priceFilter, fitFilter, materialFilter, sizeFilters: selectedSizes, stockFilter, attributeQuery, minPrice, maxPrice,
+      includeRejected, xAxis, yAxis, mode, imageMode,
     });
   }
 
@@ -1620,9 +1885,9 @@ export default function Home() {
 
   function applyAtlasView(view: AtlasSavedView) {
     setScope(view.scope); setActiveFilter(view.activeFilter); setSourceFilter(view.sourceFilter); setPriceFilter(view.priceFilter);
-    setFitFilter(view.fitFilter); setMaterialFilter(view.materialFilter); setSizeFilter(view.sizeFilter); setStockFilter(view.stockFilter);
+    setFitFilter(view.fitFilter); setMaterialFilter(view.materialFilter); setSelectedSizes(view.sizeFilters); setStockFilter(view.stockFilter);
     setAttributeQuery(view.attributeQuery); setMinPrice(view.minPrice); setMaxPrice(view.maxPrice); setIncludeRejected(view.includeRejected);
-    setXAxis(view.xAxis); setYAxis(view.yAxis); setMode(view.mode); setDrawer(null); setToast(`Vue « ${view.name} » appliquée`);
+    setXAxis(view.xAxis); setYAxis(view.yAxis); setMode(view.mode); setImageMode(view.imageMode); setDrawer(null); setToast(`Vue « ${view.name} » appliquée`);
   }
 
   async function deleteAtlasView(id: string) {
@@ -1708,10 +1973,31 @@ export default function Home() {
   const progressDone = refreshJob?.completed ?? refreshJob?.processed ?? 0;
   const progressTotal = refreshJob?.total ?? 0;
   const refreshNeedsResume = refreshRecovered || ["error", "blocked"].includes(refreshJob?.status ?? "");
+  const discoveryTotal = discoveryJobs.reduce((sum, job) => sum + job.total, 0);
+  const discoveryCompleted = discoveryJobs.reduce((sum, job) => sum + job.completed, 0);
+  const discoveryProgress = discoveryTotal
+    ? Math.min(1, discoveryCompleted / discoveryTotal)
+    : discoveryJobs.length ? Math.min(1, discoveryJobs.reduce((sum, job) => sum + job.progress, 0) / discoveryJobs.length) : 0;
+  const discoveryDiscovered = discoveryJobs.reduce((sum, job) => sum + job.discovered, 0);
+  const discoveryDiscarded = discoveryJobs.reduce((sum, job) => sum + job.duplicates + job.filtered + job.invalid, 0);
+  const discoverySources = [...new Set((discoveryPlan?.searches.map((search) => search.source) ?? discoveryJobs.map((job) => job.source))
+    .map((source) => ATLAS_DISCOVERY_SOURCE_LABELS[source] ?? source))];
+  const discoverySizes = discoveryPlan?.sizes.length ? discoveryPlan.sizes.join(" ou ") : "M ou L";
+  const discoveryHasActive = discoveryJobs.some((job) => !ATLAS_TERMINAL_DISCOVERY_STATUSES.has(job.status));
+  const discoveryCanResume = !discoveryBusy && discoveryJobs.some((job) => ["queued", "running", "failed", "blocked"].includes(job.status));
+  const discoveryHasFailures = discoveryJobs.some((job) => ["failed", "blocked"].includes(job.status));
+  const discoveryWasCancelled = discoveryJobs.length > 0 && discoveryJobs.every((job) => ["succeeded", "cancelled"].includes(job.status))
+    && discoveryJobs.some((job) => job.status === "cancelled");
+  const discoveryStatusText = discoveryRecovered ? "Session retrouvée · reprise manuelle"
+    : discoveryBusy && discoveryHasActive ? `${discoveryCompleted}/${discoveryTotal || "…"} listes explorées`
+      : discoveryHasFailures ? "Certaines recherches peuvent être reprises"
+        : discoveryWasCancelled ? "Arrêtée · relance Trouver pour recommencer"
+          : "Découverte terminée";
   const effectiveFocusedIndex = Math.min(focusedIndex, Math.max(0, renderedProducts.length - 1));
+  const advancedFilterCount = [priceFilter !== "all", fitFilter !== "all", materialFilter !== "all", Boolean(attributeQuery.trim()), Boolean(minPrice), Boolean(maxPrice), stockFilter !== "all", includeRejected].filter(Boolean).length;
 
   return (
-    <main className="appShell atlasAppShell">
+    <main className={`appShell atlasAppShell imageMode-${imageMode}`}>
       <header className="topbar atlasTopbar">
         <div className="brandBlock">
           <span className="brandMark">WA</span>
@@ -1762,18 +2048,33 @@ export default function Home() {
 
         <div className="filterBar atlasFilterBar">
           <label className="quickFilter"><small>Catégorie</small><select value={activeFilter} onChange={(event) => setActiveFilter(event.target.value)}>{atlasCategories.map((filter) => <option value={filter} key={filter}>{filter} ({categoryCounts[filter] ?? 0})</option>)}</select></label>
-          <label className="quickFilter"><small>Source</small><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">Toutes</option><option value="shop">Tous shops</option><option value="zalando">Zalando</option><option value="owned">Dressing</option><option value="reference">Références</option></select></label>
+          <label className="quickFilter"><small>Source</small><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">Toutes</option><option value="shop">Tous shops</option><option value="zalando">Zalando</option><option value="aliexpress">AliExpress</option><option value="owned">Dressing</option><option value="reference">Références</option></select></label>
           <label className="quickFilter"><small>Prix</small><select value={priceFilter} onChange={(event) => setPriceFilter(event.target.value)}><option value="all">Tous</option><option value="under50">&lt; 50</option><option value="50to100">50–100</option><option value="100to180">100–180</option><option value="over180">&gt; 180</option></select></label>
           <label className="quickFilter"><small>Coupe</small><select value={fitFilter} onChange={(event) => setFitFilter(event.target.value)}><option value="all">Toutes</option><option value="large">Large</option><option value="courte">Courte</option><option value="court">Court</option><option value="droite">Droite</option><option value="relax">Relax</option><option value="unknown">Inconnue</option></select></label>
           <label className="quickFilter"><small>Matière</small><select value={materialFilter} onChange={(event) => setMaterialFilter(event.target.value)}><option value="all">Toutes</option><option value="knit">Maille/laine</option><option value="linen">Lin</option><option value="cotton">Coton</option><option value="leather">Cuir</option><option value="denim">Denim</option></select></label>
-          <label className="quickFilter sizeFilter" title={`${knownSizeCount} articles avec disponibilité vérifiée sur ${visibleCatalog.length}`}><small>Taille · {knownSizeCount}/{visibleCatalog.length}</small><select value={sizeFilter} onChange={(event) => setSizeFilter(event.target.value)} aria-label="Filtrer par taille disponible"><option value="all">Toutes</option><option value="known">Vérifiées ({knownSizeCount})</option>{sizeOptions.map((size) => <option value={size} key={size}>{size} ({sizeCounts[size]})</option>)}</select></label>
+          <details className="quickFilter sizeMultiFilter" title={`${knownSizeCount} articles en stock avec tailles fraîches dans ce scope`}>
+            <summary aria-label={`Filtrer par tailles, ${selectedSizes.length ? selectedSizes.join(" ou ") : "toutes"}`}><small>Tailles · {selectedSizeMatchCount}</small><span className="sizeFilterValue">{selectedSizes.length ? selectedSizes.length <= 3 ? selectedSizes.join(" ∨ ") : `${selectedSizes.length} tailles` : "Toutes"}<b>⌄</b></span></summary>
+            <div className="sizeFilterPopover">
+              <div className="sizeFilterHeader"><strong>Disponibilité exacte</strong><span>{knownSizeCount} fiches fraîches</span></div>
+              <div className="sizeChoiceGrid">{sizeOptions.map((size) => <button type="button" key={size} className={selectedSizes.includes(size) ? "active" : ""} aria-pressed={selectedSizes.includes(size)} onClick={() => toggleAtlasSize(size)}><span>{size}</span><b>{sizeCounts[size] ?? 0}</b></button>)}</div>
+              <div className="sizeFilterActions"><button type="button" onClick={() => setSelectedSizes([])}>Toutes</button><button type="button" onClick={() => setSelectedSizes(["M", "L"])}>M ou L</button></div>
+              <p>OU entre les tailles · stock connu · vérifié sous 48 h.</p>
+            </div>
+          </details>
+          <button type="button" className="imageModeButton" aria-pressed={imageMode === "full"} onClick={() => setImageMode((current) => current === "cropped" ? "full" : "cropped")} title={imageMode === "cropped" ? "Afficher les images en entier" : "Recadrer les images pour remplir les cartes"}><small>Images</small><strong>{imageMode === "cropped" ? "Recadré" : "Entière"}</strong><span>↔</span></button>
           <details className="advancedFilters">
-            <summary aria-label="Filtres avancés">＋ filtres</summary>
+            <summary aria-label={`${advancedFilterCount} filtres avancés actifs`}><span>＋ filtres</span>{advancedFilterCount > 0 && <b>{advancedFilterCount}</b>}</summary>
             <div className="filterPopover">
+              <div className="mobileFilterFallbacks">
+                <label>Prix<select value={priceFilter} onChange={(event) => setPriceFilter(event.target.value)}><option value="all">Tous</option><option value="under50">&lt; 50</option><option value="50to100">50–100</option><option value="100to180">100–180</option><option value="over180">&gt; 180</option></select></label>
+                <label>Coupe<select value={fitFilter} onChange={(event) => setFitFilter(event.target.value)}><option value="all">Toutes</option><option value="large">Large</option><option value="courte">Courte</option><option value="court">Court</option><option value="droite">Droite</option><option value="relax">Relax</option><option value="unknown">Inconnue</option></select></label>
+                <label>Matière<select value={materialFilter} onChange={(event) => setMaterialFilter(event.target.value)}><option value="all">Toutes</option><option value="knit">Maille/laine</option><option value="linen">Lin</option><option value="cotton">Coton</option><option value="leather">Cuir</option><option value="denim">Denim</option></select></label>
+              </div>
               <label>Recherche attributs<input value={attributeQuery} onChange={(event) => setAttributeQuery(event.target.value)} placeholder="olive laine sans logo…" /></label>
               <div className="priceRange"><label>Prix min<input inputMode="numeric" value={minPrice} onChange={(event) => setMinPrice(event.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" /></label><label>Prix max<input inputMode="numeric" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value.replace(/[^0-9.]/g, ""))} placeholder="180" /></label></div>
               <label>Fraîcheur<select value={stockFilter} onChange={(event) => setStockFilter(event.target.value)}><option value="all">Toutes</option><option value="available">En stock</option><option value="fresh">Vérifié &lt; 48 h</option><option value="stale">À rafraîchir</option></select></label>
               <label className="checkboxLine"><input type="checkbox" checked={includeRejected} onChange={(event) => setIncludeRejected(event.target.checked)} /> Inclure les rejetés</label>
+              <button type="button" className="resetFilters" onClick={resetAtlasFilters}>Réinitialiser aux défauts · M ou L</button>
               <div className="refreshActions"><button type="button" onClick={() => void startAtlasRefresh(renderedProducts.map((item) => item.id))}>↻ visibles</button><button type="button" onClick={() => void startAtlasRefresh(catalogItems.filter((item) => item.decision === "saved").map((item) => item.id))}>↻ shortlist</button></div>
             </div>
           </details>
@@ -1784,7 +2085,8 @@ export default function Home() {
               <input ref={atlasImageInputRef} className="hiddenImageInput" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => { void addAtlasPromptImages(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
               <button className="attachButton" type="button" onClick={() => atlasImageInputRef.current?.click()} aria-label="Ajouter des images" title="Ajouter ou coller un mood board">＋ img</button>
               <select className="reasoningSelect" value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as "low" | "medium")} aria-label="Niveau de réflexion Luna"><option value="low">Luna low</option><option value="medium">Luna medium</option></select>
-              <button type="button" onClick={() => void askAtlasCodex()}>Filtrer</button>
+              <button type="button" className="filterButton" onClick={() => void askAtlasCodex()}>Filtrer</button>
+              <button type="button" className="discoverButton" disabled={discoveryBusy || !aiPrompt.trim()} aria-busy={discoveryBusy} onClick={() => void startAtlasDiscovery()} title="Faire planifier puis exécuter une recherche locale sur les shops">{discoveryBusy ? "Trouve…" : "Trouver"}</button>
               <button type="button" className="visionButton" title="Vision 1×1 ou Planche + détail" disabled={visualBusy} onClick={() => void askAtlasVision()}>{visualBusy ? "Analyse…" : "Vision"}</button>
             </label>
             {(promptImages.length > 0 || aiStatus) && (
@@ -1797,7 +2099,15 @@ export default function Home() {
           </div>
         </div>
 
-        {refreshJob && !["complete", "cancelled"].includes(refreshJob.status) && <div className={`jobProgress${["error", "blocked"].includes(refreshJob.status) ? " jobError" : ""}`} role="status"><span style={{ width: progressTotal ? `${Math.min(100, progressDone / progressTotal * 100)}%` : "18%" }} /><b>{["error", "blocked"].includes(refreshJob.status) ? refreshJob.error ?? "Certaines fiches sont bloquées" : refreshRecovered ? "Une vérification locale peut être reprise" : refreshJob.message ?? "Fiches en cours de vérification"}</b><em>{progressTotal ? `${progressDone}/${progressTotal}` : refreshJob.status}</em>{refreshNeedsResume ? refreshJob.canResume !== false && <button onClick={() => void retryAtlasRefresh()}>Reprendre</button> : <button onClick={() => void cancelAtlasRefresh()}>Arrêter</button>}</div>}
+        <div className="operationStack">
+          {refreshJob && !["complete", "cancelled"].includes(refreshJob.status) && <div className={`jobProgress${["error", "blocked"].includes(refreshJob.status) ? " jobError" : ""}`} role="status"><span style={{ width: progressTotal ? `${Math.min(100, progressDone / progressTotal * 100)}%` : "18%" }} /><b>{["error", "blocked"].includes(refreshJob.status) ? refreshJob.error ?? "Certaines fiches sont bloquées" : refreshRecovered ? "Une vérification locale peut être reprise" : refreshJob.message ?? "Fiches en cours de vérification"}</b><em>{progressTotal ? `${progressDone}/${progressTotal}` : refreshJob.status}</em>{refreshNeedsResume ? refreshJob.canResume !== false && <button onClick={() => void retryAtlasRefresh()}>Reprendre</button> : <button onClick={() => void cancelAtlasRefresh()}>Arrêter</button>}</div>}
+          {discoveryJobs.length > 0 && <div className={`discoveryProgress${discoveryHasFailures ? " discoveryError" : discoveryWasCancelled ? " discoveryCancelled" : ""}`} role="status" aria-live="polite" title={discoveryPlan?.description}>
+            <span className="discoveryFill" style={{ width: `${Math.round(discoveryProgress * 100)}%` }} />
+            <div className="discoveryPlanInfo"><b>{discoveryPlan?.name ?? "Découverte agentique"}</b><small>Tailles {discoverySizes} · {discoverySources.join(" + ") || "shops locaux"}{discoveryPlan?.targetCount ? ` · cible ${discoveryPlan.targetCount}` : ""} · {discoveryStatusText}</small></div>
+            <em><b>{discoveryDiscovered}</b> nouveau{discoveryDiscovered > 1 ? "x" : ""}{discoveryDiscarded > 0 ? ` · ${discoveryDiscarded} écartés` : ""}</em>
+            <div className="discoveryActions">{discoveryBusy && discoveryHasActive && <button type="button" onClick={() => void cancelAtlasDiscovery()}>Arrêter</button>}{discoveryCanResume && <button type="button" onClick={() => void resumeAtlasDiscovery()}>Reprendre</button>}</div>
+          </div>}
+        </div>
 
         <div ref={atlasElementRef} className={`${mode === "space" ? "atlas spaceMode" : "atlas gridMode"}${dragging ? " dragging" : ""}`} onPointerDown={startAtlasPan} onPointerMove={atlasPan} onPointerUp={stopAtlasPan} onPointerCancel={stopAtlasPan}>
           <div className="atlasCanvas" style={mode === "space" ? ({ "--board-scale": zoom, width: `${zoom * 160}%` } as CSSProperties) : undefined}>
@@ -1834,7 +2144,7 @@ export default function Home() {
             ))}
             {products.length === 0 && (
               <div className="emptyBoard">
-                <strong>{scope === "owned" ? "Ton dressing attend sa première pièce" : scope === "outfits" ? "Aucune planche de tenue ici" : `Aucun article${sizeFilter !== "all" && sizeFilter !== "known" ? ` confirmé en ${sizeFilter}` : ""}`}</strong>
+                <strong>{scope === "owned" ? "Ton dressing attend sa première pièce" : scope === "outfits" ? "Aucune planche de tenue ici" : `Aucun article${selectedSizes.length ? ` confirmé en ${selectedSizes.join(" ou ")}` : ""}`}</strong>
                 <span>{scope === "owned" ? "Ajoute une photo et quelques métadonnées : Luna pourra ensuite évaluer les vrais ajouts à ta garde-robe." : scope === "outfits" ? "Sélectionne ＋ sur quelques cartes, puis ouvre Tenues pour les assembler." : "Les tailles inconnues et les rejetés restent exclus par défaut."}</span>
                 {(scope === "owned" || scope === "reference") && <button className="primaryButton" onClick={() => setDrawer("add")}>＋ Ajouter une pièce</button>}
               </div>
@@ -1886,8 +2196,8 @@ export default function Home() {
             {drawer === "views" && (
               <div className="drawerBody">
                 <form className="inlineCreate" onSubmit={(event) => void saveAtlasView(event)}><input value={viewName} onChange={(event) => setViewName(event.target.value)} placeholder="Nom de cette vue" aria-label="Nom de la vue" /><button className="primaryButton">Sauvegarder</button></form>
-                <p className="drawerHint">La vue mémorise scope, filtres, axes et mode — jamais ton prompt, ton zoom ou ta position.</p>
-                <div className="savedList">{savedViews.map((view) => <div className="savedRow" key={view.id}><button className="savedMain" onClick={() => applyAtlasView(view)}><strong>{view.name}</strong><span>{atlasScopes.find((item) => item.id === view.scope)?.label} · {view.activeFilter} · {view.mode === "space" ? "PCA" : "grille"}{view.sizeFilter !== "all" ? ` · taille ${view.sizeFilter}` : ""}</span></button><button className="iconDanger" onClick={() => void deleteAtlasView(view.id)} aria-label={`Supprimer ${view.name}`}>×</button></div>)}{savedViews.length === 0 && <div className="drawerEmpty"><strong>Aucune vue sauvegardée</strong><span>Compose un filtre précis, puis reviens ici pour le garder.</span></div>}</div>
+                <p className="drawerHint">La vue mémorise scope, filtres, tailles, rendu d’image, axes et mode — jamais ton prompt, ton zoom ou ta position.</p>
+                <div className="savedList">{savedViews.map((view) => <div className="savedRow" key={view.id}><button className="savedMain" onClick={() => applyAtlasView(view)}><strong>{view.name}</strong><span>{atlasScopes.find((item) => item.id === view.scope)?.label} · {view.activeFilter} · {view.mode === "space" ? "PCA" : "grille"} · {view.imageMode === "full" ? "images entières" : "recadrées"}{view.sizeFilters.length ? ` · ${view.sizeFilters.join(" ou ")}` : ""}</span></button><button className="iconDanger" onClick={() => void deleteAtlasView(view.id)} aria-label={`Supprimer ${view.name}`}>×</button></div>)}{savedViews.length === 0 && <div className="drawerEmpty"><strong>Aucune vue sauvegardée</strong><span>Compose un filtre précis, puis reviens ici pour le garder.</span></div>}</div>
                 <div className="drawerFooter"><button onClick={exportAtlasJson}>⇩ Exporter le scope en JSON</button></div>
               </div>
             )}
