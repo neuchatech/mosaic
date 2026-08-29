@@ -906,6 +906,7 @@ type AtlasDiscoverySession = { plan: AtlasDiscoveryPlan; jobIds: string[] };
 const ATLAS_API = "http://localhost:8788/api";
 const ATLAS_ORIGIN = ATLAS_API.slice(0, -4);
 const ATLAS_PAGE_SIZE = 240;
+const ATLAS_DEFAULT_ZOOM = 2;
 const ATLAS_MAX_IMAGES = 6;
 const ATLAS_MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const ATLAS_MAX_TOTAL_BYTES = 24 * 1024 * 1024;
@@ -1062,6 +1063,8 @@ function atlasSpaceLayout(items: AtlasItem[], xAxis: AxisField, yAxis: AxisField
   const xPositions = atlasAxisPositions(items, xAxis, "x");
   const yPositions = atlasAxisPositions(items, yAxis, "y");
   const nominalArea = imageMode === "cropped" ? 7_400 : 10_800;
+  const maximumArea = nominalArea * (imageMode === "cropped" ? 2.5 : 3);
+  const maximumSide = imageMode === "cropped" ? 220 : 280;
   const gap = imageMode === "cropped" ? .6 : 1.5;
   const padding = 16;
   const targetArea = items.length * nominalArea / .9;
@@ -1187,6 +1190,7 @@ function atlasSpaceLayout(items: AtlasItem[], xAxis: AxisField, yAxis: AxisField
   };
 
   const resize = (index: number, x: number, y: number, width: number, height: number) => {
+    if (width * height > maximumArea || width > maximumSide || height > maximumSide) return false;
     if (!fits(index, x, y, width, height)) return false;
     removeFromBuckets(index);
     Object.assign(nodes[index], { x, y, width, height });
@@ -1338,7 +1342,7 @@ export default function Home() {
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [includeRejected, setIncludeRejected] = useState(false);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(ATLAS_DEFAULT_ZOOM);
   const [dragging, setDragging] = useState(false);
   const [atlasViewport, setAtlasViewport] = useState({ width: 1000, height: 650 });
   const [atlasView, setAtlasView] = useState({ left: 0, top: 0, width: 1000, height: 650 });
@@ -1372,7 +1376,7 @@ export default function Home() {
   const drawerRef = useRef<HTMLElement>(null);
   const drawerCloseRef = useRef<HTMLButtonElement>(null);
   const drawerReturnFocusRef = useRef<HTMLElement | null>(null);
-  const atlasZoomRef = useRef(1);
+  const atlasZoomRef = useRef(ATLAS_DEFAULT_ZOOM);
   const atlasZoomFrameRef = useRef<number | null>(null);
   const atlasScrollTimerRef = useRef<number | null>(null);
   const atlasViewRef = useRef({ left: 0, top: 0, width: 1000, height: 650 });
@@ -1860,7 +1864,7 @@ export default function Home() {
   }
 
   function resetAtlasView() {
-    atlasZoomRef.current = 1; atlasZoomScrollRef.current = null; setZoom(1);
+    atlasZoomRef.current = ATLAS_DEFAULT_ZOOM; atlasZoomScrollRef.current = null; setZoom(ATLAS_DEFAULT_ZOOM);
     requestAnimationFrame(() => {
       const atlas = atlasElementRef.current;
       if (!atlas) return;
