@@ -166,8 +166,8 @@ function applyNaturalPreviewGeometry(card: HTMLElement) {
   const baseRatio = baseWidth / baseHeight;
   const targetWidth = naturalRatio > baseRatio ? baseHeight * naturalRatio : baseWidth;
   const targetHeight = naturalRatio > baseRatio ? baseHeight : baseWidth / naturalRatio;
-  card.style.setProperty("--hover-width", `${Math.min(baseWidth * 1.8, Math.max(baseWidth, targetWidth))}px`);
-  card.style.setProperty("--hover-height", `${Math.min(baseHeight * 1.8, Math.max(baseHeight, targetHeight))}px`);
+  card.style.setProperty("--hover-width", `${Math.max(baseWidth, targetWidth)}px`);
+  card.style.setProperty("--hover-height", `${Math.max(baseHeight, targetHeight)}px`);
   return true;
 }
 
@@ -1347,6 +1347,7 @@ export default function Home() {
   const [atlasViewport, setAtlasViewport] = useState({ width: 1000, height: 650 });
   const [atlasView, setAtlasView] = useState({ left: 0, top: 0, width: 1000, height: 650 });
   const [drawer, setDrawer] = useState<AtlasDrawer>(null);
+  const [previewItem, setPreviewItem] = useState<AtlasItem | null>(null);
   const [compareIds, setCompareIds] = useState<Set<string>>(() => new Set());
   const [outfitDraftIds, setOutfitDraftIds] = useState<Set<string>>(() => new Set());
   const [savedViews, setSavedViews] = useState<AtlasSavedView[]>([]);
@@ -1376,6 +1377,9 @@ export default function Home() {
   const drawerRef = useRef<HTMLElement>(null);
   const drawerCloseRef = useRef<HTMLButtonElement>(null);
   const drawerReturnFocusRef = useRef<HTMLElement | null>(null);
+  const previewDialogRef = useRef<HTMLElement>(null);
+  const previewCloseRef = useRef<HTMLButtonElement>(null);
+  const previewReturnFocusRef = useRef<HTMLElement | null>(null);
   const atlasZoomRef = useRef(ATLAS_DEFAULT_ZOOM);
   const atlasZoomFrameRef = useRef<number | null>(null);
   const atlasScrollTimerRef = useRef<number | null>(null);
@@ -1758,7 +1762,8 @@ export default function Home() {
       if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "z" && !target.closest("input, textarea, select")) {
         event.preventDefault(); void undoLastAction();
       }
-      if (event.key === "Escape" && drawer) setDrawer(null);
+      if (event.key === "Escape" && previewItem) setPreviewItem(null);
+      else if (event.key === "Escape" && drawer) setDrawer(null);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -1808,6 +1813,50 @@ export default function Home() {
       if (returnTarget?.isConnected) returnTarget.focus();
     };
   }, [drawerOpen]);
+
+  const previewOpen = previewItem !== null;
+  useEffect(() => {
+    if (!previewOpen) return;
+    const panel = previewDialogRef.current;
+    const closeButton = previewCloseRef.current;
+    if (!panel || !closeButton) return;
+    previewReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const shell = panel.closest("main");
+    const background = shell
+      ? [...shell.children].filter((element) => !element.classList.contains("productPreviewBackdrop")) as HTMLElement[]
+      : [];
+    const previousStates = background.map((element) => ({
+      element, inert: element.inert, ariaHidden: element.getAttribute("aria-hidden"),
+    }));
+    background.forEach((element) => { element.inert = true; element.setAttribute("aria-hidden", "true"); });
+
+    const focusFrame = requestAnimationFrame(() => closeButton.focus());
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const focusable = [...panel.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+        .filter((element) => element.getAttribute("aria-hidden") !== "true" && element.offsetParent !== null);
+      if (!focusable.length) { event.preventDefault(); panel.focus(); return; }
+      const first = focusable[0];
+      const last = focusable.at(-1)!;
+      if (event.shiftKey && (document.activeElement === first || !panel.contains(document.activeElement))) {
+        event.preventDefault(); last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !panel.contains(document.activeElement))) {
+        event.preventDefault(); first.focus();
+      }
+    };
+    document.addEventListener("keydown", trapFocus);
+    return () => {
+      cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", trapFocus);
+      previousStates.forEach(({ element, inert, ariaHidden }) => {
+        element.inert = inert;
+        if (ariaHidden === null) element.removeAttribute("aria-hidden"); else element.setAttribute("aria-hidden", ariaHidden);
+      });
+      const returnTarget = previewReturnFocusRef.current;
+      previewReturnFocusRef.current = null;
+      if (returnTarget?.isConnected) returnTarget.focus();
+    };
+  }, [previewOpen]);
 
   function toggleCompare(id: string) {
     if (!compareIds.has(id) && compareIds.size >= 4) {
@@ -2387,6 +2436,7 @@ export default function Home() {
         : discoveryWasCancelled ? "Arrêtée · relance Trouver pour recommencer"
           : "Découverte terminée";
   const effectiveFocusedIndex = Math.min(focusedIndex, Math.max(0, renderedProducts.length - 1));
+  const previewProduct = previewItem ? catalogItems.find((item) => item.id === previewItem.id) ?? previewItem : null;
   const advancedFilterCount = [priceFilter !== "all", fitFilter !== "all", materialFilter !== "all", Boolean(attributeQuery.trim()), Boolean(minPrice), Boolean(maxPrice), stockFilter !== "all", includeRejected].filter(Boolean).length;
 
   return (
@@ -2523,7 +2573,11 @@ export default function Home() {
                   <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={item.decision === "owned" ? "active" : ""} onClick={() => void setAtlasDecision(item, "owned")} aria-label={`Marquer ${item.name} comme possédé`} title="Possédé (O)">◆</button>
                   <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={item.decision === "rejected" ? "active reject" : "reject"} onClick={() => void setAtlasDecision(item, "rejected")} aria-label={`Rejeter ${item.name}`} title="Rejeter (R)">×</button>
                 </div>
-                {item.url && item.kind === "shop" && <a tabIndex={index === effectiveFocusedIndex ? 0 : -1} className="productLinkOverlay" href={item.url} target="_blank" rel="noopener noreferrer" aria-label={`Ouvrir ${item.brand} — ${item.name}`} onClick={(event) => { if (!atlasSuppressClickRef.current) return; event.preventDefault(); atlasSuppressClickRef.current = false; }} />}
+                {item.url && item.kind === "shop" && <a tabIndex={index === effectiveFocusedIndex ? 0 : -1} className="productLinkOverlay" href={item.url} target="_blank" rel="noopener noreferrer" aria-label={`Prévisualiser ${item.brand} — ${item.name}`} onClick={(event) => {
+                  if (atlasSuppressClickRef.current) { event.preventDefault(); atlasSuppressClickRef.current = false; return; }
+                  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                  event.preventDefault(); cancelAtlasPreview(event.currentTarget.closest<HTMLElement>(".productCard") ?? undefined); setPreviewItem(item);
+                }} />}
                 <div className={`productImage${item.image ? " hasImage" : ""}`} style={{ backgroundPosition: item.crop }}>{item.image && <img src={item.image} alt="" loading="lazy" decoding="async" onLoad={(event) => {
                   const card = event.currentTarget.closest<HTMLElement>(".productCard");
                   if (mode === "space" && card && atlasHoverCardRef.current === card && card.matches(":hover") && card.style.getPropertyValue("--hover-scale")) applyNaturalPreviewGeometry(card);
@@ -2627,6 +2681,35 @@ export default function Home() {
               </div>
             )}
           </aside>
+        </div>
+      )}
+
+      {previewProduct?.url && (
+        <div className="productPreviewBackdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) setPreviewItem(null); }}>
+          <section ref={previewDialogRef} tabIndex={-1} className="productPreviewDialog" role="dialog" aria-modal="true" aria-labelledby="product-preview-title">
+            <header>
+              <div><span>{previewProduct.brand}</span><h2 id="product-preview-title">{previewProduct.name}</h2></div>
+              <div className="productPreviewActions">
+                <strong>{previewProduct.price == null ? "Prix inconnu" : `${previewProduct.currency} ${previewProduct.price.toFixed(2)}`}</strong>
+                <button className="productPreviewRefresh" type="button" disabled={Boolean(refreshJob && !(refreshJob.terminal ?? ATLAS_TERMINAL_REFRESH_STATUSES.includes(refreshJob.status)))} onClick={() => void startAtlasRefresh([previewProduct.id])}>↻ Actualiser</button>
+                <a href={previewProduct.url} target="_blank" rel="noopener noreferrer">Ouvrir dans un onglet ↗</a>
+                <button ref={previewCloseRef} type="button" onClick={() => setPreviewItem(null)} aria-label="Fermer la prévisualisation">×</button>
+              </div>
+            </header>
+            <div className="productQuickLook">
+              <div className={`productPreviewGallery gallery-${Math.min(4, Math.max(1, previewProduct.images.length))}`}>
+                {(previewProduct.images.length ? previewProduct.images : previewProduct.image ? [previewProduct.image] : []).map((image, imageIndex) => <img key={`${previewProduct.id}-${imageIndex}`} src={image} alt={`${previewProduct.name} — vue ${imageIndex + 1}`} />)}
+                {!previewProduct.images.length && !previewProduct.image && <div className="productPreviewNoImage">Aucune image capturée</div>}
+              </div>
+              <aside className="productPreviewFacts">
+                <section><span>Disponibilité</span><strong>{previewProduct.stockStatus === "in_stock" ? "En stock" : previewProduct.stockStatus === "out_of_stock" ? "Épuisé" : "À vérifier"}</strong><small>Stock {atlasTimestamp(previewProduct.stockCheckedAt)}</small></section>
+                <section><span>Tailles</span><div className="productPreviewSizes">{previewProduct.sizeAvailabilityKnown ? previewProduct.sizes.length ? previewProduct.sizes.map((size) => <b key={size}>{size}</b>) : <em>Épuisé</em> : <em>Pas encore vérifiées</em>}</div><small>Tailles {atlasTimestamp(previewProduct.sizesCheckedAt)}</small></section>
+                <section><span>Détails</span><dl><div><dt>Catégorie</dt><dd>{previewProduct.category}</dd></div><div><dt>Couleur</dt><dd>{previewProduct.color}</dd></div><div><dt>Coupe</dt><dd>{previewProduct.fit}</dd></div><div><dt>Matière</dt><dd>{previewProduct.materials.join(", ") || "Inconnue"}</dd></div><div><dt>Retours</dt><dd>{previewProduct.returnsLabel ?? (previewProduct.returnsWindowDays ? `${previewProduct.returnsWindowDays} jours` : "Inconnus")}</dd></div></dl></section>
+                {previewProduct.reason && <section><span>Vision Luna</span><p>{previewProduct.reason}</p></section>}
+                <p className="productPreviewNote">Aperçu local fiable. Les shops bloquent généralement leur intégration en iframe ; ouvre l’onglet pour la fiche complète.</p>
+              </aside>
+            </div>
+          </section>
         </div>
       )}
 
