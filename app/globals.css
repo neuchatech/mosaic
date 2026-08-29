@@ -128,7 +128,7 @@ button { color: inherit; font: inherit; }
 .productLinkOverlay { -webkit-user-drag: none; }
 .productLinkOverlay:focus-visible { outline: 2px solid #f5efe3; outline-offset: -3px; }
 .spaceMode .productCard { position: absolute; width: var(--card-width); height: var(--card-height); translate: -50% -50%; }
-.spaceMode .productCard:hover { z-index: 8; width: var(--hover-width, 100%); height: var(--hover-height, 100%); transform: translateY(-3px) scale(var(--hover-scale, 1)); filter: brightness(1.025); box-shadow: 0 14px 36px #1c17103d; }
+.spaceMode .productCard:hover { z-index: 8; width: var(--hover-width, var(--card-width)); height: var(--hover-height, var(--card-height)); transform: translateY(-3px) scale(var(--hover-scale, 1)); filter: brightness(1.025); box-shadow: 0 14px 36px #1c17103d; }
 .gridMode .productCard:hover { z-index: 8; transform: translateY(-3px) scale(var(--hover-scale, 1)); filter: brightness(1.025); box-shadow: 0 14px 36px #1c17103d; }
 .dragging .productCard:hover { transform: translateZ(0); box-shadow: none; }
 .productImage { height: 100%; min-height: 100%; background-color: #e9e5dc; background-image: url('/seed/reference-board.png'); background-size: 500%; filter: saturate(.8) contrast(.98); }
@@ -151,6 +151,7 @@ button { color: inherit; font: inherit; }
 .gridMode .atlasCanvas { min-width: 100%; display: grid; grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); align-content: start; gap: 7px; padding: 7px; }
 .gridMode .productCard { background: #fbfaf6; border: 1px solid #d6d0c5; }
 .gridMode .productImage { height: 155px; min-height: 155px; }
+.imageMode-cropped .gridMode .productImage { height: 130px; min-height: 130px; }
 .gridMode .productMeta { padding: 6px 7px 8px; }
 .gridMode .productMeta p { margin: 3px 0 5px; color: #898174; font-size: 8px; }
 .imageDisplaySwitch button { min-width: 38px; }
