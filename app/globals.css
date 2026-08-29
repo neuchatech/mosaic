@@ -398,20 +398,22 @@ button { color: inherit; font: inherit; }
 
 .atlasBoardPanel .productMeta {
   position: absolute; z-index: 2; inset: auto auto 5px 5px; max-width: calc(100% - 10px); min-width: 0;
-  display: grid; justify-items: start; gap: 2px; padding: 0; background: none; color: white; pointer-events: none;
+  display: grid; justify-items: start; gap: clamp(0px, 1cqw, 2px); padding: 0; background: none; color: white; pointer-events: none;
 }
 .atlasBoardPanel .productMeta .scoreRow,
 .atlasBoardPanel .productMeta p,
 .atlasBoardPanel .productMeta .freshness,
 .atlasBoardPanel .productMeta .sizeSummary { display: none; }
 .atlasBoardPanel .productMeta h3 {
-  max-width: 100%; overflow: hidden; margin: 0; padding: 3px 5px; border-radius: 4px;
-  background: #17140fb8; color: white; font-size: 7px; font-weight: 600; line-height: 1;
+  max-width: 100%; overflow: hidden; margin: 0;
+  padding: clamp(1px, 2cqw, 3px) clamp(2px, 3.5cqw, 5px); border-radius: clamp(2px, 2.5cqw, 4px);
+  background: #17140fb8; color: white; font-size: clamp(4px, 6cqw, 11px); font-weight: 600; line-height: 1;
   text-overflow: ellipsis; white-space: nowrap;
 }
 .atlasBoardPanel .productMeta > strong {
-  display: block; margin: 0; padding: 3px 5px; border-radius: 4px; background: #17140fb8;
-  color: white; font-size: 7px; line-height: 1;
+  display: block; margin: 0;
+  padding: clamp(1px, 2cqw, 3px) clamp(2px, 3.5cqw, 5px); border-radius: clamp(2px, 2.5cqw, 4px);
+  background: #17140fb8; color: white; font-size: clamp(4px, 5.5cqw, 10px); line-height: 1;
 }
 
 .cardActions {
@@ -434,7 +436,7 @@ button { color: inherit; font: inherit; }
 .imageMode-cropped .spaceMode .productMeta .scoreRow,
 .imageMode-cropped .spaceMode .productMeta p,
 .imageMode-cropped .spaceMode .productMeta .freshness { display: none; }
-.imageMode-cropped .spaceMode .productMeta > strong { margin: 0; color: white; font-size: 7px; line-height: 1; }
+.imageMode-cropped .spaceMode .productMeta > strong { margin: 0; color: white; font-size: clamp(4px, 5.5cqw, 10px); line-height: 1; }
 .imageMode-cropped .spaceMode .productMeta .sizeSummary { display: none; }
 .freshness { display: block; margin-top: 3px; color: #d8e6cb; font-size: 6px; font-weight: 500; }
 .freshness.stale { color: #e8c5a7; }
