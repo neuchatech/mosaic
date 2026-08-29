@@ -12,6 +12,12 @@ import {
   normalizeAliExpressListingCard,
   parseAliExpressChfPrice,
 } from "../collector/adapters/aliexpress";
+import {
+  aboutYouSizesFromText,
+  aboutYouSourceIdFromUrl,
+  buildAboutYouDiscoveryTargets,
+  normalizeAboutYouListingCard,
+} from "../collector/adapters/aboutyou";
 import { extractGenericJsonLdProduct } from "../collector/adapters/generic-jsonld";
 import {
   buildZalandoDiscoveryTargets,
@@ -53,6 +59,70 @@ function product(sourceId: string, overrides: Partial<RawProduct> = {}): RawProd
     ...overrides,
   };
 }
+
+test("About You listings expose exact M/L availability without inventing detail data", () => {
+  const observedAt = "2026-08-29T10:00:00.000Z";
+  assert.equal(aboutYouSourceIdFromUrl("https://www.aboutyou.ch/p/brand/boxy-jacket-32163979?tracking=1"), "32163979");
+  assert.deepEqual(aboutYouSizesFromText("CHF 78.40 Available sizes: S, M, L, XL Add to basket Originally: CHF 112.00"), {
+    known: true,
+    sizes: ["S", "M", "L", "XL"],
+  });
+  const product = normalizeAboutYouListingCard({
+    url: "https://www.aboutyou.ch/p/brand/boxy-jacket-32163979?tracking=1",
+    brand: "Test Brand",
+    name: "Boxy Jacket",
+    image: "https://cdn.example.test/jacket.jpg",
+    alt: "Test Brand Boxy Jacket in Brown: front",
+    text: "CHF 78.40 Available sizes: S, M, L, XL Add to basket Originally: CHF 112.00",
+  }, observedAt);
+  assert.ok(product);
+  assert.equal(product.price, 78.4);
+  assert.equal(product.originalPrice, 112);
+  assert.equal(product.stockStatus, "in_stock");
+  assert.deepEqual(product.sizes, ["S", "M", "L", "XL"]);
+  assert.equal(product.sizesCheckedAt, observedAt);
+  assert.equal(product.attributes?.sizeAvailabilityKnown, true);
+  assert.equal(product.url, "https://www.aboutyou.ch/p/brand/boxy-jacket-32163979");
+  const [target] = buildAboutYouDiscoveryTargets({ source: "aboutyou-ch", category: "Vestes", sizes: ["M", "L"], maxItems: 30 });
+  assert.equal(target?.url, "https://www.aboutyou.ch/c/men/clothing/jackets-20320");
+  assert.equal(target?.appliedFilters.sizes, "post_fetch");
+  assert.equal(discoveryAdapterFor("aboutyou-ch").id, "aboutyou-ch");
+  assert.equal(adapterFor(new URL("https://fr.aboutyou.ch/p/brand/boxy-jacket-32163979")).id, "aboutyou-ch");
+});
+
+test("About You post-filters exact requested sizes and preserves confirmed listing freshness", async () => {
+  const observedAt = "2026-08-29T10:00:00.000Z";
+  const service = new DiscoveryService({
+    sameDomainDelayMs: 0,
+    idFactory: ids(),
+    fetcher: {
+      async fetch() {
+        const make = (id: string, sizes: string[], known = true): RawProduct => ({
+          sourceId: id,
+          url: `https://www.aboutyou.ch/p/brand/item-${id}`,
+          brand: "Brand",
+          name: `Item ${id}`,
+          price: 80,
+          sizes,
+          rawSizes: sizes,
+          stockStatus: known ? "in_stock" : "unknown",
+          sizesCheckedAt: known ? observedAt : null,
+          stockCheckedAt: known ? observedAt : null,
+          attributes: { sizeAvailabilityKnown: known },
+        });
+        return [make("10000001", ["M"]), make("10000002", ["XL"]), make("10000003", [], false)];
+      },
+    },
+  });
+  const started = service.start({ intent: { source: "aboutyou-ch", category: "Vestes", sizes: ["M", "L"], sizeMode: "any", maxItems: 10 } });
+  const finished = await service.waitFor(started.id);
+  assert.equal(finished.discovered, 1);
+  assert.equal(finished.filtered, 2);
+  assert.deepEqual(finished.results[0]?.sizes, ["M"]);
+  assert.equal(finished.results[0]?.stockStatus, "in_stock");
+  assert.equal(finished.results[0]?.sizesCheckedAt, observedAt);
+  await service.close();
+});
 
 test("Zalando M OR L is a finite union of public size listings", () => {
   assert.equal(

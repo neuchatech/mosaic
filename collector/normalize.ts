@@ -5,7 +5,7 @@ import type { RawProduct } from "./types";
 export function guessCategory(value: string): string {
   const normalized = value.toLocaleLowerCase();
   if (/chauss|shoe|schuh|sneaker|\bbaskets?\b|trainer|\bboots?\b|stiefel|stiefelette|loafer|mocassin|derby|brogue|sandale/.test(normalized)) return "Chaussures";
-  if (/ceinture|\bbelts?\b|gürtel|\bsacs?\b|\bbags?\b|tasche|tote|backpack|rucksack|banane|crossbody|messenger|casquette|\bcap\b|bonnet|beanie|mütze|\bhat\b|chapeau|écharpe|foulard|bandana|scarf|schal|lunettes|sunglasses|sonnenbrille|collier|necklace|kette|bracelet|armband|bague|\bring\b|portefeuille|wallet|geldbörse|chaussette|socks|socken|cravate|krawatte|\btie\b/.test(normalized)) return "Accessoires";
+  if (/ceinture|\bbelts?\b|gürtel|\bsacs?\b|\bbags?\b|tasche|tote|backpack|rucksack|banane|crossbody|messenger|casquette|\bcap\b|bonnet|beanie|mütze|\bhat\b|\bhut\b|chapeau|écharpe|foulard|bandana|scarf|schal|lunettes|sunglasses|sonnenbrille|collier|necklace|kette|bracelet|armband|bague|\bring\b|portefeuille|wallet|geldbörse|chaussette|socks|socken|cravate|krawatte|\btie\b|montre|\bwatch\b|\buhr\b|gants?|gloves?|handschuh|étui/.test(normalized)) return "Accessoires";
   if (/pantalon|trouser|jean|\bshorts?\b(?![- ]sleeve)|hose\b|chino/.test(normalized)) return "Pantalons";
   if (/t-shirt|\btees?\b|langarmshirt|débardeur|tank.?top|henley/.test(normalized)) return "T-shirts";
   if (/pull|pullover|pulli|sweater|maille|knit|strick|cardigan|gilet|\bweste\b/.test(normalized)) return "Mailles";
@@ -59,7 +59,7 @@ export function guessTags(value: string): string[] {
 export function normalizeProduct(source: string, raw: RawProduct): Product {
   const now = new Date().toISOString();
   const sourceId = raw.sourceId || new URL(raw.url).pathname;
-  const descriptiveText = `${raw.name} ${raw.description ?? ""}`;
+  const descriptiveText = `${raw.name} ${raw.description ?? ""} ${raw.color ?? ""}`;
   return productSchema.parse({
     id: stableProductId(source, sourceId),
     kind: "shop",

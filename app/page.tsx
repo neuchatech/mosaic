@@ -209,7 +209,7 @@ export function LegacyHome() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch("http://localhost:8788/api/products?limit=5000", { signal: controller.signal })
+    fetch("/api/products?limit=5000", { signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error("catalog unavailable");
         return response.json() as Promise<ApiProduct[]>;
@@ -231,6 +231,7 @@ export function LegacyHome() {
     if (sourceFilter === "shop" && item.kind === "reference") return false;
     if (sourceFilter === "reference" && item.kind !== "reference") return false;
     if (sourceFilter === "zalando" && item.source !== "zalando-ch") return false;
+    if (sourceFilter === "aboutyou" && item.source !== "aboutyou-ch") return false;
     if (sourceFilter === "aliexpress" && item.source !== "aliexpress") return false;
     if (priceFilter !== "all") {
       if (item.price === null) return false;
@@ -401,7 +402,7 @@ export function LegacyHome() {
     if (!aiPrompt.trim()) return;
     setAiStatus("Codex Luna traduit la demande…");
     try {
-      const response = await fetch("http://localhost:8788/api/codex/filter", {
+      const response = await fetch("/api/codex/filter", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ prompt: aiPrompt }),
@@ -409,7 +410,7 @@ export function LegacyHome() {
       if (!response.ok) throw new Error("bridge unavailable");
       const result = await response.json() as { filter?: { name?: string } };
       if (!result.filter) throw new Error("missing filter");
-      const queryResponse = await fetch("http://localhost:8788/api/query", {
+      const queryResponse = await fetch("/api/query", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(result.filter),
@@ -431,7 +432,7 @@ export function LegacyHome() {
     setAiStatus(visualMode === "sheet" ? "Luna prépare sa première planche…" : "Luna prépare la sélection visuelle…");
     try {
       const prompt = aiPrompt.trim() || "Trouve des vêtements visuellement proches du mood board joint.";
-      const response = await fetch("http://localhost:8788/api/codex/visual-select", {
+      const response = await fetch("/api/codex/visual-select", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -451,7 +452,7 @@ export function LegacyHome() {
         const progress = ` · ${job.inspected}/${job.maxInspections} vues · ${job.selected} retenus`;
         setAiStatus(`${job.message}${progress}`);
         await new Promise((resolve) => setTimeout(resolve, 1500));
-        const poll = await fetch(`http://localhost:8788/api/codex/visual-jobs/${job.id}`);
+        const poll = await fetch(`/api/codex/visual-jobs/${job.id}`);
         if (!poll.ok) throw new Error("visual job lost");
         job = await poll.json() as VisualJobResponse;
       }
@@ -567,7 +568,7 @@ export function LegacyHome() {
           </div>
 
           <div className="filterBar">
-            <label className="quickFilter"><small>Source</small><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">Toutes</option><option value="shop">Tous shops</option><option value="zalando">Zalando</option><option value="aliexpress">AliExpress</option><option value="reference">Références</option></select></label>
+            <label className="quickFilter"><small>Source</small><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">Toutes</option><option value="shop">Tous shops</option><option value="zalando">Zalando</option><option value="aboutyou">About You</option><option value="aliexpress">AliExpress</option><option value="reference">Références</option></select></label>
             <label className="quickFilter"><small>Prix</small><select value={priceFilter} onChange={(event) => setPriceFilter(event.target.value)}><option value="all">Tous</option><option value="under50">&lt; 50</option><option value="50to100">50–100</option><option value="100to180">100–180</option><option value="over180">&gt; 180</option></select></label>
             <label className="quickFilter"><small>Coupe</small><select value={fitFilter} onChange={(event) => setFitFilter(event.target.value)}><option value="all">Toutes</option><option value="large">Large</option><option value="courte">Courte</option><option value="droite">Droite</option><option value="unknown">Inconnue</option></select></label>
             <label className="quickFilter"><small>Matière</small><select value={materialFilter} onChange={(event) => setMaterialFilter(event.target.value)}><option value="all">Toutes</option><option value="knit">Maille</option><option value="linen">Lin</option><option value="cotton">Coton</option><option value="leather">Cuir</option></select></label>
@@ -903,7 +904,7 @@ type AtlasDiscoveryJob = {
 
 type AtlasDiscoverySession = { plan: AtlasDiscoveryPlan; jobIds: string[] };
 
-const ATLAS_API = "http://localhost:8788/api";
+const ATLAS_API = "/api";
 const ATLAS_ORIGIN = ATLAS_API.slice(0, -4);
 const ATLAS_PAGE_SIZE = 240;
 const ATLAS_DEFAULT_ZOOM = 2;
@@ -915,7 +916,7 @@ const ATLAS_TERMINAL_REFRESH_STATUSES = ["complete", "error", "blocked", "cancel
 const ATLAS_PREFERENCES_KEY = "wardrobe-atlas:board-preferences:v2";
 const ATLAS_DISCOVERY_SESSION_KEY = "wardrobe-atlas:discovery-session:v1";
 const ATLAS_TERMINAL_DISCOVERY_STATUSES = new Set<AtlasDiscoveryStatus>(["succeeded", "failed", "blocked", "cancelled"]);
-const ATLAS_DISCOVERY_SOURCE_LABELS: Record<string, string> = { "zalando-ch": "Zalando CH", aliexpress: "AliExpress" };
+const ATLAS_DISCOVERY_SOURCE_LABELS: Record<string, string> = { "zalando-ch": "Zalando CH", "aboutyou-ch": "About You CH", aliexpress: "AliExpress" };
 
 const atlasSeedItems: AtlasItem[] = [
   { id: "demo_worker", brand: "Selected", name: "Veste worker raccourcie", price: 129, currency: "CHF", color: "Tabac", category: "Vestes", fit: "Courte", score: 94, x: 6, y: 8, crop: "4% 6%", images: [], kind: "shop", decision: "saved", source: "demo", materials: ["Coton"], sizes: ["S", "M", "L"], tags: [], sizeAvailabilityKnown: true, available: true, stockStatus: "in_stock", sizesCheckedAt: ATLAS_DEMO_FRESH_AT },
@@ -1516,6 +1517,7 @@ export default function Home() {
     if (sourceFilter === "reference" && item.kind !== "reference") return false;
     if (sourceFilter === "owned" && item.kind !== "owned") return false;
     if (sourceFilter === "zalando" && (item.kind !== "shop" || item.source !== "zalando-ch")) return false;
+    if (sourceFilter === "aboutyou" && (item.kind !== "shop" || item.source !== "aboutyou-ch")) return false;
     if (sourceFilter === "aliexpress" && (item.kind !== "shop" || item.source !== "aliexpress")) return false;
     if (priceFilter !== "all") {
       if (item.price === null) return false;
@@ -2096,6 +2098,7 @@ export default function Home() {
     const effectiveMinPrice = requestedMin === undefined ? presetRange.min : Math.max(requestedMin, presetRange.min ?? 0);
     const effectiveMaxPrice = requestedMax === undefined ? presetRange.max : Math.min(requestedMax, presetRange.max ?? Number.MAX_SAFE_INTEGER);
     const constrainedSources = sourceFilter === "zalando" ? ["zalando-ch"]
+      : sourceFilter === "aboutyou" ? ["aboutyou-ch"]
       : sourceFilter === "aliexpress" ? ["aliexpress"]
       : sourceFilter === "owned" ? [...new Set(visibleCatalog.filter((item) => item.kind === "owned").map((item) => item.source))]
         : sourceFilter === "reference" ? [...new Set(visibleCatalog.filter((item) => item.kind === "reference").map((item) => item.source))]
@@ -2519,7 +2522,7 @@ export default function Home() {
 
         <div className="filterBar atlasFilterBar">
           <label className="quickFilter"><small>Catégorie</small><select value={activeFilter} onChange={(event) => setActiveFilter(event.target.value)}>{atlasCategories.map((filter) => <option value={filter} key={filter}>{filter} ({categoryCounts[filter] ?? 0})</option>)}</select></label>
-          <label className="quickFilter"><small>Source</small><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">Toutes</option><option value="shop">Tous shops</option><option value="zalando">Zalando</option><option value="aliexpress">AliExpress</option><option value="owned">Dressing</option><option value="reference">Références</option></select></label>
+          <label className="quickFilter"><small>Source</small><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">Toutes</option><option value="shop">Tous shops</option><option value="zalando">Zalando</option><option value="aboutyou">About You</option><option value="aliexpress">AliExpress</option><option value="owned">Dressing</option><option value="reference">Références</option></select></label>
           <label className="quickFilter"><small>Prix</small><select value={priceFilter} onChange={(event) => setPriceFilter(event.target.value)}><option value="all">Tous</option><option value="under50">&lt; 50</option><option value="50to100">50–100</option><option value="100to180">100–180</option><option value="over180">&gt; 180</option></select></label>
           <label className="quickFilter"><small>Coupe</small><select value={fitFilter} onChange={(event) => setFitFilter(event.target.value)}><option value="all">Toutes</option><option value="large">Large</option><option value="courte">Courte</option><option value="court">Court</option><option value="droite">Droite</option><option value="relax">Relax</option><option value="unknown">Inconnue</option></select></label>
           <label className="quickFilter"><small>Matière</small><select value={materialFilter} onChange={(event) => setMaterialFilter(event.target.value)}><option value="all">Toutes</option><option value="knit">Maille/laine</option><option value="linen">Lin</option><option value="cotton">Coton</option><option value="leather">Cuir</option><option value="denim">Denim</option></select></label>
@@ -2557,7 +2560,7 @@ export default function Home() {
               <button className="attachButton" type="button" onClick={() => atlasImageInputRef.current?.click()} aria-label="Ajouter des images" title="Ajouter ou coller un mood board">＋ img</button>
               <select className="reasoningSelect" value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as "low" | "medium")} aria-label="Niveau de réflexion Luna"><option value="low">Luna low</option><option value="medium">Luna medium</option></select>
               <button type="button" className="filterButton" onClick={() => void askAtlasCodex()}>Filtrer</button>
-              <button type="button" className="discoverButton" disabled={discoveryBusy || !aiPrompt.trim()} aria-busy={discoveryBusy} onClick={() => void startAtlasDiscovery()} title="Planifier une recherche locale · Zalando s’ouvre dans un Chrome visible, AliExpress reste en arrière-plan">{discoveryBusy ? "Trouve…" : "Trouver"}</button>
+              <button type="button" className="discoverButton" disabled={discoveryBusy || !aiPrompt.trim()} aria-busy={discoveryBusy} onClick={() => void startAtlasDiscovery()} title="Planifier une recherche locale · Zalando, About You et AliExpress, sans login ni contournement">{discoveryBusy ? "Trouve…" : "Trouver"}</button>
               <button type="button" className="visionButton" title="Vision 1×1 ou Planche + détail" disabled={visualBusy} onClick={() => void askAtlasVision()}>{visualBusy ? "Analyse…" : "Vision"}</button>
             </label>
             {(promptImages.length > 0 || aiStatus) && (

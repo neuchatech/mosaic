@@ -382,11 +382,13 @@ button { color: inherit; font: inherit; }
 .atlasBoardPanel .productCard.decision-rejected:hover { filter: saturate(.6) brightness(.9); }
 .atlasBoardPanel .productCard.decision-saved { outline: 2px solid #c94d44; outline-offset: -2px; }
 .atlasBoardPanel .productCard[data-source="zalando-ch"]::after,
+.atlasBoardPanel .productCard[data-source="aboutyou-ch"]::after,
 .atlasBoardPanel .productCard[data-source="aliexpress"]::after {
   content: ""; position: absolute; z-index: 6; right: 0; bottom: 0; left: 0; height: 3px;
   pointer-events: none;
 }
 .atlasBoardPanel .productCard[data-source="zalando-ch"]::after { background: #e66f42; }
+.atlasBoardPanel .productCard[data-source="aboutyou-ch"]::after { background: #3195a6; }
 .atlasBoardPanel .productCard[data-source="aliexpress"]::after { background: #7254a2; }
 
 .cardActions {

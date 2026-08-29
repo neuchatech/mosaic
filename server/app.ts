@@ -81,7 +81,7 @@ function outfitView(board: ReturnType<CatalogRepository["saveOutfitBoard"]>) {
 }
 
 function planSearchUsesGarmentSizes(search: { source: string; category: string; query: string }): boolean {
-  if (search.source !== "zalando-ch") return false;
+  if (search.source !== "zalando-ch" && search.source !== "aboutyou-ch") return false;
   return !/access|chauss|shoe|sneaker|boot|collier|necklace|jewel|bijou|bonnet|beanie|casquette|sac|bag|ceinture|belt|écharpe|scarf|lunette/i
     .test(`${search.category} ${search.query}`);
 }
@@ -106,8 +106,9 @@ function createDiscoveryService(
       const allProducts = repository.listProducts({ limit: 10_000 });
       repository.replaceCoordinates(projectCompactCached(allProducts));
       if (!context.intent.sizes?.length) return;
-      for (let offset = 0; offset < products.length; offset += 120) {
-        const targets = products.slice(offset, offset + 120).map((product) => ({
+      const needsDetail = products.filter((product) => product.attributes.sizeAvailabilityKnown !== true);
+      for (let offset = 0; offset < needsDetail.length; offset += 120) {
+        const targets = needsDetail.slice(offset, offset + 120).map((product) => ({
           productId: product.id,
           url: product.url,
         }));

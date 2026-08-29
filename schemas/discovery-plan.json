@@ -17,7 +17,7 @@
         "additionalProperties": false,
         "required": ["source", "query", "category", "minPrice", "maxPrice", "maxItems", "reason"],
         "properties": {
-          "source": { "enum": ["zalando-ch", "aliexpress"] },
+          "source": { "enum": ["zalando-ch", "aboutyou-ch", "aliexpress"] },
           "query": { "type": "string" },
           "category": { "type": "string" },
           "minPrice": { "type": "number", "minimum": 0 },

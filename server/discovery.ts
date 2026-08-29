@@ -104,7 +104,7 @@ function looksLikeDiscoverySnapshot(value: unknown): value is DiscoveryJobSnapsh
   const statuses: DiscoveryStatus[] = ["queued", "running", "succeeded", "failed", "blocked", "cancelled"];
   return typeof candidate.id === "string"
     && SAFE_JOB_ID.test(candidate.id)
-    && (candidate.source === "zalando-ch" || candidate.source === "aliexpress")
+    && (candidate.source === "zalando-ch" || candidate.source === "aboutyou-ch" || candidate.source === "aliexpress")
     && Boolean(candidate.intent && typeof candidate.intent === "object")
     && Boolean(candidate.status && statuses.includes(candidate.status))
     && Array.isArray(candidate.items)
@@ -323,6 +323,33 @@ function isInPriceRange(product: RawProduct, intent: DiscoveryIntent): boolean {
   return intent.maxPrice === undefined || product.price <= intent.maxPrice;
 }
 
+function isInRequestedSizeRange(
+  product: RawProduct,
+  intent: DiscoveryIntent,
+  target: DiscoveryListingTarget,
+): boolean {
+  const requested = intent.sizes?.map((size) => size.trim().toUpperCase()).filter(Boolean) ?? [];
+  if (!requested.length || target.appliedFilters.sizes !== "post_fetch") return true;
+  if (product.attributes?.sizeAvailabilityKnown !== true || product.stockStatus !== "in_stock") return false;
+  const actual = new Set((product.sizes ?? []).map((size) => size.trim().toUpperCase()));
+  return (intent.sizeMode ?? "any") === "all"
+    ? requested.every((size) => actual.has(size))
+    : requested.some((size) => actual.has(size));
+}
+
+function isRelevantToIntent(product: RawProduct, intent: DiscoveryIntent): boolean {
+  if (intent.source !== "aliexpress") return true;
+  const requested = `${intent.category ?? ""} ${intent.query ?? ""}`.toLocaleLowerCase();
+  const candidate = `${product.name} ${product.description ?? ""}`.toLocaleLowerCase();
+  if (/collier|necklace|pendentif|pendant|halskette|\bkette\b|anhänger|jewel|bijou/.test(requested)) {
+    return /collier|necklace|pendentif|pendant|halskette|\bkette\b|anhänger|amulet|médaillon|medallion/.test(candidate);
+  }
+  if (/bonnet|beanie|mütze|headwear|chapeau|\bhat\b|casquette|\bcap\b/.test(requested)) {
+    return /bonnet|beanie|mütze|strickmütze|wollmütze|sturmhaube|balaclava|chapeau|\bhat\b|\bhut\b|casquette|\bcap\b|\bkappe\b/.test(candidate);
+  }
+  return true;
+}
+
 function resultKey(source: DiscoveryIntent["source"], product: RawProduct): string | null {
   const adapter = discoveryAdapterFor(source);
   if (product.sourceId?.trim()) return `${source}:id:${product.sourceId.trim()}`;
@@ -359,30 +386,34 @@ function normalizeListingObservation(
     currency = "CHF";
   }
   const requestedSizes = intent.sizes ?? [];
+  const reliableListingSizes = raw.attributes?.sizeAvailabilityKnown === true
+    && Boolean(raw.sizesCheckedAt)
+    && (raw.stockStatus === "in_stock" || raw.stockStatus === "out_of_stock");
   return {
     ...raw,
     url: url.href,
     name: raw.name.trim(),
+    category: raw.category ?? intent.category,
     price,
     currency: currency ?? "CHF",
-    rawSizes: [],
-    sizes: [],
-    stockStatus: "unknown",
-    stockCheckedAt: null,
-    sizesCheckedAt: null,
+    rawSizes: reliableListingSizes ? raw.rawSizes ?? raw.sizes ?? [] : [],
+    sizes: reliableListingSizes ? raw.sizes ?? [] : [],
+    stockStatus: reliableListingSizes ? raw.stockStatus : "unknown",
+    stockCheckedAt: reliableListingSizes ? raw.stockCheckedAt ?? observedAt : null,
+    sizesCheckedAt: reliableListingSizes ? raw.sizesCheckedAt ?? observedAt : null,
     ...(price !== null && price !== undefined && Number.isFinite(price)
       ? { priceCheckedAt: observedAt }
       : { priceCheckedAt: null }),
     attributes: {
       ...raw.attributes,
       discoveryOnly: true,
-      sizeAvailabilityKnown: false,
+      sizeAvailabilityKnown: reliableListingSizes,
       requestedSizes,
       requestedSizeMode: intent.sizeMode ?? "any",
       discoveryFilterApplications: appliedFilterAttributes(target.appliedFilters),
       ...(target.matchedSizeIntent ? { listingMatchedSizeIntents: [target.matchedSizeIntent] } : {}),
     },
-    available: undefined,
+    available: reliableListingSizes ? raw.stockStatus === "in_stock" : undefined,
   };
 }
 
@@ -713,6 +744,14 @@ export class DiscoveryService {
             item.filtered += 1;
             continue;
           }
+          if (!isInRequestedSizeRange(observed, job.intent, item)) {
+            item.filtered += 1;
+            continue;
+          }
+          if (!isRelevantToIntent(observed, job.intent)) {
+            item.filtered += 1;
+            continue;
+          }
           const key = resultKey(job.source, observed);
           if (!key) {
             item.invalid += 1;
@@ -931,7 +970,9 @@ export class PlaywrightDiscoveryFetcher implements DiscoveryFetcher {
 
       const selector = request.source === "zalando-ch"
         ? 'article a[href*=".html"]'
-        : 'a[href*="/item/"][href*=".html"]';
+        : request.source === "aboutyou-ch"
+          ? 'a[href*="/p/"]'
+          : 'a[href*="/item/"][href*=".html"]';
       await page.locator(selector).first().waitFor({ state: "attached", timeout: 15_000 }).catch(() => undefined);
       for (let index = 0; index < this.maxScrolls; index += 1) {
         if (context.signal.aborted) throw new DiscoveryCancelledError("Discovery cancelled.");

@@ -7,7 +7,7 @@ import { runCodexStructured } from "./codex-bridge";
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const discoverySearchSchema = z.object({
-  source: z.enum(["zalando-ch", "aliexpress"]),
+  source: z.enum(["zalando-ch", "aboutyou-ch", "aliexpress"]),
   query: z.string().trim().min(1).max(180),
   category: z.string().trim().min(1).max(80),
   minPrice: z.number().min(0).max(10_000),
@@ -49,11 +49,22 @@ const aliExpressFallbacks: GeneratedDiscoveryPlan["searches"] = [
   },
 ];
 
+const aboutYouFallbacks: GeneratedDiscoveryPlan["searches"] = [
+  { source: "aboutyou-ch", query: "short workwear and bomber jackets", category: "Vestes", minPrice: 0, maxPrice: 220, maxItems: 30, reason: "Vestes homme courtes, structurées et faciles à superposer." },
+  { source: "aboutyou-ch", query: "wide relaxed pleated trousers", category: "Pantalons", minPrice: 0, maxPrice: 170, maxItems: 30, reason: "Pantalons homme larges ou relax pour structurer les silhouettes." },
+  { source: "aboutyou-ch", query: "textured cardigans and knitwear", category: "Mailles", minPrice: 0, maxPrice: 180, maxItems: 30, reason: "Cardigans et mailles texturées dans la direction du moodboard." },
+  { source: "aboutyou-ch", query: "relaxed shirts overshirts", category: "Chemises", minPrice: 0, maxPrice: 150, maxItems: 30, reason: "Chemises et surchemises homme pour le layering." },
+  { source: "aboutyou-ch", query: "heavyweight plain layering t-shirts", category: "T-shirts", minPrice: 0, maxPrice: 90, maxItems: 30, reason: "Bases homme sobres et faciles à superposer." },
+  { source: "aboutyou-ch", query: "retro sneakers loafers boots", category: "Chaussures", minPrice: 0, maxPrice: 220, maxItems: 30, reason: "Chaussures sobres et rétro pour compléter les silhouettes." },
+  { source: "aboutyou-ch", query: "men hats bags scarves", category: "Accessoires", minPrice: 0, maxPrice: 140, maxItems: 30, reason: "Accessoires homme faciles à combiner, dont bonnets et sacs." },
+];
+
 function ensureSourceMinimum(
   searches: GeneratedDiscoveryPlan["searches"],
   source: GeneratedDiscoveryPlan["searches"][number]["source"],
   minimum: number,
   fallbacks: GeneratedDiscoveryPlan["searches"],
+  protectedSources: ReadonlySet<GeneratedDiscoveryPlan["searches"][number]["source"]> = new Set(),
 ) {
   const result = searches.map((search) => ({ ...search }));
   let sourceCount = result.filter((search) => search.source === source).length;
@@ -62,7 +73,9 @@ function ensureSourceMinimum(
     const fallback = { ...fallbacks[fallbackIndex++]! };
     if (result.length < maximumSearches) result.push(fallback);
     else {
-      const replacement = result.findLastIndex((search) => search.source !== source);
+      const replacement = result.findLastIndex((search) => (
+        search.source !== source && !protectedSources.has(search.source)
+      ));
       if (replacement < 0) break;
       result[replacement] = fallback;
     }
@@ -97,8 +110,31 @@ function rebalanceSearchCapacity(searches: GeneratedDiscoveryPlan["searches"], r
 /** Enforce the source mix and target count promised by the UI. */
 export function finalizeDiscoveryPlan(generated: GeneratedDiscoveryPlan, userPrompt: string) {
   let searches = generated.searches.map((search) => ({ ...search }));
-  if (/ali\s*express/i.test(userPrompt)) {
-    searches = ensureSourceMinimum(searches, "aliexpress", 2, aliExpressFallbacks);
+  const aboutYouOnly = /(?:uniquement|seulement|exclusivement)\s+(?:sur\s+)?about\s*you|about\s*you\s+(?:uniquement|seulement|exclusivement)/i.test(userPrompt);
+  const wantsAboutYou = /about\s*you/i.test(userPrompt);
+  const wantsAliExpress = /ali\s*express/i.test(userPrompt);
+  if (aboutYouOnly) {
+    searches = searches.filter((search) => search.source === "aboutyou-ch");
+    searches = ensureSourceMinimum(searches, "aboutyou-ch", 7, aboutYouFallbacks);
+  } else {
+    if (wantsAboutYou) {
+      searches = ensureSourceMinimum(
+        searches,
+        "aboutyou-ch",
+        5,
+        aboutYouFallbacks,
+        wantsAliExpress ? new Set(["aliexpress"]) : new Set(),
+      );
+    }
+    if (wantsAliExpress) {
+      searches = ensureSourceMinimum(
+        searches,
+        "aliexpress",
+        2,
+        aliExpressFallbacks,
+        wantsAboutYou ? new Set(["aboutyou-ch"]) : new Set(),
+      );
+    }
   }
   const balanced = rebalanceSearchCapacity(searches, generated.targetCount);
   return { ...generated, ...balanced };
@@ -123,11 +159,11 @@ export async function createDiscoveryPlanWithCodex(userPrompt: string): Promise<
     "Return only the object required by the supplied output schema.",
     "The plan is executed later by allowlisted local Playwright shop adapters. Do not browse, call tools, provide URLs, automate login, mention checkout, or suggest CAPTCHA/anti-bot bypasses.",
     "Each search query must be a concise retailer search phrase, not a natural-language paragraph.",
-    "Allowed sources: zalando-ch for clothing, footwear and accessories; aliexpress mainly for inexpensive accessories or jewelry unless the user explicitly requests more.",
+    "Allowed sources: zalando-ch for broad fashion discovery; aboutyou-ch for Swiss men's clothing, footwear and accessories with exact listing sizes; aliexpress mainly for inexpensive accessories or jewelry unless the user explicitly requests more.",
     "Use canonical French categories when possible: Vestes, Pantalons, Mailles, Chemises, T-shirts, Chaussures, Accessoires.",
     "For garments, the executor will enforce availability in M OR L. Do not put sizes in the query. Accessories such as necklaces and hats can ignore garment sizes.",
     "Keep the plan diverse and directly relevant. Split distinct categories or style directions into separate searches. Avoid near-duplicate searches.",
-    "If the user explicitly names both Zalando and AliExpress, include at least two AliExpress accessory searches and at least two Zalando searches.",
+    "If the user explicitly names About You, allocate at least five searches to aboutyou-ch across distinct categories. If the user names AliExpress, include at least two AliExpress accessory searches.",
     "The sum of maxItems across searches must equal targetCount. Use up to 10 searches when needed.",
     "Use minPrice=0 or maxPrice=0 when the user did not specify that bound. Never exceed 60 items per search or 300 items total.",
     `User request: ${userPrompt}`,

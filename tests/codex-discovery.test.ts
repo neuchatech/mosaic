@@ -24,6 +24,28 @@ test("explicit AliExpress requests survive a Zalando-only generated plan", () =>
   assert.equal(final.targetCount, 180);
 });
 
+test("explicit multi-shop requests reserve a majority of size-aware About You searches", () => {
+  const generated = codexDiscoveryPlanSchema.parse({
+    name: "Multi-shop plan",
+    description: "Generated plan",
+    targetCount: 240,
+    searches: Array.from({ length: 8 }, (_, index) => ({
+      source: "zalando-ch",
+      query: `zalando search ${index}`,
+      category: index % 2 ? "Vestes" : "Pantalons",
+      minPrice: 0,
+      maxPrice: 0,
+      maxItems: 20,
+      reason: "Relevant clothing search.",
+    })),
+  });
+  const final = finalizeDiscoveryPlan(generated, "240 articles homme sur Zalando, About You et AliExpress");
+  assert.equal(final.searches.length, 10);
+  assert.equal(final.searches.filter((search) => search.source === "aboutyou-ch").length, 5);
+  assert.equal(final.searches.filter((search) => search.source === "aliexpress").length, 2);
+  assert.equal(final.searches.reduce((sum, search) => sum + search.maxItems, 0), 240);
+});
+
 test("displayed target never exceeds executable search capacity", () => {
   const generated = codexDiscoveryPlanSchema.parse({
     name: "Small plan",

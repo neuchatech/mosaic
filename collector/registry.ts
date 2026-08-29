@@ -1,9 +1,10 @@
 import { aliExpressAdapter } from "./adapters/aliexpress";
+import { aboutYouAdapter } from "./adapters/aboutyou";
 import { genericJsonLdAdapter } from "./adapters/generic-jsonld";
 import { zalandoAdapter } from "./adapters/zalando";
 import type { DiscoverySource, ShopAdapter } from "./types";
 
-const adapters: ShopAdapter[] = [zalandoAdapter, aliExpressAdapter];
+const adapters: ShopAdapter[] = [zalandoAdapter, aboutYouAdapter, aliExpressAdapter];
 
 export function adapterFor(url: URL, allowGeneric = false): ShopAdapter {
   const adapter = adapters.find((candidate) => candidate.matches(url));

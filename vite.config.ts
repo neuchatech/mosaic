@@ -44,9 +44,12 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    server: {
+      ...(isCodexSeatbeltSandbox ? { watch: { useFsEvents: false, usePolling: true } } : {}),
+      // Keep the browser on one local origin. Some embedded browsers reject a
+      // second localhost port even though the API itself is healthy.
+      proxy: { "/api": { target: "http://127.0.0.1:8788", changeOrigin: false } },
+    },
     plugins: [
       vinext(),
       sites(),

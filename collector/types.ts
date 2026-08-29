@@ -30,7 +30,7 @@ export type RawProduct = {
   attributes?: Product["attributes"];
 };
 
-export type DiscoverySource = "zalando-ch" | "aliexpress";
+export type DiscoverySource = "zalando-ch" | "aboutyou-ch" | "aliexpress";
 export type DiscoverySizeMode = "any" | "all";
 
 /**
