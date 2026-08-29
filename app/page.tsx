@@ -1570,7 +1570,7 @@ export default function Home() {
   const sizeFacetCatalog = useMemo(() => catalogBeforeSize.filter((item) => activeFilter === "Tout" || item.category === activeFilter), [activeFilter, catalogBeforeSize]);
   const knownSizeCount = useMemo(() => sizeFacetCatalog.filter((item) => item.kind === "shop" && item.decision !== "owned"
     && item.sizeAvailabilityKnown && item.stockStatus === "in_stock" && !atlasIsStale(item.sizesCheckedAt)).length, [sizeFacetCatalog]);
-  const uncheckedGarmentItems = useMemo(() => sizeFacetCatalog.filter((item) => item.kind === "shop" && item.decision !== "owned"
+  const uncheckedGarmentItems = useMemo(() => sizeFacetCatalog.filter((item) => item.kind === "shop" && item.source === "zalando-ch" && item.decision !== "owned" && item.decision !== "rejected"
     && ["Vestes", "Pantalons", "Mailles", "Chemises", "T-shirts"].includes(item.category)
     && (!item.sizeAvailabilityKnown || atlasIsStale(item.sizesCheckedAt))), [sizeFacetCatalog]);
   const sizeCounts = useMemo(() => Object.fromEntries(sizeOptions.map((size) => [size, sizeFacetCatalog.filter((item) => atlasHasSize(item, size)).length])), [sizeFacetCatalog, sizeOptions]);
@@ -2297,13 +2297,13 @@ export default function Home() {
   }
 
   async function startAtlasUnknownSizeRefresh() {
-    setToast("Préparation de 120 fiches M/L…");
+    setToast("Préparation des tailles Zalando manquantes…");
     try {
       const response = await fetch(`${ATLAS_API}/acquisition/jobs/unknown-sizes`, { method: "POST" });
       if (!response.ok) throw new Error(await response.text() || "queue unavailable");
       await monitorAtlasRefresh(await response.json() as AtlasAcquisitionJob);
     } catch (error) {
-      setToast(`Vérification M/L indisponible — ${error instanceof Error ? error.message : "réessaie plus tard"}`);
+      setToast(`Vérification Zalando indisponible — ${error instanceof Error ? error.message : "réessaie plus tard"}`);
     }
   }
 
@@ -2532,10 +2532,17 @@ export default function Home() {
               <div className="sizeFilterHeader"><strong>Disponibilité exacte</strong><span>{knownSizeCount} fiches fraîches</span></div>
               <div className="sizeChoiceGrid">{sizeOptions.map((size) => <button type="button" key={size} className={selectedSizes.includes(size) ? "active" : ""} aria-pressed={selectedSizes.includes(size)} onClick={() => toggleAtlasSize(size)}><span>{size}</span><b>{sizeCounts[size] ?? 0}</b></button>)}</div>
               <div className="sizeFilterActions"><button type="button" onClick={() => setSelectedSizes([])}>Toutes</button><button type="button" onClick={() => setSelectedSizes(["M", "L"])}>M ou L</button></div>
-              {uncheckedGarmentItems.length > 0 && <button type="button" className="sizeRefreshButton" disabled={Boolean(refreshJob && !(refreshJob.terminal ?? ATLAS_TERMINAL_REFRESH_STATUSES.includes(refreshJob.status)))} onClick={() => void startAtlasUnknownSizeRefresh()}>↻ Vérifier M/L · {Math.min(120, uncheckedGarmentItems.length)}/{uncheckedGarmentItems.length}</button>}
               <p>OU entre les tailles · stock connu · vérifié sous 48 h.</p>
             </div>
           </details>
+          {uncheckedGarmentItems.length > 0 && <button
+            type="button"
+            data-testid="refresh-zalando-sizes"
+            className="sizeRefreshButton inlineSizeRefresh"
+            disabled={Boolean(refreshJob && !(refreshJob.terminal ?? ATLAS_TERMINAL_REFRESH_STATUSES.includes(refreshJob.status)))}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => void startAtlasUnknownSizeRefresh()}
+          >↻ Tailles Zalando · {uncheckedGarmentItems.length}</button>}
           <details className="advancedFilters">
             <summary aria-label={`${advancedFilterCount} filtres avancés actifs`}><span>＋ filtres</span>{advancedFilterCount > 0 && <b>{advancedFilterCount}</b>}</summary>
             <div className="filterPopover">

@@ -277,6 +277,10 @@ button { color: inherit; font: inherit; }
   cursor: pointer; font-size: 8px; font-weight: 700;
 }
 .sizeRefreshButton:disabled { cursor: wait; opacity: .55; }
+.atlasFilterBar .inlineSizeRefresh {
+  width: auto; min-width: 106px; height: 32px; flex: none; padding: 3px 7px;
+  white-space: nowrap;
+}
 .sizeFilterPopover p { margin: 0; color: #8c8479; font-size: 7px; line-height: 1.35; }
 .atlasFilterBar .imageModeButton { min-width: 76px; height: 31px; padding: 3px 6px; }
 .atlasFilterBar .imageModeButton strong { overflow: hidden; text-overflow: ellipsis; }

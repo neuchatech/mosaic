@@ -21,6 +21,15 @@ function cleanSizeLabel(value: string): string {
 
 export function canonicalizeZalandoSize(value: string): string | null {
   const cleaned = cleanSizeLabel(value);
+  const mapped = cleaned.match(/^(.+?)\s*\(([^()]+)\)$/);
+  if (mapped) {
+    const primary = canonicalizeZalandoSize(mapped[1]!);
+    const secondary = canonicalizeZalandoSize(mapped[2]!);
+    if (primary && LETTER_SIZE_PATTERN.test(primary)) return primary;
+    if (secondary && LETTER_SIZE_PATTERN.test(secondary)) return secondary;
+    if (primary && secondary) return `${primary} (${secondary})`;
+    return primary ?? secondary;
+  }
   const jeans = cleaned.match(JEANS_SIZE_PATTERN);
   if (jeans) return `W${jeans[1]}/L${jeans[2]}`;
   if (LETTER_SIZE_PATTERN.test(cleaned)) return cleaned.toUpperCase();
@@ -236,7 +245,9 @@ export function extractZalandoDetailHtml(
   const url = canonicalZalandoUrl(product.url, pageUrl) ?? canonicalZalandoUrl(pageUrl, pageUrl);
   const name = text(product.name);
   if (!sourceId || !url || !name) return null;
-  const sizeAvailabilityKnown = sizes.length > 0 || stockStatus === "out_of_stock";
+  // ProductGroup availability is authoritative even when Zalando exposes a
+  // retailer-specific mapped label such as "36 (29)" rather than S/M/L.
+  const sizeAvailabilityKnown = rawSizes.length > 0 || stockStatus === "out_of_stock";
   const policies = returnPolicyFields(product, allOffers);
   const materials = (Array.isArray(product.material) ? product.material : [product.material])
     .map(text)

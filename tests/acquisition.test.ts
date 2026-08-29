@@ -92,6 +92,8 @@ test("Zalando sizes stay exact and canonicalize jeans width/length", () => {
   assert.equal(canonicalizeZalandoSize("L"), "L");
   assert.equal(canonicalizeZalandoSize("XL"), "XL");
   assert.equal(canonicalizeZalandoSize("MxR"), "M");
+  assert.equal(canonicalizeZalandoSize("36 (29)"), "36 (29)");
+  assert.equal(canonicalizeZalandoSize("M (38)"), "M");
   assert.equal(canonicalizeZalandoSize("W 32 / L 34"), "W32/L34");
   assert.equal(canonicalizeZalandoSize("32/34"), "W32/L34");
   assert.deepEqual(

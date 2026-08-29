@@ -125,7 +125,7 @@ function createDiscoveryService(
 
 export function createApp(
   repository = new CatalogRepository(),
-  acquisition = new AcquisitionService(repository),
+  acquisition = new AcquisitionService(repository, { sameDomainDelayMs: 4_000 }),
   discovery = createDiscoveryService(repository, acquisition),
 ) {
   const app = new Hono();
@@ -425,7 +425,8 @@ export function createApp(
     const freshAfter = Date.now() - 48 * 60 * 60 * 1_000;
     const seenUrls = new Set<string>();
     const targets = repository.listProducts({ limit: 10_000 })
-      .filter((product) => product.kind === "shop" && product.decision !== "owned" && garmentCategories.has(product.category))
+      .filter((product) => product.kind === "shop" && product.source === "zalando-ch"
+        && product.decision !== "owned" && product.decision !== "rejected" && garmentCategories.has(product.category))
       .filter((product) => !product.sizesCheckedAt || Date.parse(product.sizesCheckedAt) < freshAfter)
       .sort((left, right) => {
         const leftPriority = left.decision === "saved" ? 0 : 1;
@@ -437,7 +438,7 @@ export function createApp(
         seenUrls.add(product.url);
         return [{ productId: product.id, url: product.url }];
       })
-      .slice(0, 120);
+      .slice(0, 1_000);
     if (!targets.length) return context.json({ error: "no garment needs a size refresh" }, 400);
     try { return context.json(acquisitionClientView(acquisition.start({ targets, source: "size-enrichment" })), 202); }
     catch (error) { return context.json({ error: error instanceof Error ? error.message : "size acquisition unavailable" }, 400); }
