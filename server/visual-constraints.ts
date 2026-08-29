@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Product } from "../src/domain/catalog";
 
 export const visualConstraintsSchema = z.object({
+  contextIds: z.array(z.string().trim().min(1)).max(12).optional(),
   size: z.string().trim().min(1).optional(),
   sizes: z.array(z.string().trim().min(1)).min(1).max(20).optional(),
   minPrice: z.number().nonnegative().optional(),

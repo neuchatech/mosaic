@@ -7,10 +7,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import Database from "better-sqlite3";
 import { createApp } from "../server/app";
+import { heuristicAssistantPlan } from "../server/codex-assistant";
 import { generateOutfits } from "../server/outfit-generator";
 import { catalogMediaPath, catalogMediaType } from "../server/media";
 import { projectCompactCached } from "../server/projection-cache";
 import { CatalogRepository } from "../server/repository";
+import { findSimilarProducts } from "../server/similarity";
 import { filterVisualCandidates } from "../server/visual-constraints";
 import { visualCodexArgs } from "../server/visual-selection";
 import { seedProducts } from "../src/catalog/seed";
@@ -117,6 +119,8 @@ test("scoped visual MCP does not expose global catalog enumeration tools", async
   assert.ok(names.has("get_visual_job_context"));
   assert.ok(!names.has("catalog_stats"));
   assert.ok(!names.has("search_products"));
+  assert.ok(!names.has("find_similar_products"));
+  assert.ok(!names.has("import_public_product_links"));
 });
 
 test("legacy reference uploads persist image data outside SQLite", async (t) => {
@@ -157,18 +161,22 @@ test("legacy reference uploads persist image data outside SQLite", async (t) => 
   assert.equal(invalid.status, 400);
 });
 
-test("a public allowlisted Product JSON-LD URL can create a catalog sheet", async (t) => {
+test("public Product JSON-LD URLs from a new shop can create catalog sheets", async (t) => {
   const db = new Database(":memory:");
   db.exec(readFileSync(resolve(process.cwd(), "server/schema.sql"), "utf8"));
   const repository = new CatalogRepository(db);
   const app = createApp(repository);
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response(`<!doctype html><script type="application/ld+json">{
-    "@context":"https://schema.org/","@type":"Product","sku":"ARKET-TEST-1",
-    "name":"Cotton Cardigan","brand":{"name":"ARKET"},"color":"Dark Green",
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    const suffix = url.includes("second") ? "2" : "1";
+    return new Response(`<!doctype html><script type="application/ld+json">{
+    "@context":"https://schema.org/","@type":"Product","sku":"TEST-${suffix}",
+    "name":"Cotton Cardigan ${suffix}","brand":{"name":"Independent Shop"},"color":"Dark Green",
     "image":["https://image.example.test/cardigan.jpg"],
     "offers":{"price":"129","priceCurrency":"CHF","availability":"https://schema.org/InStock"}
   }</script>`, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+  };
   t.after(() => {
     globalThis.fetch = originalFetch;
     db.close();
@@ -177,14 +185,28 @@ test("a public allowlisted Product JSON-LD URL can create a catalog sheet", asyn
   const response = await app.request("/api/products/import-url", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ url: "https://www.arket.com/en-ch/product/cotton-cardigan-test" }),
+    body: JSON.stringify({ url: "https://shop.example.com/products/first" }),
   });
   assert.equal(response.status, 201);
   const product = productSchema.parse(await response.json());
-  assert.equal(product.source, "generic-www-arket-com");
-  assert.equal(product.name, "Cotton Cardigan");
+  assert.equal(product.source, "generic-shop-example-com");
+  assert.equal(product.name, "Cotton Cardigan 1");
   assert.equal(product.price, 129);
   assert.equal(repository.getProduct(product.id)?.decision, "unseen");
+
+  const batch = await app.request("/api/products/import-urls", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ urls: [
+      "https://shop.example.com/products/first",
+      "https://shop.example.com/products/second",
+      "https://127.0.0.1/private-product",
+    ] }),
+  });
+  assert.equal(batch.status, 201);
+  const batchResult = await batch.json() as { products: Product[]; errors: Array<{ url: string; error: string }> };
+  assert.deepEqual(batchResult.products.map((item) => item.name), ["Cotton Cardigan 1", "Cotton Cardigan 2"]);
+  assert.equal(batchResult.errors.length, 1);
 
   const rejected = await app.request("/api/products/import-url", {
     method: "POST",
@@ -192,4 +214,33 @@ test("a public allowlisted Product JSON-LD URL can create a catalog sheet", asyn
     body: JSON.stringify({ url: "https://127.0.0.1/private-product" }),
   });
   assert.equal(rejected.status, 400);
+});
+
+test("assistant defaults can be replaced by explicit sizes and route catalog anchors to similarity", () => {
+  const plan = heuristicAssistantPlan({
+    prompt: "Trouve des alternatives similaires en tailles XL ou XXL",
+    imageCount: 0,
+    productIds: ["anchor"],
+    links: [],
+    defaults: { sizes: ["M", "L"], shops: ["zalando-ch"] },
+  });
+  assert.equal(plan.action, "similar");
+  assert.equal(plan.sizePolicy, "explicit");
+  assert.deepEqual(plan.effectiveSizes, ["XL", "XXL"]);
+});
+
+test("similar products use catalog coordinates when a CLIP vector is not cached", async (t) => {
+  const db = new Database(":memory:");
+  db.exec(readFileSync(resolve(process.cwd(), "server/schema.sql"), "utf8"));
+  const repository = new CatalogRepository(db);
+  t.after(() => db.close());
+  const products = [
+    productSchema.parse({ ...seedProducts[0], id: "anchor-local", sourceId: "anchor-local", x: .1, y: .1 }),
+    productSchema.parse({ ...seedProducts[1], id: "nearest-local", sourceId: "nearest-local", decision: "unseen", x: .12, y: .13 }),
+    productSchema.parse({ ...seedProducts[2], id: "far-local", sourceId: "far-local", decision: "unseen", x: .9, y: .9 }),
+  ];
+  repository.upsertProducts(products);
+  const similar = await findSimilarProducts({ productIds: ["anchor-local"], limit: 2 }, repository);
+  assert.deepEqual(similar.map((item) => item.id), ["nearest-local", "far-local"]);
+  assert.match(String(similar[0]?.attributes.selectionReason), /projection locale/);
 });

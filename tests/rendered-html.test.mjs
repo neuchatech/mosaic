@@ -19,8 +19,8 @@ test("server-renders the Wardrobe Atlas product surface", async () => {
   const html = await response.text();
   assert.match(html, /<title>Wardrobe Atlas<\/title>/i);
   assert.match(html, /Carte de style/);
-  assert.match(html, /Décris un filtre ou colle un mood board/);
-  assert.match(html, /Planche \+ détail/);
+  assert.match(html, /Demande n’importe quoi, colle des liens ou dépose des images/);
+  assert.match(html, /Envoyer/);
   assert.match(html, /PCA compacte/);
   assert.doesNotMatch(html, /codex-preview|Building your site|react-loading-skeleton/);
 });

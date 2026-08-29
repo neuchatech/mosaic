@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Wardrobe Atlas assistant plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["action", "title", "message", "query", "sizePolicy", "sizes", "shopPolicy", "shops", "pricePolicy", "minPrice", "maxPrice", "targetCount"],
+  "properties": {
+    "action": { "enum": ["filter", "similar", "visual", "discover", "import_links", "outfit", "clarify"] },
+    "title": { "type": "string" },
+    "message": { "type": "string" },
+    "query": { "type": "string" },
+    "sizePolicy": { "enum": ["default", "explicit", "all"] },
+    "sizes": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+    "shopPolicy": { "enum": ["default", "explicit", "all"] },
+    "shops": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+    "pricePolicy": { "enum": ["default", "explicit", "all"] },
+    "minPrice": { "type": "number", "minimum": 0, "maximum": 10000 },
+    "maxPrice": { "type": "number", "minimum": 0, "maximum": 10000 },
+    "targetCount": { "type": "integer", "minimum": 1, "maximum": 300 }
+  }
+}

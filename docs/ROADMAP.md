@@ -57,6 +57,15 @@ Critère de sortie : l’app peut dire si un achat ajoute réellement des tenues
 
 Critère de sortie : plusieurs milliers de produits restent fluides et les parcours principaux sont robustes.
 
-## Prochaine extension
+## Sprint 7 — Composer IA unifié
 
-Le prochain adaptateur suisse reste un choix produit, pas une dette d’architecture : sélectionner le shop cible, enregistrer ses fixtures HTML, puis implémenter ses sélecteurs dans `collector/adapters/` sans modifier la file, le catalogue ou l’interface.
+- [x] Une seule entrée route automatiquement filtre, voisins CLIP, Vision, découverte, import de liens ou tenue.
+- [x] Tailles, boutiques et budget de l’interface deviennent des défauts que le texte peut remplacer.
+- [x] Plusieurs fiches publiques d’une nouvelle boutique peuvent être importées en une demande lorsqu’elles exposent `Product` JSON-LD.
+- [x] Les cartes peuvent servir de références du prompt par clic ou glisser-déposer.
+
+## Prochaine extension — Studio d’essayage
+
+Le plan détaillé se trouve dans [GENERATIVE_TRYON.md](./GENERATIVE_TRYON.md). Il prévoit un tiroir Studio, un historique latéral persistant et virtualisé, des variantes/comparaisons, un stockage média privé local et un consentement explicite avant tout fournisseur génératif distant.
+
+Le prochain adaptateur suisse reste un choix produit : sélectionner le shop cible, enregistrer ses fixtures HTML, puis implémenter ses sélecteurs dans `collector/adapters/` sans modifier la file, le catalogue ou l’interface.

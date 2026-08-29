@@ -142,17 +142,21 @@ export function finalizeDiscoveryPlan(generated: GeneratedDiscoveryPlan, userPro
 
 export type CodexDiscoveryPlan = z.infer<typeof codexDiscoveryPlanSchema> & {
   id: string;
-  sizes: ["M", "L"];
+  sizes: string[];
   sizeMode: "any";
   model: "gpt-5.6-luna";
 };
 
-export async function createDiscoveryPlanWithCodex(userPrompt: string): Promise<CodexDiscoveryPlan> {
+export async function createDiscoveryPlanWithCodex(
+  userPrompt: string,
+  options: { sizes?: string[] } = {},
+): Promise<CodexDiscoveryPlan> {
   if (!userPrompt.trim()) throw new Error("Discovery prompt is empty.");
   const id = crypto.randomUUID();
   const jobsRoot = resolve(projectRoot, "data/codex-jobs");
   const outputPath = resolve(jobsRoot, `${id}-discovery.json`);
   await mkdir(jobsRoot, { recursive: true });
+  const requestedSizes = options.sizes === undefined ? ["M", "L"] : options.sizes;
 
   const instruction = [
     "Create one bounded product-discovery plan for the private, local-first Wardrobe Atlas app.",
@@ -161,7 +165,9 @@ export async function createDiscoveryPlanWithCodex(userPrompt: string): Promise<
     "Each search query must be a concise retailer search phrase, not a natural-language paragraph.",
     "Allowed sources: zalando-ch for broad fashion discovery; aboutyou-ch for Swiss men's clothing, footwear and accessories with exact listing sizes; aliexpress mainly for inexpensive accessories or jewelry unless the user explicitly requests more.",
     "Use canonical French categories when possible: Vestes, Pantalons, Mailles, Chemises, T-shirts, Chaussures, Accessoires.",
-    "For garments, the executor will enforce availability in M OR L. Do not put sizes in the query. Accessories such as necklaces and hats can ignore garment sizes.",
+    requestedSizes.length
+      ? `For garments, the executor will enforce availability in ${requestedSizes.join(" OR ")}. Do not put sizes in the query. Accessories such as necklaces and hats can ignore garment sizes.`
+      : "The user explicitly removed garment-size constraints. Do not put sizes in the query.",
     "Keep the plan diverse and directly relevant. Split distinct categories or style directions into separate searches. Avoid near-duplicate searches.",
     "If the user explicitly names About You, allocate at least five searches to aboutyou-ch across distinct categories. If the user names AliExpress, include at least two AliExpress accessory searches.",
     "The sum of maxItems across searches must equal targetCount. Use up to 10 searches when needed.",
@@ -182,7 +188,8 @@ export async function createDiscoveryPlanWithCodex(userPrompt: string): Promise<
   return {
     ...generated,
     id,
-    sizes: ["M", "L"],
+    sizes: [...new Set(requestedSizes
+      .map((size) => size.trim().toLocaleUpperCase()).filter(Boolean))],
     sizeMode: "any",
     model: "gpt-5.6-luna",
   };

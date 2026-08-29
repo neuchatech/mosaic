@@ -5,20 +5,22 @@ import { z } from "zod";
 import { decisionSchema, filterSpecSchema, productPatchSchema, productSchema } from "../src/domain/catalog";
 import { stableProductId } from "../src/domain/ids";
 import { normalizeProduct } from "../collector/normalize";
-import { adapterFor } from "../collector/registry";
 import type { DiscoveryIntent, RawProduct } from "../collector/types";
 import { AcquisitionService, acquisitionClientView } from "./acquisition";
 import { catalogMediaPath, catalogMediaType, persistCatalogImages } from "./media";
 import { generateOutfits } from "./outfit-generator";
 import { projectCompactCached } from "./projection-cache";
-import { fetchPublicHtml } from "./public-html";
+import { importPublicProductUrls, isPublicShopHostname } from "./public-product-import";
 import { CatalogRepository } from "./repository";
 import { createFilterWithCodex } from "./codex-bridge";
 import { createDiscoveryPlanWithCodex } from "./codex-discovery";
+import { createAssistantPlanWithCodex } from "./codex-assistant";
 import { DiscoveryService, FileDiscoveryJobStore, PlaywrightDiscoveryFetcher } from "./discovery";
 import { getEmbeddingJob, startEmbeddingJob } from "./embedding-job";
 import { attachImageAspectRatios } from "./image-aspect-ratios";
 import { getVisualSelection, startVisualSelection } from "./visual-selection";
+import { findSimilarProducts } from "./similarity";
+import { visualConstraintsSchema } from "./visual-constraints";
 
 const catalogItemFieldsSchema = z.object({
   name: z.string().trim().min(1).max(160),
@@ -46,31 +48,34 @@ const publicProductUrlSchema = z.object({
   url: z.string().url().max(2_000),
 });
 
-const GENERIC_PRODUCT_HOSTS = [
-  "aboutyou.ch",
-  "arket.com",
-  "asos.com",
-  "bluetomato.com",
-  "breuninger.com",
-  "cos.com",
-  "farfetch.com",
-  "galaxus.ch",
-  "globus.ch",
-  "hm.com",
-  "mango.com",
-  "manor.ch",
-  "massimodutti.com",
-  "mrporter.com",
-  "pkz.ch",
-  "ssense.com",
-  "uniqlo.com",
-  "yoox.com",
-  "zalando.ch",
-  "zara.com",
-] as const;
+const assistantRequestSchema = z.object({
+  prompt: z.string().trim().max(8_000).default(""),
+  productIds: z.array(z.string().min(1)).max(12).default([]),
+  images: z.array(z.object({ name: z.string().max(180).optional(), dataUrl: z.string().min(1) })).max(6).default([]),
+  constraints: z.object({
+    sizes: z.array(z.string().trim().min(1).max(30)).max(20).optional(),
+    shops: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+    categories: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+    minPrice: z.number().nonnegative().optional(),
+    maxPrice: z.number().nonnegative().optional(),
+    includeRejected: z.boolean().optional(),
+  }).default({}),
+  analysisMode: z.enum(["sequential", "sheet"]).default("sequential"),
+  reasoningEffort: z.enum(["low", "medium"]).default("low"),
+});
 
-function allowedPublicProductHost(hostname: string): boolean {
-  return GENERIC_PRODUCT_HOSTS.some((host) => hostname === host || hostname.endsWith(`.${host}`));
+function assistantLinks(prompt: string): string[] {
+  return [...new Set((prompt.match(/https:\/\/[^\s<>"']+/gi) ?? [])
+    .map((value) => value.replace(/[),.;!?\]}]+$/g, "")))]
+    .slice(0, 12);
+}
+
+function assistantShopId(value: string): DiscoveryIntent["source"] | null {
+  const normalized = value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (normalized.includes("zalando")) return "zalando-ch";
+  if (normalized.includes("aboutyou")) return "aboutyou-ch";
+  if (normalized.includes("aliexpress")) return "aliexpress";
+  return null;
 }
 
 function outfitView(board: ReturnType<CatalogRepository["saveOutfitBoard"]>) {
@@ -184,38 +189,22 @@ export function createApp(
     const parsed = publicProductUrlSchema.safeParse(await context.req.json());
     if (!parsed.success) return context.json({ error: "invalid product URL", issues: parsed.error.issues }, 400);
     const requested = new URL(parsed.data.url);
-    if (requested.protocol !== "https:" || !allowedPublicProductHost(requested.hostname)) {
-      return context.json({
-        error: "shop host is not enabled for generic import",
-        supportedHosts: GENERIC_PRODUCT_HOSTS,
-      }, 400);
+    if (requested.protocol !== "https:" || !isPublicShopHostname(requested.hostname)) {
+      return context.json({ error: "Only public HTTPS shop pages can be imported." }, 400);
     }
-    try {
-      const response = await fetchPublicHtml(requested.href, {
-        signal: context.req.raw.signal,
-        allowedHost: allowedPublicProductHost,
-      });
-      const current = new URL(response.url);
-      if (!allowedPublicProductHost(current.hostname)) {
-        throw new Error(`Product page redirected to unsupported host ${current.hostname}.`);
-      }
-      if (response.status < 200 || response.status >= 300) {
-        throw new Error(`Product page returned HTTP ${response.status}.`);
-      }
-      if (!response.contentType.toLocaleLowerCase().includes("html")) {
-        throw new Error(`Product page returned ${response.contentType || "an unknown content type"}.`);
-      }
-      const adapter = adapterFor(current, true);
-      if (!adapter.extractDetailHtml) throw new Error("This shop needs a dedicated interactive reader.");
-      const raw = await adapter.extractDetailHtml(response.html, current.href);
-      if (!raw) throw new Error("No public Product JSON-LD was found on this page.");
-      const product = normalizeProduct(adapter.id, raw);
-      repository.upsertCollectedProducts([product]);
+    const result = await importPublicProductUrls([parsed.data.url], repository, context.req.raw.signal);
+    if (result.products.length) {
       repository.replaceCoordinates(projectCompactCached(repository.listProducts({ limit: 10_000 })));
-      return context.json(product, 201);
-    } catch (error) {
-      return context.json({ error: error instanceof Error ? error.message : "product import failed" }, 422);
+      return context.json(result.products[0], 201);
     }
+    return context.json({ error: result.errors[0]?.error ?? "product import failed" }, 422);
+  });
+  app.post("/api/products/import-urls", async (context) => {
+    const parsed = z.object({ urls: z.array(z.string().url().max(2_000)).min(1).max(12) }).safeParse(await context.req.json());
+    if (!parsed.success) return context.json({ error: "invalid product URLs", issues: parsed.error.issues }, 400);
+    const result = await importPublicProductUrls(parsed.data.urls, repository, context.req.raw.signal);
+    if (result.products.length) repository.replaceCoordinates(projectCompactCached(repository.listProducts({ limit: 10_000 })));
+    return context.json(result, result.products.length ? 201 : 422);
   });
   app.post("/api/query", async (context) => {
     const filter = filterSpecSchema.parse(await context.req.json());
@@ -510,6 +499,130 @@ export function createApp(
     views: repository.listViews(),
     outfits: repository.listOutfitBoards().map(outfitView),
   }));
+  app.post("/api/similar", async (context) => {
+    const body = z.object({
+      productIds: z.array(z.string().min(1)).min(1).max(12),
+      limit: z.number().int().min(1).max(100).default(30),
+      constraints: visualConstraintsSchema.optional(),
+    }).parse(await context.req.json());
+    const products = await findSimilarProducts(body, repository);
+    return context.json(await attachImageAspectRatios(projectCompactCached(products)));
+  });
+  app.post("/api/codex/ask", async (context) => {
+    const parsed = assistantRequestSchema.safeParse(await context.req.json());
+    if (!parsed.success) return context.json({ error: "invalid assistant request", issues: parsed.error.issues }, 400);
+    const body = parsed.data;
+    const links = assistantLinks(body.prompt);
+    const attachedProducts = body.productIds
+      .map((id) => repository.getProduct(id))
+      .filter(Boolean);
+    if (!body.prompt && !body.images.length && !attachedProducts.length) {
+      return context.json({ error: "prompt or attachments are required" }, 400);
+    }
+    try {
+      const plan = await createAssistantPlanWithCodex({
+        prompt: body.prompt,
+        imageCount: body.images.length,
+        productIds: attachedProducts.map((product) => product!.id),
+        links,
+        defaults: {
+          sizes: body.constraints.sizes ?? ["M", "L"],
+          shops: body.constraints.shops?.length ? body.constraints.shops : ["zalando-ch", "aboutyou-ch", "aliexpress"],
+          minPrice: body.constraints.minPrice,
+          maxPrice: body.constraints.maxPrice,
+        },
+      });
+      const imported = links.length
+        ? await importPublicProductUrls(links, repository, context.req.raw.signal)
+        : { products: [], errors: [] };
+      if (imported.products.length) repository.replaceCoordinates(projectCompactCached(repository.listProducts({ limit: 10_000 })));
+      const anchorIds = [...new Set([
+        ...attachedProducts.map((product) => product!.id),
+        ...imported.products.map((product) => product.id),
+      ])];
+      const sourceIds = [...new Set(plan.effectiveShops.map(assistantShopId).filter(Boolean))] as DiscoveryIntent["source"][];
+      const constraints = {
+        contextIds: anchorIds,
+        sizes: plan.effectiveSizes.length ? plan.effectiveSizes : undefined,
+        freshWithinHours: plan.effectiveSizes.length ? 48 : undefined,
+        sources: plan.shopPolicy === "all" ? undefined : sourceIds.length ? sourceIds : undefined,
+        categories: body.constraints.categories?.length ? body.constraints.categories : undefined,
+        minPrice: plan.effectiveMinPrice,
+        maxPrice: plan.effectiveMaxPrice,
+        includeRejected: body.constraints.includeRejected ?? false,
+      };
+      const base = { plan, imported: imported.products, importErrors: imported.errors };
+
+      if (plan.action === "import_links") {
+        return context.json({ ...base, action: plan.action, products: await attachImageAspectRatios(imported.products) }, imported.products.length ? 201 : 422);
+      }
+      if (plan.action === "similar") {
+        if (!anchorIds.length) return context.json({ ...base, action: "clarify", message: "Ajoute au moins un article de référence." }, 400);
+        const products = await findSimilarProducts({ productIds: anchorIds, limit: plan.targetCount, constraints }, repository);
+        return context.json({ ...base, action: plan.action, products: await attachImageAspectRatios(projectCompactCached(products)) });
+      }
+      if (plan.action === "visual") {
+        const job = await startVisualSelection({
+          prompt: plan.query || body.prompt || "Trouve des articles visuellement proches des références jointes.",
+          maxCandidates: Math.min(160, Math.max(36, plan.targetCount * 3)),
+          topN: Math.min(60, plan.targetCount),
+          threshold: .5,
+          analysisMode: body.analysisMode,
+          reasoningEffort: body.reasoningEffort,
+          constraints,
+          images: body.images,
+        }, repository);
+        return context.json({ ...base, action: plan.action, job }, 202);
+      }
+      if (plan.action === "discover") {
+        const discoveryPrompt = plan.query || body.prompt;
+        const discoveryPlan = await createDiscoveryPlanWithCodex(discoveryPrompt, { sizes: plan.effectiveSizes });
+        const allowedSources = plan.shopPolicy === "all" || !sourceIds.length ? null : new Set(sourceIds);
+        const searches = discoveryPlan.searches.filter((search) => !allowedSources || allowedSources.has(search.source));
+        if (!searches.length) {
+          return context.json({ ...base, action: "clarify", message: "Cette boutique est disponible par liens directs, mais pas encore comme recherche large." }, 400);
+        }
+        const intents: DiscoveryIntent[] = searches.map((search) => ({
+          source: search.source,
+          query: search.query,
+          category: search.category,
+          maxItems: search.maxItems,
+          sizeMode: discoveryPlan.sizeMode,
+          ...(planSearchUsesGarmentSizes(search) && plan.effectiveSizes.length ? { sizes: plan.effectiveSizes } : {}),
+          ...(plan.effectiveMinPrice !== undefined ? { minPrice: plan.effectiveMinPrice } : search.minPrice > 0 ? { minPrice: search.minPrice } : {}),
+          ...(plan.effectiveMaxPrice !== undefined ? { maxPrice: plan.effectiveMaxPrice } : search.maxPrice > 0 ? { maxPrice: search.maxPrice } : {}),
+        }));
+        const jobs = startDiscoveryIntents(intents);
+        return context.json({ ...base, action: plan.action, discoveryPlan: { ...discoveryPlan, searches }, jobs }, 202);
+      }
+      if (plan.action === "outfit") {
+        const anchor = anchorIds[0] ? repository.getProduct(anchorIds[0]) : null;
+        if (!anchor) return context.json({ ...base, action: "clarify", message: "Ajoute une pièce autour de laquelle composer la tenue." }, 400);
+        const generated = generateOutfits(anchor, repository.listProducts({ limit: 10_000 }), Math.min(3, plan.targetCount));
+        const boards = generated.map((outfit) => repository.saveOutfitBoard({
+          id: crypto.randomUUID(),
+          name: outfit.title,
+          description: `Compatibilité ${outfit.compatibilityScore}/100 · nouveauté ${outfit.noveltyScore}/100`,
+          metadata: { anchorProductId: outfit.anchorProductId, compatibilityScore: outfit.compatibilityScore, noveltyScore: outfit.noveltyScore, missingRoles: outfit.missingRoles },
+          items: outfit.items.map((item, position) => ({ productId: item.productId, role: item.role, position, notes: item.reason })),
+        }));
+        return context.json({ ...base, action: plan.action, boards: boards.map(outfitView) }, 201);
+      }
+      if (plan.action === "clarify") return context.json({ ...base, action: plan.action, message: plan.message });
+
+      const filterResult = await createFilterWithCodex(plan.query || body.prompt, repository);
+      const products = repository.listProducts({ filter: filterResult.filter, limit: filterResult.filter.limit });
+      return context.json({
+        ...base,
+        action: "filter",
+        filter: filterResult.filter,
+        products: await attachImageAspectRatios(projectCompactCached(products)),
+      });
+    } catch (error) {
+      console.error(error);
+      return context.json({ error: error instanceof Error ? error.message : "Codex assistant failed" }, 500);
+    }
+  });
   app.post("/api/codex/filter", async (context) => {
     const body = await context.req.json<{ prompt?: string }>();
     if (!body.prompt?.trim()) return context.json({ error: "prompt is required" }, 400);
@@ -521,20 +634,20 @@ export function createApp(
     }
   });
   app.post("/api/codex/discovery-plan", async (context) => {
-    const body = await context.req.json<{ prompt?: string }>();
+    const body = await context.req.json<{ prompt?: string; sizes?: string[] }>();
     if (!body.prompt?.trim()) return context.json({ error: "prompt is required" }, 400);
     try {
-      return context.json(await createDiscoveryPlanWithCodex(body.prompt), 201);
+      return context.json(await createDiscoveryPlanWithCodex(body.prompt, { sizes: body.sizes }), 201);
     } catch (error) {
       console.error(error);
       return context.json({ error: error instanceof Error ? error.message : "Codex discovery planning failed" }, 500);
     }
   });
   app.post("/api/codex/discover", async (context) => {
-    const body = await context.req.json<{ prompt?: string }>();
+    const body = await context.req.json<{ prompt?: string; constraints?: { sizes?: string[] } }>();
     if (!body.prompt?.trim()) return context.json({ error: "prompt is required" }, 400);
     try {
-      const plan = await createDiscoveryPlanWithCodex(body.prompt);
+      const plan = await createDiscoveryPlanWithCodex(body.prompt, { sizes: body.constraints?.sizes });
       const intents: DiscoveryIntent[] = plan.searches.map((search) => ({
         source: search.source,
         query: search.query,

@@ -8,13 +8,15 @@ import { compactProjection } from "../src/projection/compact";
 import { projectProducts } from "../src/projection/pca";
 import { projectCompactCached } from "../server/projection-cache";
 import { buildContactSheet, buildProductPreview } from "./contact-sheet";
+import { importPublicProductUrls } from "../server/public-product-import";
+import { findSimilarProducts } from "../server/similarity";
 
 const repository = new CatalogRepository();
 const scopedVisualJobId = process.env.WARDROBE_VISUAL_JOB_ID;
 const server = new McpServer(
   { name: "wardrobe-atlas", version: "0.1.0" },
   {
-    instructions: "Use Wardrobe Atlas to inspect, visually assess, filter, and annotate the user's private clothing catalog. Never trigger collection, login, checkout, CAPTCHA handling, or purchases. Prefer structured FilterSpec files over raw SQL. Reproject a filtered subset before presenting it. References are style anchors, not purchasable products.",
+    instructions: "Use Wardrobe Atlas to inspect, visually assess, filter, and annotate the user's private clothing catalog. You may import a bounded list of public product URLs explicitly supplied by the user. Never trigger broad collection, login, checkout, CAPTCHA handling, bypasses, or purchases. Prefer structured FilterSpec files over raw SQL. Reproject a filtered subset before presenting it. References are style anchors, not purchasable products.",
   },
 );
 
@@ -82,6 +84,31 @@ if (!scopedVisualJobId) {
     const products = repository.listProducts({ search: query, filter: parseFilter(filterJson), limit });
     const result = compact ? compactProjection(projectProducts(products)) : products;
     return textResult(result);
+  });
+
+  server.registerTool("find_similar_products", {
+    title: "Find visually similar products",
+    description: "Find existing shop products near one to twelve catalog anchors using cached CLIP embeddings, with PCA fallback.",
+    inputSchema: {
+      productIds: z.array(z.string().min(1)).min(1).max(12),
+      limit: z.number().int().min(1).max(100).default(30),
+    },
+    annotations: { readOnlyHint: true },
+  }, async ({ productIds, limit }) => textResult(await findSimilarProducts({ productIds, limit }, repository)));
+
+  server.registerTool("import_public_product_links", {
+    title: "Import public product links",
+    description: "Import up to twelve user-supplied public HTTPS product pages exposing Product JSON-LD. Never logs in or bypasses a block.",
+    inputSchema: { urls: z.array(z.string().url().max(2_000)).min(1).max(12) },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, async ({ urls }) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120_000);
+    try {
+      const result = await importPublicProductUrls(urls, repository, controller.signal);
+      if (result.products.length) repository.replaceCoordinates(projectCompactCached(repository.listProducts({ limit: 10_000 })));
+      return textResult(result);
+    } finally { clearTimeout(timeout); }
   });
 }
 

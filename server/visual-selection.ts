@@ -225,10 +225,11 @@ export async function startVisualSelection(input: {
   const threshold = Math.min(.95, Math.max(.05, input.threshold ?? .5));
   const id = crypto.randomUUID();
   const referenceImages = await persistReferenceImages(id, input.images ?? []);
-  const contextIds = repository.listProducts({ limit: 10_000 })
+  const requestedContextIds = constraints.contextIds?.filter((id) => repository.getProduct(id)) ?? [];
+  const contextIds = [...new Set([...requestedContextIds, ...repository.listProducts({ limit: 10_000 })
     .filter((product) => product.decision !== "rejected" && (product.kind !== "shop" || ["saved", "owned"].includes(product.decision)))
     .slice(0, 160)
-    .map((product) => product.id);
+    .map((product) => product.id)])].slice(0, 160);
   const job = repository.createVisualJob({
     id,
     prompt: input.prompt,

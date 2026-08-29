@@ -6,6 +6,7 @@
 import {
   type CSSProperties,
   type FormEvent,
+  type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   useCallback,
@@ -802,6 +803,19 @@ type AtlasVisualJob = {
 
 type AtlasPromptImage = { id: string; name: string; dataUrl: string };
 
+type AtlasAssistantResponse = {
+  action: "filter" | "similar" | "visual" | "discover" | "import_links" | "outfit" | "clarify";
+  plan?: { title?: string; message?: string; effectiveSizes?: string[]; effectiveShops?: string[]; effectiveMinPrice?: number; effectiveMaxPrice?: number };
+  products?: AtlasApiProduct[];
+  job?: AtlasVisualJob;
+  discoveryPlan?: AtlasDiscoveryPlan;
+  jobs?: AtlasDiscoveryJob[];
+  boards?: AtlasOutfitBoard[];
+  imported?: AtlasApiProduct[];
+  importErrors?: Array<{ url: string; error: string }>;
+  message?: string;
+};
+
 type AtlasSavedView = {
   id: string;
   name: string;
@@ -1337,10 +1351,12 @@ export default function Home() {
   const [catalogItems, setCatalogItems] = useState<AtlasItem[]>(atlasSeedItems);
   const [aiItems, setAiItems] = useState<AtlasItem[] | null>(null);
   const [catalogStatus, setCatalogStatus] = useState("démo locale");
-  const [visualBusy, setVisualBusy] = useState(false);
   const [visualMode, setVisualMode] = useState<"sequential" | "sheet">("sequential");
   const [reasoningEffort, setReasoningEffort] = useState<"low" | "medium">("low");
   const [promptImages, setPromptImages] = useState<AtlasPromptImage[]>([]);
+  const [promptProductIds, setPromptProductIds] = useState<string[]>([]);
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const [assistantDropActive, setAssistantDropActive] = useState(false);
   const [xAxis, setXAxis] = useState<AxisField>("pca");
   const [yAxis, setYAxis] = useState<AxisField>("pca");
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -1565,6 +1581,7 @@ export default function Home() {
     if (sourceFilter === "zalando" && (item.kind !== "shop" || item.source !== "zalando-ch")) return false;
     if (sourceFilter === "aboutyou" && (item.kind !== "shop" || item.source !== "aboutyou-ch")) return false;
     if (sourceFilter === "aliexpress" && (item.kind !== "shop" || item.source !== "aliexpress")) return false;
+    if (sourceFilter.startsWith("source:") && (item.kind !== "shop" || item.source !== sourceFilter.slice(7))) return false;
     if (priceFilter !== "all") {
       if (item.price === null) return false;
       if (priceFilter === "under50" && item.price >= 50) return false;
@@ -1661,6 +1678,9 @@ export default function Home() {
   }, [atlasView.height, atlasView.left, atlasView.top, atlasView.width, mode, products, renderLimit, spaceLayout.positions, zoom]);
   const categoryCounts = useMemo(() => Object.fromEntries(atlasCategories.map((filter) => [filter, filter === "Tout" ? quickFilteredCatalog.length : quickFilteredCatalog.filter((item) => item.category === filter).length])), [quickFilteredCatalog]);
   const compareItems = useMemo(() => [...compareIds].map((id) => catalogItems.find((item) => item.id === id) ?? visibleCatalog.find((item) => item.id === id)).filter(Boolean) as AtlasItem[], [catalogItems, compareIds, visibleCatalog]);
+  const promptProducts = useMemo(() => promptProductIds.map((id) => catalogItems.find((item) => item.id === id)).filter(Boolean) as AtlasItem[], [catalogItems, promptProductIds]);
+  const extraShopSources = useMemo(() => [...new Set(catalogItems.filter((item) => item.kind === "shop")
+    .map((item) => item.source).filter((source) => !["zalando-ch", "aboutyou-ch", "aliexpress"].includes(source)))].sort(), [catalogItems]);
   const outfitDraftItems = useMemo(() => [...outfitDraftIds].map((id) => catalogItems.find((item) => item.id === id)).filter(Boolean) as AtlasItem[], [catalogItems, outfitDraftIds]);
   const ownedItems = useMemo(() => catalogItems.filter((item) => item.kind === "owned" || item.decision === "owned"), [catalogItems]);
   const wardrobeGaps = useMemo(() => ["Vestes", "Pantalons", "Mailles", "Chemises", "Chaussures"].filter((category) => !ownedItems.some((item) => item.category === category)), [ownedItems]);
@@ -2131,24 +2151,29 @@ export default function Home() {
     if (event.key === "Enter" && item.url) window.open(item.url, "_blank", "noopener,noreferrer");
   }
 
-  async function askAtlasCodex() {
-    if (!aiPrompt.trim()) return;
-    setAiStatus("Codex Luna traduit la demande…");
-    try {
-      const response = await fetch(`${ATLAS_API}/codex/filter`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: aiPrompt }) });
-      if (!response.ok) throw new Error("bridge unavailable");
-      const result = await response.json() as { filter?: { name?: string } };
-      if (!result.filter) throw new Error("missing filter");
-      const queryResponse = await fetch(`${ATLAS_API}/query`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(result.filter) });
-      if (!queryResponse.ok) throw new Error("query failed");
-      const matches = await queryResponse.json() as AtlasApiProduct[];
-      setAiItems(atlasMergeItems(matches, catalogItems)); setScope("catalogue"); setActiveFilter("Tout");
-      setAiStatus(`« ${result.filter.name ?? "Codex"} » · ${matches.length} résultats`);
-    } catch { setAiStatus("Bridge local hors ligne — lance npm run dev"); }
+  function addAtlasProductToPrompt(item: AtlasItem) {
+    setPromptProductIds((current) => current.includes(item.id) ? current : [...current, item.id].slice(-8));
+    setAiStatus(`${item.name} ajouté comme référence au prochain prompt`);
   }
 
-  async function askAtlasVision() {
-    if ((!aiPrompt.trim() && !promptImages.length) || visualBusy) return;
+  async function monitorAtlasVisualJob(initialJob: AtlasVisualJob) {
+    let job = initialJob;
+    setAiItems([]);
+    while (job.status !== "complete" && job.status !== "error") {
+      setAiItems(atlasMergeItems(job.products, catalogItems)); setScope("catalogue"); setActiveFilter("Tout");
+      setAiStatus(`${job.message} · ${job.inspected}/${job.maxInspections} vues · ${job.selected} retenus`);
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const poll = await fetch(`${ATLAS_API}/codex/visual-jobs/${job.id}`);
+      if (!poll.ok) throw new Error("visual job lost");
+      job = await poll.json() as AtlasVisualJob;
+    }
+    if (job.status === "error") throw new Error(job.error ?? "visual selection failed");
+    setAiItems(atlasMergeItems(job.products, catalogItems));
+    setAiStatus(`${job.message} · score > ${job.threshold.toFixed(2)}`);
+  }
+
+  async function askAtlasAssistant() {
+    if ((!aiPrompt.trim() && !promptImages.length && !promptProductIds.length) || assistantBusy) return;
     const presetRange = priceFilter === "under50" ? { max: 49.99 }
       : priceFilter === "50to100" ? { min: 50, max: 100 }
         : priceFilter === "100to180" ? { min: 100, max: 180 }
@@ -2157,44 +2182,62 @@ export default function Home() {
     const requestedMax = maxPrice && Number.isFinite(Number(maxPrice)) ? Number(maxPrice) : undefined;
     const effectiveMinPrice = requestedMin === undefined ? presetRange.min : Math.max(requestedMin, presetRange.min ?? 0);
     const effectiveMaxPrice = requestedMax === undefined ? presetRange.max : Math.min(requestedMax, presetRange.max ?? Number.MAX_SAFE_INTEGER);
-    const constrainedSources = sourceFilter === "zalando" ? ["zalando-ch"]
+    const shops = sourceFilter === "zalando" ? ["zalando-ch"]
       : sourceFilter === "aboutyou" ? ["aboutyou-ch"]
-      : sourceFilter === "aliexpress" ? ["aliexpress"]
-      : sourceFilter === "owned" ? [...new Set(visibleCatalog.filter((item) => item.kind === "owned").map((item) => item.source))]
-        : sourceFilter === "reference" ? [...new Set(visibleCatalog.filter((item) => item.kind === "reference").map((item) => item.source))]
-          : undefined;
-    setVisualBusy(true); setAiItems([]);
-    setAiStatus(visualMode === "sheet" ? "Luna prépare sa première planche…" : "Luna prépare la sélection visuelle…");
+        : sourceFilter === "aliexpress" ? ["aliexpress"]
+          : sourceFilter.startsWith("source:") ? [sourceFilter.slice(7)] : undefined;
+    setAssistantBusy(true);
+    setAiStatus("Luna choisit le bon outil…");
     try {
-      const response = await fetch(`${ATLAS_API}/codex/visual-select`, {
-        method: "POST", headers: { "content-type": "application/json" },
+      const response = await fetch(`${ATLAS_API}/codex/ask`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          prompt: aiPrompt.trim() || "Trouve des vêtements visuellement proches du mood board joint.", maxCandidates: 72, topN: 30,
-          threshold: .5, analysisMode: visualMode, reasoningEffort,
+          prompt: aiPrompt,
+          productIds: promptProductIds,
+          images: promptImages.map(({ name, dataUrl }) => ({ name, dataUrl })),
+          analysisMode: visualMode,
+          reasoningEffort,
           constraints: {
-            sizes: selectedSizes.length ? selectedSizes : undefined,
-            freshWithinHours: selectedSizes.length ? 48 : undefined,
-            minPrice: effectiveMinPrice, maxPrice: effectiveMaxPrice,
-            categories: activeFilter === "Tout" ? undefined : [activeFilter], sources: constrainedSources?.length ? constrainedSources : undefined,
+            sizes: selectedSizes,
+            shops,
+            categories: activeFilter === "Tout" ? undefined : [activeFilter],
+            minPrice: effectiveMinPrice,
+            maxPrice: effectiveMaxPrice,
             includeRejected,
           },
-          images: promptImages.map(({ name, dataUrl }) => ({ name, dataUrl })),
         }),
       });
-      if (!response.ok) throw new Error(await response.text() || "visual job unavailable");
-      let job = await response.json() as AtlasVisualJob;
-      while (job.status !== "complete" && job.status !== "error") {
-        setAiItems(atlasMergeItems(job.products, catalogItems)); setScope("catalogue"); setActiveFilter("Tout");
-        setAiStatus(`${job.message} · ${job.inspected}/${job.maxInspections} vues · ${job.selected} retenus`);
-        await new Promise((resolve) => setTimeout(resolve, 1200));
-        const poll = await fetch(`${ATLAS_API}/codex/visual-jobs/${job.id}`);
-        if (!poll.ok) throw new Error("visual job lost");
-        job = await poll.json() as AtlasVisualJob;
-      }
-      if (job.status === "error") throw new Error(job.error ?? "visual selection failed");
-      setAiItems(atlasMergeItems(job.products, catalogItems)); setAiStatus(`${job.message} · score > ${job.threshold.toFixed(2)}`);
-    } catch (error) { setAiStatus(`Vision indisponible — ${error instanceof Error ? error.message : "erreur locale"}`); }
-    finally { setVisualBusy(false); }
+      const payload = await response.json() as AtlasAssistantResponse & { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? payload.message ?? "assistant unavailable");
+      if (payload.imported?.length) await reloadAtlasCatalog();
+      const effectiveSizes = payload.plan?.effectiveSizes;
+      if (effectiveSizes) setSelectedSizes(effectiveSizes);
+      const effectiveShops = payload.plan?.effectiveShops ?? [];
+      if (effectiveShops.length === 1) {
+        const shop = effectiveShops[0]!.toLocaleLowerCase();
+        setSourceFilter(shop.includes("zalando") ? "zalando" : shop.includes("about") ? "aboutyou" : shop.includes("aliexpress") ? "aliexpress" : `source:${effectiveShops[0]}`);
+      } else if (effectiveShops.length > 1) setSourceFilter("shop");
+      else if (payload.plan && !effectiveShops.length) setSourceFilter("all");
+      if (payload.plan?.effectiveMinPrice !== undefined) setMinPrice(String(payload.plan.effectiveMinPrice));
+      if (payload.plan?.effectiveMaxPrice !== undefined) setMaxPrice(String(payload.plan.effectiveMaxPrice));
+
+      if (payload.action === "visual" && payload.job) await monitorAtlasVisualJob(payload.job);
+      else if (payload.action === "discover" && payload.discoveryPlan && payload.jobs?.length) {
+        setDiscoveryPlan(payload.discoveryPlan);
+        persistAtlasDiscovery(payload.discoveryPlan, payload.jobs);
+        setAiStatus(payload.plan?.message ?? "Recherche locale lancée");
+        await monitorAtlasDiscovery(payload.jobs);
+      } else if (payload.action === "outfit" && payload.boards) {
+        setOutfitBoards(payload.boards); setScope("outfits"); setDrawer("outfits");
+        setAiStatus(`${payload.boards.length} planche${payload.boards.length > 1 ? "s" : ""} créée${payload.boards.length > 1 ? "s" : ""}`);
+      } else if (payload.products) {
+        setAiItems(atlasMergeItems(payload.products, catalogItems)); setScope("catalogue"); setActiveFilter("Tout");
+        setAiStatus(`${payload.plan?.title ?? "Luna"} · ${payload.products.length} résultat${payload.products.length > 1 ? "s" : ""}${payload.importErrors?.length ? ` · ${payload.importErrors.length} lien non lu` : ""}`);
+      } else setAiStatus(payload.message ?? payload.plan?.message ?? "Demande traitée");
+    } catch (error) {
+      setAiStatus(`Assistant indisponible — ${error instanceof Error ? error.message : "erreur locale"}`);
+    } finally { setAssistantBusy(false); }
   }
 
   function persistAtlasDiscovery(plan: AtlasDiscoveryPlan, jobs: AtlasDiscoveryJob[]) {
@@ -2237,32 +2280,6 @@ export default function Home() {
       else setToast(discovered ? `${discovered} ${discovered > 1 ? "nouveaux" : "nouvel"} article${discovered > 1 ? "s" : ""} ajouté${discovered > 1 ? "s" : ""}` : "Aucun nouvel article trouvé");
     } finally {
       if (discoveryMonitorRef.current === monitorId) setDiscoveryBusy(false);
-    }
-  }
-
-  async function startAtlasDiscovery() {
-    const prompt = aiPrompt.trim();
-    if (!prompt || discoveryBusy) return;
-    discoveryMonitorRef.current += 1;
-    setDiscoveryBusy(true);
-    setDiscoveryRecovered(false);
-    setDiscoveryJobs([]);
-    setDiscoveryPlan(null);
-    setAiStatus("Luna prépare un plan de recherche local M ou L…");
-    try {
-      const response = await fetch(`${ATLAS_API}/codex/discover`, {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt }),
-      });
-      if (!response.ok) throw new Error(await response.text() || "discovery unavailable");
-      const payload = await response.json() as { plan: AtlasDiscoveryPlan; jobs: AtlasDiscoveryJob[] };
-      if (!payload.plan || !payload.jobs?.length) throw new Error("Le plan n’a créé aucune recherche");
-      setDiscoveryPlan(payload.plan);
-      persistAtlasDiscovery(payload.plan, payload.jobs);
-      setAiStatus("");
-      await monitorAtlasDiscovery(payload.jobs);
-    } catch (error) {
-      setAiStatus(`Découverte indisponible — ${error instanceof Error ? error.message : "erreur locale"}`);
-      setDiscoveryBusy(false);
     }
   }
 
@@ -2318,6 +2335,20 @@ export default function Home() {
       setPromptImages((current) => [...current, ...next].slice(0, ATLAS_MAX_IMAGES));
       setAiStatus(`${next.length} image${next.length > 1 ? "s" : ""} ajoutée${next.length > 1 ? "s" : ""} au prochain prompt Vision`);
     } catch (error) { setAiStatus(error instanceof Error ? error.message : "Image impossible à ajouter"); }
+  }
+
+  async function dropOnAtlasAssistant(event: ReactDragEvent<HTMLElement>) {
+    event.preventDefault();
+    setAssistantDropActive(false);
+    const productId = event.dataTransfer.getData("application/x-wardrobe-product");
+    if (productId) {
+      const item = catalogItems.find((candidate) => candidate.id === productId);
+      if (item) addAtlasProductToPrompt(item);
+    }
+    const images = Array.from(event.dataTransfer.files).filter((file) => file.type.startsWith("image/"));
+    if (images.length) await addAtlasPromptImages(images);
+    const droppedText = event.dataTransfer.getData("text/uri-list") || event.dataTransfer.getData("text/plain");
+    if (droppedText && !productId) setAiPrompt((current) => [current, droppedText.trim()].filter(Boolean).join("\n"));
   }
 
   async function monitorAtlasRefresh(initialJob: AtlasAcquisitionJob) {
@@ -2584,7 +2615,7 @@ export default function Home() {
 
         <div className="filterBar atlasFilterBar">
           <label className="quickFilter"><small>Catégorie</small><select value={activeFilter} onChange={(event) => setActiveFilter(event.target.value)}>{atlasCategories.map((filter) => <option value={filter} key={filter}>{filter} ({categoryCounts[filter] ?? 0})</option>)}</select></label>
-          <label className="quickFilter"><small>Source</small><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">Toutes</option><option value="shop">Tous shops</option><option value="zalando">Zalando</option><option value="aboutyou">About You</option><option value="aliexpress">AliExpress</option><option value="owned">Dressing</option><option value="reference">Références</option></select></label>
+          <label className="quickFilter"><small>Source</small><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">Toutes</option><option value="shop">Tous shops</option><option value="zalando">Zalando</option><option value="aboutyou">About You</option><option value="aliexpress">AliExpress</option>{extraShopSources.map((source) => <option key={source} value={`source:${source}`}>{source}</option>)}<option value="owned">Dressing</option><option value="reference">Références</option></select></label>
           <label className="quickFilter"><small>Prix</small><select value={priceFilter} onChange={(event) => setPriceFilter(event.target.value)}><option value="all">Tous</option><option value="under50">&lt; 50</option><option value="50to100">50–100</option><option value="100to180">100–180</option><option value="over180">&gt; 180</option></select></label>
           <label className="quickFilter"><small>Coupe</small><select value={fitFilter} onChange={(event) => setFitFilter(event.target.value)}><option value="all">Toutes</option><option value="large">Large</option><option value="courte">Courte</option><option value="court">Court</option><option value="droite">Droite</option><option value="relax">Relax</option><option value="unknown">Inconnue</option></select></label>
           <label className="quickFilter"><small>Matière</small><select value={materialFilter} onChange={(event) => setMaterialFilter(event.target.value)}><option value="all">Toutes</option><option value="knit">Maille/laine</option><option value="linen">Lin</option><option value="cotton">Coton</option><option value="leather">Cuir</option><option value="denim">Denim</option></select></label>
@@ -2621,25 +2652,32 @@ export default function Home() {
               <div className="refreshActions"><button type="button" onClick={() => void startAtlasRefresh(renderedProducts.map((item) => item.id))}>↻ visibles</button><button type="button" onClick={() => void startAtlasRefresh(catalogItems.filter((item) => item.decision === "saved").map((item) => item.id))}>↻ shortlist</button></div>
             </div>
           </details>
-          <div className="aiComposer atlasAiComposer">
-            <label className="aiFilter">
+          <form
+            className={`aiComposer atlasAiComposer${assistantDropActive ? " dropActive" : ""}`}
+            onSubmit={(event) => { event.preventDefault(); void askAtlasAssistant(); }}
+            onDragEnter={(event) => { event.preventDefault(); setAssistantDropActive(true); }}
+            onDragOver={(event) => event.preventDefault()}
+            onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setAssistantDropActive(false); }}
+            onDrop={(event) => void dropOnAtlasAssistant(event)}
+          >
+            <label className="aiFilter assistantFilter">
               <span className="pulseDot" />
-              <input value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} onPaste={(event) => { const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/")); if (!images.length) return; event.preventDefault(); void addAtlasPromptImages(images); }} onKeyDown={(event) => { if (event.key === "Enter") void askAtlasCodex(); }} placeholder="Décris un filtre ou colle un mood board…" aria-label="Demander un filtre à Codex" />
+              <textarea value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} onPaste={(event) => { const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/")); if (!images.length) return; event.preventDefault(); void addAtlasPromptImages(images); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void askAtlasAssistant(); } }} placeholder="Demande n’importe quoi, colle des liens ou dépose des images…" aria-label="Demander à l’assistant Wardrobe Atlas" rows={1} />
               <input ref={atlasImageInputRef} className="hiddenImageInput" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => { void addAtlasPromptImages(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
-              <button className="attachButton" type="button" onClick={() => atlasImageInputRef.current?.click()} aria-label="Ajouter des images" title="Ajouter ou coller un mood board">＋ img</button>
+              <button className="attachButton" type="button" onClick={() => atlasImageInputRef.current?.click()} aria-label="Ajouter des images" title="Ajouter ou coller un mood board">＋</button>
               <select className="reasoningSelect" value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as "low" | "medium")} aria-label="Niveau de réflexion Luna"><option value="low">Luna low</option><option value="medium">Luna medium</option></select>
-              <button type="button" className="filterButton" onClick={() => void askAtlasCodex()}>Filtrer</button>
-              <button type="button" className="discoverButton" disabled={discoveryBusy || !aiPrompt.trim()} aria-busy={discoveryBusy} onClick={() => void startAtlasDiscovery()} title="Planifier une recherche locale · Zalando, About You et AliExpress, sans login ni contournement">{discoveryBusy ? "Trouve…" : "Trouver"}</button>
-              <button type="button" className="visionButton" title="Vision 1×1 ou Planche + détail" disabled={visualBusy} onClick={() => void askAtlasVision()}>{visualBusy ? "Analyse…" : "Vision"}</button>
+              <button type="submit" className="assistantSend" disabled={assistantBusy || (!aiPrompt.trim() && !promptImages.length && !promptProductIds.length)} aria-busy={assistantBusy}>{assistantBusy ? "…" : "↑"}<span>Envoyer</span></button>
             </label>
-            {(promptImages.length > 0 || aiStatus) && (
+            <div className="assistantDefaults" aria-label="Contraintes par défaut, remplaçables dans le prompt"><span>{selectedSizes.length ? `Tailles ${selectedSizes.join(" ou ")}` : "Toutes tailles"}</span><span>{sourceFilter === "all" || sourceFilter === "shop" ? "Tous shops" : sourceFilter.replace("source:", "")}</span>{(minPrice || maxPrice || priceFilter !== "all") && <span>{minPrice || "0"}–{maxPrice || (priceFilter === "under50" ? "50" : priceFilter === "50to100" ? "100" : priceFilter === "100to180" ? "180" : "∞")} CHF</span>}<em>Tu peux les remplacer dans ta demande.</em></div>
+            {(promptImages.length > 0 || promptProducts.length > 0 || aiStatus) && (
               <div className="aiSubline">
+                {promptProducts.map((item) => <span className="promptProduct" key={item.id} title={`${item.brand} — ${item.name}`}>{item.image ? <img src={item.image} alt="" /> : <i>✦</i>}<b>{item.name}</b><button type="button" onClick={() => setPromptProductIds((current) => current.filter((id) => id !== item.id))} aria-label={`Retirer ${item.name}`}>×</button></span>)}
                 {promptImages.map((image) => <span className="promptImage" key={image.id} title={image.name}><img src={image.dataUrl} alt="" /><button type="button" onClick={() => setPromptImages((current) => current.filter((item) => item.id !== image.id))} aria-label={`Retirer ${image.name}`}>×</button></span>)}
-                {promptImages.length > 0 && <span className="segmented analysisMode"><button className={visualMode === "sequential" ? "active" : ""} onClick={() => setVisualMode("sequential")}>1×1</button><button className={visualMode === "sheet" ? "active" : ""} onClick={() => setVisualMode("sheet")}>Planche + détail</button></span>}
-                {aiStatus && <span className="aiStatus atlasAiStatus">{aiStatus}{aiItems && <button onClick={() => { setAiItems(null); setAiStatus(""); }}>×</button>}</span>}
+                {promptImages.length > 0 && <span className="segmented analysisMode"><button type="button" className={visualMode === "sequential" ? "active" : ""} onClick={() => setVisualMode("sequential")}>1×1</button><button type="button" className={visualMode === "sheet" ? "active" : ""} onClick={() => setVisualMode("sheet")}>Planche</button></span>}
+                {aiStatus && <span className="aiStatus atlasAiStatus">{aiStatus}{aiItems && <button type="button" onClick={() => { setAiItems(null); setAiStatus(""); }}>×</button>}</span>}
               </div>
             )}
-          </div>
+          </form>
         </div>
 
         <div className="operationStack">
@@ -2667,6 +2705,7 @@ export default function Home() {
                 <div className="cardActions">
                   <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={item.decision === "saved" ? "active" : ""} onClick={() => void setAtlasDecision(item, "saved")} aria-label={item.decision === "saved" ? `Retirer ${item.name} des gardés` : `Garder ${item.name}`} title="Garder (S)">{item.decision === "saved" ? "♥" : "♡"}</button>
                   <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={compareIds.has(item.id) ? "active" : ""} onClick={() => toggleCompare(item.id)} aria-label={`Comparer ${item.name}`} title="Comparer (C)">⇄</button>
+                  <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} draggable onDragStart={(event) => { event.dataTransfer.setData("application/x-wardrobe-product", item.id); event.dataTransfer.effectAllowed = "copy"; }} onClick={() => addAtlasProductToPrompt(item)} aria-label={`Utiliser ${item.name} avec Luna`} title="Utiliser avec l’IA ou glisser dans le prompt">✦</button>
                   <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={outfitDraftIds.has(item.id) ? "active" : ""} onClick={() => toggleOutfitDraft(item.id)} aria-label={`Ajouter ${item.name} à une tenue`} title="Ajouter à une tenue">＋</button>
                   <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={item.decision === "owned" ? "active" : ""} onClick={() => void setAtlasDecision(item, "owned")} aria-label={`Marquer ${item.name} comme possédé`} title="Possédé (O)">◆</button>
                   <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={item.decision === "rejected" ? "active reject" : "reject"} onClick={() => void setAtlasDecision(item, "rejected")} aria-label={`Rejeter ${item.name}`} title="Rejeter (R)">×</button>
@@ -2809,6 +2848,7 @@ export default function Home() {
                 <section className="productPreviewTools" data-testid="product-preview-actions"><span>Actions</span><div>
                   <button type="button" className={previewProduct.decision === "saved" ? "active" : ""} onClick={() => void setAtlasDecision(previewProduct, "saved")}>{previewProduct.decision === "saved" ? "♥ Gardé" : "♡ Garder"}</button>
                   <button type="button" className={compareIds.has(previewProduct.id) ? "active" : ""} onClick={() => toggleCompare(previewProduct.id)}>⇄ Comparer</button>
+                  <button type="button" onClick={() => { addAtlasProductToPrompt(previewProduct); setPreviewItem(null); }}>✦ Utiliser avec l’IA</button>
                   <button type="button" className={outfitDraftIds.has(previewProduct.id) ? "active" : ""} onClick={() => toggleOutfitDraft(previewProduct.id)}>＋ Tenue</button>
                   <button type="button" className={previewProduct.decision === "owned" ? "active" : ""} onClick={() => void setAtlasDecision(previewProduct, "owned")}>◆ Possédé</button>
                   <button type="button" className={previewProduct.decision === "rejected" ? "active reject" : "reject"} onClick={() => void setAtlasDecision(previewProduct, "rejected")}>× Rejeter</button>

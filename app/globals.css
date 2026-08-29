@@ -101,6 +101,7 @@ button { color: inherit; font: inherit; }
 .aiComposer { min-width: 300px; flex: 1; display: grid; gap: 3px; }
 .aiFilter { min-width: 240px; display: flex; align-items: center; gap: 5px; padding: 3px 3px 3px 8px; border: 1px solid #ccd1c3; border-radius: 7px; background: #f3f5ee; }
 .aiFilter input { min-width: 80px; flex: 1; border: 0; outline: 0; background: transparent; font-size: 10px; }
+.aiFilter textarea { min-width: 80px; min-height: 24px; max-height: 72px; flex: 1; resize: none; overflow-y: auto; padding: 5px 0 3px; border: 0; outline: 0; background: transparent; color: var(--ink); font: 10px/1.3 Arial, sans-serif; }
 .aiFilter button { border: 0; border-radius: 5px; padding: 6px 9px; background: var(--moss); color: white; font-size: 8px; cursor: pointer; }
 .aiFilter .attachButton { padding-inline: 7px; border: 1px solid #ccd1c3; background: #fffef9; color: #5f6559; }
 .aiFilter .visionButton { background: var(--clay); }
@@ -323,13 +324,21 @@ button { color: inherit; font: inherit; }
 .atlasAiComposer { min-width: 280px; gap: 2px; }
 .atlasAiComposer .aiFilter { min-height: 31px; padding-block: 2px; }
 .atlasAiComposer .aiFilter button { min-height: 25px; padding: 4px 7px; }
-.atlasAiComposer .aiFilter .discoverButton { background: #665242; }
-.atlasAiComposer .aiFilter .discoverButton:disabled[aria-busy="false"] { cursor: not-allowed; }
+.atlasAiComposer.dropActive .aiFilter { border-color: #98624d; box-shadow: 0 0 0 2px #98624d20; background: #f6eee8; }
+.atlasAiComposer .assistantSend { display: flex; align-items: center; gap: 4px; background: #665242; font-weight: 700; }
+.assistantDefaults { min-width: 0; display: flex; align-items: center; gap: 3px; overflow: hidden; color: #8a8276; font-size: 7px; white-space: nowrap; }
+.assistantDefaults span { flex: none; padding: 2px 5px; border: 1px solid #d8d2c7; border-radius: 999px; background: #faf8f3; color: #6d655b; }
+.assistantDefaults em { overflow: hidden; text-overflow: ellipsis; font-style: normal; }
 .reasoningSelect {
   max-width: 75px; min-height: 23px; padding: 0 3px; border: 1px solid #ccd1c3; border-radius: 5px;
   outline: 0; background: #fffef9; color: #5f6559; font-size: 7px;
 }
 .aiSubline { min-width: 0; min-height: 23px; display: flex; align-items: center; gap: 3px; }
+.promptProduct { position: relative; min-width: 0; max-width: 130px; height: 27px; display: flex; align-items: center; gap: 4px; overflow: hidden; padding: 2px 17px 2px 2px; border: 1px solid #cfc8bc; border-radius: 5px; background: #faf7f1; }
+.promptProduct img, .promptProduct i { width: 22px; height: 22px; flex: none; object-fit: cover; border-radius: 3px; background: #e5dfd4; }
+.promptProduct i { display: grid; place-items: center; color: var(--clay); font-style: normal; }
+.promptProduct b { min-width: 0; overflow: hidden; color: #5f584e; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.promptProduct button { position: absolute; top: 1px; right: 2px; width: 13px; height: 13px; padding: 0; border: 0; border-radius: 50%; background: #1e1b17c7; color: white; cursor: pointer; font-size: 9px; line-height: 13px; }
 .atlasAiStatus {
   position: static; min-width: 0; max-width: min(620px, 100%); overflow: hidden; padding: 3px 6px;
   border: 0; box-shadow: none; background: transparent; text-overflow: ellipsis; white-space: nowrap;
@@ -674,9 +683,10 @@ body:has(.compareDock) .toast { bottom: 61px; }
   .mobileFilterFallbacks label:last-child { grid-column: 1 / -1; }
   .atlasAiComposer { order: 4; flex-basis: 100%; }
   .atlasAiComposer .aiFilter { min-width: 0; }
-  .atlasAiComposer .aiFilter input { min-width: 40px; }
+  .atlasAiComposer .aiFilter input, .atlasAiComposer .aiFilter textarea { min-width: 40px; }
   .reasoningSelect { display: none; }
   .atlasAiComposer .aiFilter > button { padding-inline: 5px; }
+  .atlasAiComposer .assistantSend span, .assistantDefaults em { display: none; }
   .discoveryProgress { gap: 5px; }
   .discoveryPlanInfo > small { max-width: 45vw; }
   .discoveryProgress > em { max-width: 92px; overflow: hidden; text-overflow: ellipsis; }
