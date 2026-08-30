@@ -1,11 +1,15 @@
-# Wardrobe Atlas agent guide
+# Mosaic V1 agent guide
 
 ## Product contract
 
-- Wardrobe Atlas is a private, local-first clothing catalog and visual mood board.
-- Shop products, owned garments, and visual references are first-class catalog items. References are style anchors and are never purchasable.
+- Mosaic is a private, local-first visual research canvas. Wardrobe Atlas is its first domain profile and all MVP clothing behavior must remain compatible.
+- Workspaces may contain shop products, owned objects, visual references, or generic visual items. References are context anchors and are never purchasable.
+- Read `docs/V1_PRODUCT.md` before changing product behavior, public contracts, the data model, assistant routing, or the main UX. Treat `docs/design/mosaic-gold-standard.png` as the approved visual direction.
+- Keep universal item fields small. Put profile-specific values in typed workspace field definitions and item attributes; do not add TV- or clothing-specific columns for each new domain.
+- Collections are the reusable selection primitive. Favorites and outfit boards are compatibility views over collections, not the only supported organization model.
+- The default UX is assistant-first and board-first. Developer concepts such as PCA, MCP, adapters, and raw job states belong in advanced or diagnostic surfaces.
 - Filtered spatial views must be reprojected and compacted. Never hide items while retaining the full-set coordinates and large empty holes.
-- Checkout, login automation, CAPTCHA handling, anti-bot bypasses, and unattended crawling are out of scope.
+- Checkout, CAPTCHA handling, anti-bot bypasses, and unbounded unattended crawling are out of scope. An explicitly configured Chrome skill may perform user-like, read-only extraction with visible progress and the same safety limits.
 
 ## Preferred agent workflow
 

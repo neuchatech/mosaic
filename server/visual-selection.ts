@@ -4,6 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Product } from "../src/domain/catalog";
+import { DEFAULT_CLOTHING_WORKSPACE_ID } from "../src/domain/workspace";
 import { codexExecutable } from "./codex-bridge";
 import { projectCompactCached } from "./projection-cache";
 import { CatalogRepository, type VisualJobRecord } from "./repository";
@@ -30,7 +31,7 @@ function jobView(job: VisualJobRecord, repository: CatalogRepository): VisualJob
   const selected = assessments
     .filter((assessment) => !assessment.rejected && assessment.score > job.threshold)
     .slice(0, job.targetCount)
-    .map((assessment) => repository.getProduct(assessment.productId))
+    .map((assessment) => repository.getProduct(assessment.productId, job.workspaceId))
     .filter(Boolean)
     .map((product) => {
       const assessment = assessments.find((candidate) => candidate.productId === product!.id)!;
@@ -91,12 +92,11 @@ export function visualCodexArgs(options: { jobId: string; referenceImages?: stri
   const args = [
     "exec",
     "--model", "gpt-5.6-luna",
-    // The current Codex CLI makes --approve-for-me select its own
-    // workspace-write sandbox. Supplying --sandbox as well is invalid.
-    "--approve-for-me",
+    "--sandbox", "read-only",
     "--ephemeral",
     "--ignore-user-config",
     "--json",
+    "--config", "approval_policy=\"never\"",
     "--config", "features.shell_tool=false",
     "--config", `model_reasoning_effort=${JSON.stringify(options.reasoningEffort === "medium" ? "medium" : "low")}`,
     "--config", "mcp_servers.wardrobe_atlas.command=\"npm\"",
@@ -213,8 +213,13 @@ export async function startVisualSelection(input: {
   constraints?: unknown;
   images?: VisualPromptImage[];
 }, repository: CatalogRepository): Promise<VisualJobView> {
-  const constraints = visualConstraintsSchema.parse(input.constraints ?? {}) as VisualConstraints;
-  const candidates = filterVisualCandidates(repository.listProducts({ limit: 10_000 }), constraints).slice(0, 2_000);
+  const parsedConstraints = visualConstraintsSchema.parse(input.constraints ?? {}) as VisualConstraints;
+  const workspaceId = parsedConstraints.workspaceId ?? DEFAULT_CLOTHING_WORKSPACE_ID;
+  const constraints: VisualConstraints = { ...parsedConstraints, workspaceId };
+  const candidates = filterVisualCandidates(
+    repository.listProducts({ workspaceId, limit: 10_000 }),
+    constraints,
+  ).slice(0, 2_000);
   if (candidates.length === 0) {
     const requestedSizes = [...new Set([...(constraints.size ? [constraints.size] : []), ...(constraints.sizes ?? [])])];
     const sizeNote = requestedSizes.length ? ` in any of sizes ${requestedSizes.join(" or ")} with fresh availability` : "";
@@ -225,13 +230,14 @@ export async function startVisualSelection(input: {
   const threshold = Math.min(.95, Math.max(.05, input.threshold ?? .5));
   const id = crypto.randomUUID();
   const referenceImages = await persistReferenceImages(id, input.images ?? []);
-  const requestedContextIds = constraints.contextIds?.filter((id) => repository.getProduct(id)) ?? [];
-  const contextIds = [...new Set([...requestedContextIds, ...repository.listProducts({ limit: 10_000 })
+  const requestedContextIds = constraints.contextIds?.filter((id) => repository.getProduct(id, workspaceId)) ?? [];
+  const contextIds = [...new Set([...requestedContextIds, ...repository.listProducts({ workspaceId, limit: 10_000 })
     .filter((product) => product.decision !== "rejected" && (product.kind !== "shop" || ["saved", "owned"].includes(product.decision)))
     .slice(0, 160)
     .map((product) => product.id)])].slice(0, 160);
   const job = repository.createVisualJob({
     id,
+    workspaceId,
     prompt: input.prompt,
     maxInspections,
     targetCount,
@@ -245,7 +251,11 @@ export async function startVisualSelection(input: {
   return jobView(job, repository);
 }
 
-export function getVisualSelection(id: string, repository: CatalogRepository): VisualJobView | null {
-  const job = repository.getVisualJob(id);
+export function getVisualSelection(
+  id: string,
+  repository: CatalogRepository,
+  workspaceId?: string,
+): VisualJobView | null {
+  const job = repository.getVisualJob(id, workspaceId);
   return job ? jobView(job, repository) : null;
 }

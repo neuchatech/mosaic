@@ -45,6 +45,19 @@ test("numeric filters do not treat a missing reference price as zero", () => {
   assert.equal(applyFilter([reference], filter).length, 0);
 });
 
+test("date range filters compare ISO freshness timestamps", () => {
+  const products = seedProducts.slice(0, 2).map((product, index) => ({
+    ...product,
+    sizesCheckedAt: index === 0 ? "2026-08-29T12:00:00.000Z" : "2026-08-20T12:00:00.000Z",
+  }));
+  const filter = filterSpecSchema.parse({
+    id: "fresh-sizes",
+    name: "Fresh size snapshot",
+    where: { type: "clause", field: "sizesCheckedAt", operator: "gte", value: "2026-08-28T12:00:00.000Z" },
+  });
+  assert.deepEqual(applyFilter(products, filter).map((product) => product.id), [products[0]!.id]);
+});
+
 test("Zalando size capture keeps only available-looking garment sizes", () => {
   assert.deepEqual(
     normalizeZalandoSizes(["Taille: M", "XL disponible", "Choisir une taille", "48", "M", "EU 50"]),

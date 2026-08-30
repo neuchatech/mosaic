@@ -615,6 +615,7 @@ test("the acquisition API uses one status contract and exposes explicit recovery
 test("client status reports partial successes on a blocked terminal job", () => {
   const view = acquisitionClientView({
     id: "partial",
+    workspaceId: "default-clothing",
     source: "test",
     status: "blocked",
     total: 2,

@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Wardrobe Atlas",
-  description: "Catalogue vestimentaire spatial, personnel et pilotable par Codex.",
+  title: "Mosaic",
+  description: "Canvas local et privé pour la recherche visuelle assistée.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",

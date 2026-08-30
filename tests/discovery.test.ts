@@ -38,6 +38,7 @@ import {
   type DiscoveryJobSnapshot,
   type DiscoveryJobStore,
 } from "../server/discovery";
+import { setPublicNetworkTestHooksForTests } from "../server/public-html";
 
 const zalandoListingHtml = `<!doctype html><script>window.__hydrationDataConsume({"graphqlCache":{"card":{"data":{"product":{"id":"ern:product::TEST22Q001-O11","sku":"TEST22Q001-O11","name":"BOXY CARDIGAN - Gilet - brown","brand":{"name":"Test Brand"},"displayPrice":{"trackingCurrentAmount":79,"original":{"amount":9900,"currency":"CHF"}},"mediumModelImage":{"uri":"https://img.example.test/cardigan.jpg"},"uri":"https://fr.zalando.ch/test-boxy-cardigan-test22q001-o11.html","silhouette":"CARDIGAN"}}}}})</script>`;
 
@@ -92,7 +93,7 @@ test("About You listings expose exact M/L availability without inventing detail 
 });
 
 test("About You product HTML imports exact in-stock variants and a shared gallery", async () => {
-  const html = `<!doctype html><script type="application/ld+json">[{"@context":"https://schema.org/","@type":"ProductGroup","productGroupID":"MFX0566-130","name":"DAN FOX APPAREL Shirt 'Jonte'","category":"T-Shirts","brand":{"@type":"Brand","name":"DAN FOX APPAREL"},"hasVariant":[{"@type":"Product","color":"Taupe","size":"M","image":["https://cdn.example.test/front.jpg","https://cdn.example.test/back.jpg"],"offers":{"@type":"Offer","price":34.9,"priceCurrency":"CHF","availability":"https://schema.org/InStock"}},{"@type":"Product","color":"Taupe","size":"L","image":["https://cdn.example.test/front.jpg","https://cdn.example.test/back.jpg"],"offers":{"@type":"Offer","price":34.9,"priceCurrency":"CHF","availability":"https://schema.org/InStock"}},{"@type":"Product","color":"Taupe","size":"XL","image":["https://cdn.example.test/front.jpg"],"offers":{"@type":"Offer","price":34.9,"priceCurrency":"CHF","availability":"https://schema.org/OutOfStock"}}]}]</script>`;
+  const html = `<!doctype html><script type="application/ld+json">[{"@context":"https://schema.org/","@type":"ProductGroup","productGroupID":"MFX0566-130","name":"DAN FOX APPAREL Shirt 'Jonte'","category":"T-Shirts","brand":{"@type":"Brand","name":"DAN FOX APPAREL"},"hasVariant":[{"@type":"Product","color":"Taupe","size":"M","image":["https://cdn.example.com/front.jpg","https://cdn.example.com/back.jpg"],"offers":{"@type":"Offer","price":34.9,"priceCurrency":"CHF","availability":"https://schema.org/InStock"}},{"@type":"Product","color":"Taupe","size":"L","image":["https://cdn.example.com/front.jpg","https://cdn.example.com/back.jpg"],"offers":{"@type":"Offer","price":34.9,"priceCurrency":"CHF","availability":"https://schema.org/InStock"}},{"@type":"Product","color":"Taupe","size":"XL","image":["https://cdn.example.com/front.jpg"],"offers":{"@type":"Offer","price":34.9,"priceCurrency":"CHF","availability":"https://schema.org/OutOfStock"}}]}]</script>`;
   const product = await aboutYouAdapter.extractDetailHtml?.(
     html,
     "https://en.aboutyou.ch/p/dan-fox-apparel/shirt-jonte-16508944?tracking=1",
@@ -105,8 +106,8 @@ test("About You product HTML imports exact in-stock variants and a shared galler
   assert.equal(product.price, 34.9);
   assert.deepEqual(product.sizes, ["M", "L"]);
   assert.deepEqual(product.images, [
-    "https://cdn.example.test/front.jpg",
-    "https://cdn.example.test/back.jpg",
+    "https://cdn.example.com/front.jpg",
+    "https://cdn.example.com/back.jpg",
   ]);
   assert.equal(product.attributes?.sizeAvailabilityKnown, true);
 });
@@ -201,14 +202,16 @@ test("Zalando server HTML exposes listing cards and exact ProductGroup stock", (
 });
 
 test("HTTP-first discovery uses structured HTML without launching a browser", async (t) => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response(zalandoListingHtml, {
-    status: 200,
-    headers: { "content-type": "text/html; charset=utf-8" },
+  setPublicNetworkTestHooksForTests({
+    resolver: async () => [{ address: "8.8.8.8", family: 4 }],
+    fetch: async () => new Response(zalandoListingHtml, {
+      status: 200,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    }),
   });
   const fetcher = new PlaywrightDiscoveryFetcher({ maxScrolls: 0 });
   t.after(async () => {
-    globalThis.fetch = originalFetch;
+    setPublicNetworkTestHooksForTests(null);
     await fetcher.close();
   });
   const products = await fetcher.fetch({

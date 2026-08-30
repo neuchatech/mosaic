@@ -1,7 +1,9 @@
 import { z } from "zod";
-import type { Product } from "../src/domain/catalog";
+import { filterExpressionSchema, type Product } from "../src/domain/catalog";
+import { matchesFilterExpression } from "../src/domain/filter";
 
 export const visualConstraintsSchema = z.object({
+  workspaceId: z.string().trim().min(1).max(128).optional(),
   contextIds: z.array(z.string().trim().min(1)).max(12).optional(),
   size: z.string().trim().min(1).optional(),
   sizes: z.array(z.string().trim().min(1)).min(1).max(20).optional(),
@@ -9,6 +11,7 @@ export const visualConstraintsSchema = z.object({
   maxPrice: z.number().nonnegative().optional(),
   sources: z.array(z.string().min(1)).max(20).optional(),
   categories: z.array(z.string().min(1)).max(20).optional(),
+  where: filterExpressionSchema.optional(),
   freshWithinHours: z.number().positive().max(24 * 365).optional(),
   includeRejected: z.boolean().default(false),
   includeSaved: z.boolean().default(false),
@@ -33,12 +36,14 @@ export function matchesVisualConstraints(
   now = Date.now(),
 ): boolean {
   const constraints = visualConstraintsSchema.parse(input);
+  if (constraints.workspaceId && product.workspaceId !== constraints.workspaceId) return false;
   if (product.kind !== "shop") return false;
   if (!constraints.includeRejected && product.decision === "rejected") return false;
   if (product.decision === "owned") return false;
   if (!constraints.includeSaved && product.decision === "saved") return false;
   if (constraints.sources?.length && !constraints.sources.includes(product.source)) return false;
   if (constraints.categories?.length && !constraints.categories.includes(product.category)) return false;
+  if (constraints.where && !matchesFilterExpression(product, constraints.where)) return false;
   if (constraints.minPrice !== undefined && (product.price === null || product.price < constraints.minPrice)) return false;
   if (constraints.maxPrice !== undefined && (product.price === null || product.price > constraints.maxPrice)) return false;
 

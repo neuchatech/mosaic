@@ -31,6 +31,7 @@ export type CatalogVisualEmbeddingOptions = {
 export function catalogVisualEmbeddingItems(products: Product[]): VisualEmbeddingItem[] {
   return products.map((product) => ({
     id: product.id,
+    kind: product.kind,
     imageUrls: product.images,
     metadataVector: productFeatureVector(product),
     updatedAt: product.updatedAt,

@@ -4,6 +4,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { filterSpecSchema, type FilterSpec } from "../src/domain/catalog";
+import { DEFAULT_CLOTHING_WORKSPACE_ID, type WorkspaceProfile } from "../src/domain/workspace";
 import { CatalogRepository } from "./repository";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -66,7 +67,7 @@ export async function runCodexStructured(options: {
 
 export type CodexFilterResult = {
   filter: FilterSpec;
-  model: "gpt-5.6-luna";
+  model: "gpt-5.6-luna" | "heuristic";
   jobId: string;
 };
 
@@ -124,47 +125,89 @@ export function convertCodexNode(node: CodexNode): FilterSpec["where"] | null {
 export async function createFilterWithCodex(
   userPrompt: string,
   repository = new CatalogRepository(),
+  options: { workspaceId?: string; profile?: WorkspaceProfile } = {},
 ): Promise<CodexFilterResult> {
   if (!userPrompt.trim()) throw new Error("Filter prompt is empty.");
+  const workspaceId = options.workspaceId ?? DEFAULT_CLOTHING_WORKSPACE_ID;
+  const workspace = repository.getWorkspace(workspaceId);
+  if (!workspace) throw new Error(`Unknown workspace: ${workspaceId}`);
+  const profile = options.profile ?? workspace.profile;
   const jobId = crypto.randomUUID();
   const jobsRoot = resolve(projectRoot, "data/codex-jobs");
   const outputPath = resolve(jobsRoot, `${jobId}.json`);
   await mkdir(jobsRoot, { recursive: true });
 
-  const catalogStats = repository.stats();
+  const products = repository.listProducts({ workspaceId, limit: 10_000 });
+  const definitions = repository.listFieldDefinitions(workspaceId);
+  const fields = definitions.length ? definitions : repository.inferWorkspaceSchema(workspaceId);
+  const countBy = (values: string[]) => Object.fromEntries([...new Set(values)].map((value) => [
+    value,
+    values.filter((candidate) => candidate === value).length,
+  ]).sort((left, right) => Number(right[1]) - Number(left[1])).slice(0, 40));
+  const prices = products.flatMap((product) => product.price === null ? [] : [product.price]);
+  const catalogStats = {
+    workspace: { id: workspace.id, name: workspace.name, profile },
+    products: products.length,
+    sources: countBy(products.map((product) => product.source)),
+    categories: countBy(products.map((product) => product.category)),
+    price: prices.length ? { min: Math.min(...prices), max: Math.max(...prices) } : null,
+    fields: fields.map((field) => ({
+      key: field.key,
+      label: field.label,
+      type: field.primitiveType,
+      unit: field.unit,
+      facetable: field.facetable,
+      coverage: field.coverage,
+    })),
+  };
+  const profileGuidance = profile === "clothing"
+    ? "This workspace contains clothing. Canonical clothing fields may include category, colorFamily, fit, materials, sizes, stockStatus, and attributes.sizeAvailabilityKnown. Use only values present in the workspace summary."
+    : profile === "televisions"
+      ? "This workspace contains televisions. Prefer the observed dynamic fields (for example attributes.screen_size or attributes.refresh_rate when present). Never introduce clothing categories, fits, materials, or sizes."
+      : "This is a generic visual-products workspace. Make no domain assumptions: use only observed fields and values from the workspace summary.";
   const instruction = [
-    "Translate the French wardrobe request below into one Wardrobe Atlas FilterSpec.",
+    "Translate the user's request below into one Mosaic FilterSpec for the active workspace.",
     "Return only the structured object required by the supplied output schema.",
     "Every expression node uses the same shape. For unused fields, use conjunction=none, operator=none, valueKind=none, empty value arrays, booleanValue=false, and empty children.",
     "A not node contains exactly one child. A group uses conjunction and children. A clause uses field, operator, valueKind, and the matching value array or boolean.",
     "Never add placeholder, padding, or no-op nodes to a group's children array.",
     "Use sortField='' when no explicit sort was requested.",
     "Do not call tools and do not edit files.",
-    "Fields can be any Product path: kind, source, brand, name, description, price, originalPrice, discountPercent, currency, category, color, colorFamily, fit, materials, tags, sizes, available, decision, importedAt, updatedAt, scores.<name>, attributes.<name>.",
-    "Canonical catalog values: category is Vestes, Pantalons, Mailles, Chemises, or T-shirts; colorFamily is brown, beige, green, blue, neutral, or unknown; fit is large, courte, droite, slim, or unknown.",
-    "For precise shades such as olive, tobacco, or chocolate, query color with contains; broad olive intent can also match colorFamily=green. Interpret boxy, loose, wide, relaxed, and oversized as fit=large; cropped and short as fit=courte.",
-    "Product names and descriptions are mostly English or German. Translate French search concepts into likely catalog tokens and OR them when useful, for example rayures→stripe/striped, carreaux→check/checked/plaid, velours côtelé→corduroy, and maille→knit/jumper.",
+    "Fields may be standard Product paths (kind, source, brand, name, description, price, originalPrice, discountPercent, currency, category, color, tags, available, decision, importedAt, updatedAt) or one of the observed dynamic attributes.<name> paths in the workspace summary.",
+    profileGuidance,
     "Use nested and/or/not expressions for complex logic. Use case-insensitive contains for fuzzy textual intent.",
     "References have kind=reference and shop articles have kind=shop. Missing information must not be invented.",
     `Current catalog summary: ${JSON.stringify(catalogStats)}`,
     `User request: ${userPrompt}`,
   ].join("\n\n");
 
-  await runCodexStructured({
-    instruction,
-    schemaPath: resolve(projectRoot, "schemas/filter-spec.json"),
-    outputPath,
-  });
-
-  const generated = JSON.parse(await readFile(outputPath, "utf8")) as CodexOutput;
-  const filter = filterSpecSchema.parse({
-    id: `ai_${jobId}`,
-    name: generated.name,
-    description: generated.description,
-    where: convertCodexNode(generated.root) ?? { type: "group", conjunction: "and", children: [] },
-    ...(generated.sortField ? { sort: { field: generated.sortField, direction: generated.sortDirection } } : {}),
-    limit: generated.limit,
-  });
-  repository.saveFilter(filter);
-  return { filter, model: "gpt-5.6-luna", jobId };
+  let filter: FilterSpec;
+  let model: CodexFilterResult["model"] = "gpt-5.6-luna";
+  try {
+    await runCodexStructured({
+      instruction,
+      schemaPath: resolve(projectRoot, "schemas/filter-spec.json"),
+      outputPath,
+    });
+    const generated = JSON.parse(await readFile(outputPath, "utf8")) as CodexOutput;
+    filter = filterSpecSchema.parse({
+      id: `ai_${jobId}`,
+      name: generated.name,
+      description: generated.description,
+      where: convertCodexNode(generated.root) ?? { type: "group", conjunction: "and", children: [] },
+      ...(generated.sortField ? { sort: { field: generated.sortField, direction: generated.sortDirection } } : {}),
+      limit: generated.limit,
+    });
+  } catch {
+    model = "heuristic";
+    filter = filterSpecSchema.parse({
+      id: `ai_${jobId}`,
+      name: userPrompt.slice(0, 80) || "Filtre Mosaic",
+      description: "Le plan local a conservé les contraintes explicites; Luna n’était pas disponible pour interpréter les nuances du texte.",
+      where: { type: "group", conjunction: "and", children: [] },
+      limit: Math.min(5_000, Math.max(1, products.length || 500)),
+    });
+  }
+  repository.saveFilter(filter, workspaceId);
+  return { filter, model, jobId };
 }

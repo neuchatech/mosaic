@@ -10,6 +10,7 @@ import { createApp } from "../server/app";
 import { heuristicAssistantPlan } from "../server/codex-assistant";
 import { generateOutfits } from "../server/outfit-generator";
 import { catalogMediaPath, catalogMediaType } from "../server/media";
+import { setPublicNetworkTestHooksForTests } from "../server/public-html";
 import { projectCompactCached } from "../server/projection-cache";
 import { CatalogRepository } from "../server/repository";
 import { findSimilarProducts } from "../server/similarity";
@@ -59,6 +60,24 @@ test("visual constraints enforce exact fresh size, budget, kind, and rejection",
   assert.deepEqual(mediumOrLarge.map((product) => product.id), ["m", "l"]);
 });
 
+test("visual constraints enforce dynamic workspace fields", () => {
+  const products = [
+    productSchema.parse({ ...checkedProduct("oled", "M", 900), attributes: { panel: "OLED", refresh_rate: 120 } }),
+    productSchema.parse({ ...checkedProduct("lcd", "M", 650), attributes: { panel: "LCD", refresh_rate: 60 } }),
+  ];
+  const selected = filterVisualCandidates(products, {
+    where: {
+      type: "group",
+      conjunction: "and",
+      children: [
+        { type: "clause", field: "attributes.panel", operator: "eq", value: "OLED" },
+        { type: "clause", field: "attributes.refresh_rate", operator: "gte", value: 100 },
+      ],
+    },
+  }, now);
+  assert.deepEqual(selected.map((product) => product.id), ["oled"]);
+});
+
 test("outfit generation prioritizes owned complementary garments and reports gaps", () => {
   const anchor = productSchema.parse({ ...seedProducts[0], id: "anchor", sourceId: "anchor", category: "Vestes", decision: "saved" });
   const top = productSchema.parse({ ...seedProducts[2], id: "owned-top", sourceId: "owned-top", kind: "owned", decision: "owned", category: "Mailles" });
@@ -78,11 +97,11 @@ test("projection cache reuses coordinates while preserving newer product metadat
   assert.equal(second[0].y, initial[0].y);
 });
 
-test("Vision launches Codex non-interactively without incompatible sandbox flags", () => {
+test("Vision launches Codex with a read-only sandbox and approvals disabled", () => {
   const args = visualCodexArgs({ jobId: "job-test", referenceImages: ["/tmp/mood.jpg"], reasoningEffort: "medium" });
-  assert.ok(args.includes("--approve-for-me"));
-  assert.ok(!args.includes("--sandbox"));
-  assert.ok(!args.some((value) => value.includes("approval_policy")));
+  assert.ok(!args.includes("--approve-for-me"));
+  assert.deepEqual(args.slice(args.indexOf("--sandbox"), args.indexOf("--sandbox") + 2), ["--sandbox", "read-only"]);
+  assert.ok(args.includes("approval_policy=\"never\""));
   assert.ok(args.includes("features.shell_tool=false"));
   assert.ok(args.some((value) => value.includes("WARDROBE_VISUAL_JOB_ID=\"job-test\"")));
   assert.deepEqual(args.slice(-3), ["--image", "/tmp/mood.jpg", "-"]);
@@ -166,19 +185,21 @@ test("public Product JSON-LD URLs from a new shop can create catalog sheets", as
   db.exec(readFileSync(resolve(process.cwd(), "server/schema.sql"), "utf8"));
   const repository = new CatalogRepository(db);
   const app = createApp(repository);
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input) => {
-    const url = String(input);
-    const suffix = url.includes("second") ? "2" : "1";
-    return new Response(`<!doctype html><script type="application/ld+json">{
-    "@context":"https://schema.org/","@type":"Product","sku":"TEST-${suffix}",
-    "name":"Cotton Cardigan ${suffix}","brand":{"name":"Independent Shop"},"color":"Dark Green",
-    "image":["https://image.example.test/cardigan.jpg"],
-    "offers":{"price":"129","priceCurrency":"CHF","availability":"https://schema.org/InStock"}
-  }</script>`, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
-  };
+  setPublicNetworkTestHooksForTests({
+    resolver: async () => [{ address: "8.8.8.8", family: 4 }],
+    fetch: async (input) => {
+      const url = input;
+      const suffix = url.includes("second") ? "2" : "1";
+      return new Response(`<!doctype html><script type="application/ld+json">{
+      "@context":"https://schema.org/","@type":"Product","sku":"TEST-${suffix}",
+      "name":"Cotton Cardigan ${suffix}","brand":{"name":"Independent Shop"},"color":"Dark Green",
+      "image":["https://images.example.com/cardigan.jpg"],
+      "offers":{"price":"129","priceCurrency":"CHF","availability":"https://schema.org/InStock"}
+    }</script>`, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+    },
+  });
   t.after(() => {
-    globalThis.fetch = originalFetch;
+    setPublicNetworkTestHooksForTests(null);
     db.close();
   });
 

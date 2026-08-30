@@ -34,8 +34,13 @@ function matchesClause(product: Product, clause: FilterClause): boolean {
 
   if (clause.operator === "gte" || clause.operator === "lte") {
     if (actual === undefined || actual === null || actual === "") return false;
-    const left = Number(actual);
-    const right = Number(expected);
+    let left = Number(actual);
+    let right = Number(expected);
+    if (!Number.isFinite(left) || !Number.isFinite(right)) {
+      left = typeof actual === "string" ? Date.parse(actual) : Number.NaN;
+      right = typeof expected === "string" ? Date.parse(expected) : Number.NaN;
+    }
+    if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
     return clause.operator === "gte" ? left >= right : left <= right;
   }
 
@@ -61,16 +66,16 @@ function matchesClause(product: Product, clause: FilterClause): boolean {
   return !exactMatch;
 }
 
-function matchesExpression(product: Product, expression: FilterExpression): boolean {
+export function matchesFilterExpression(product: Product, expression: FilterExpression): boolean {
   if (expression.type === "clause") return matchesClause(product, expression);
-  if (expression.type === "not") return !matchesExpression(product, expression.child);
-  const results = expression.children.map((child) => matchesExpression(product, child));
+  if (expression.type === "not") return !matchesFilterExpression(product, expression.child);
+  const results = expression.children.map((child) => matchesFilterExpression(product, child));
   return expression.conjunction === "and" ? results.every(Boolean) : results.some(Boolean);
 }
 
 export function applyFilter(products: Product[], spec: FilterSpec): Product[] {
   const filtered = products.filter((product) => {
-    return matchesExpression(product, spec.where);
+    return matchesFilterExpression(product, spec.where);
   });
 
   if (spec.sort) {

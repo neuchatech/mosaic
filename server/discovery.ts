@@ -175,7 +175,11 @@ export type DiscoveryServiceOptions = {
   sleep?: (milliseconds: number) => Promise<void>;
   idFactory?: () => string;
   /** Catalog-level deduplication hook, in addition to per-job deduplication. */
-  isKnownProduct?: (product: RawProduct, source: DiscoveryIntent["source"]) => boolean;
+  isKnownProduct?: (
+    product: RawProduct,
+    source: DiscoveryIntent["source"],
+    intent: DiscoveryIntent,
+  ) => boolean;
   /** Called only with products newly accepted into the bounded job result. */
   onProducts?: (
     products: RawProduct[],
@@ -254,6 +258,10 @@ export function validateDiscoveryIntent(input: DiscoveryIntent): DiscoveryIntent
   }
   const query = input.query?.replace(/\s+/g, " ").trim();
   const category = input.category?.replace(/\s+/g, " ").trim();
+  const workspaceId = input.workspaceId?.trim();
+  if (workspaceId !== undefined && (workspaceId.length < 1 || workspaceId.length > 128)) {
+    throw new Error("Discovery workspaceId must contain between 1 and 128 characters.");
+  }
   if (query && query.length > 300) throw new Error("Discovery query is limited to 300 characters.");
   if (category && category.length > 100) throw new Error("Discovery category is limited to 100 characters.");
   const sizes = [...new Set((input.sizes ?? []).map((size) => size.trim()).filter(Boolean))];
@@ -275,6 +283,7 @@ export function validateDiscoveryIntent(input: DiscoveryIntent): DiscoveryIntent
   }
   const intent: DiscoveryIntent = {
     source: input.source,
+    ...(workspaceId ? { workspaceId } : {}),
     maxItems: input.maxItems,
     sizeMode: input.sizeMode ?? "any",
     ...(query ? { query } : {}),
@@ -763,7 +772,7 @@ export class DiscoveryService {
             item.duplicates += 1;
             continue;
           }
-          if (this.isKnownProduct?.(observed, job.source)) {
+          if (this.isKnownProduct?.(observed, job.source, job.intent)) {
             item.duplicates += 1;
             continue;
           }

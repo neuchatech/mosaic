@@ -40,6 +40,8 @@ export type DiscoverySizeMode = "any" | "all";
  */
 export type DiscoveryIntent = {
   source: DiscoverySource;
+  /** Local routing metadata only; shop adapters intentionally ignore it. */
+  workspaceId?: string;
   query?: string;
   category?: string;
   sizes?: string[];

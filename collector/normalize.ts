@@ -1,5 +1,5 @@
 import { productSchema, type Product } from "../src/domain/catalog";
-import { stableProductId } from "../src/domain/ids";
+import { stableWorkspaceProductId } from "../src/domain/ids";
 import type { RawProduct } from "./types";
 
 export function guessCategory(value: string): string {
@@ -56,12 +56,17 @@ export function guessTags(value: string): string[] {
   return tags;
 }
 
-export function normalizeProduct(source: string, raw: RawProduct): Product {
+export function normalizeProduct(
+  source: string,
+  raw: RawProduct,
+  workspaceId = "default-clothing",
+): Product {
   const now = new Date().toISOString();
   const sourceId = raw.sourceId || new URL(raw.url).pathname;
   const descriptiveText = `${raw.name} ${raw.description ?? ""} ${raw.color ?? ""}`;
   return productSchema.parse({
-    id: stableProductId(source, sourceId),
+    id: stableWorkspaceProductId(workspaceId, source, sourceId),
+    workspaceId,
     kind: "shop",
     source,
     sourceId,

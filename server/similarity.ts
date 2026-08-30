@@ -44,9 +44,10 @@ export async function findSimilarProducts(input: SimilarProductsInput, repositor
     const vector = vectors.get(id);
     return vector ? [vector] : [];
   }));
-  const anchors = anchorIds.map((id) => repository.getProduct(id)).filter(Boolean) as Product[];
+  const workspaceId = input.constraints?.workspaceId;
+  const anchors = anchorIds.map((id) => repository.getProduct(id, workspaceId)).filter(Boolean) as Product[];
   if (!anchors.length) return [];
-  const candidates = filterVisualCandidates(repository.listProducts({ limit: 10_000 }), {
+  const candidates = filterVisualCandidates(repository.listProducts({ workspaceId, limit: 10_000 }), {
     includeSaved: false,
     includeRejected: false,
     ...(input.constraints ?? {}),

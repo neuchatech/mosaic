@@ -1,4 +1,4 @@
-# Wardrobe Atlas — sprints livrés
+# Mosaic — sprints livrés
 
 La roadmap suit le vrai parcours d’achat : éliminer d’abord les pièces impossibles à acheter, puis rendre la comparaison et la découverte progressivement plus utiles. Les six incréments ci-dessous sont intégrés dans l’application locale au 28 août 2026.
 
@@ -63,6 +63,18 @@ Critère de sortie : plusieurs milliers de produits restent fluides et les parco
 - [x] Tailles, boutiques et budget de l’interface deviennent des défauts que le texte peut remplacer.
 - [x] Plusieurs fiches publiques d’une nouvelle boutique peuvent être importées en une demande lorsqu’elles exposent `Product` JSON-LD.
 - [x] Les cartes peuvent servir de références du prompt par clic ou glisser-déposer.
+
+## Sprint 8 — Mosaic V1
+
+- [x] Remplacer l’interface technique par une expérience assistant-first et board-first avec onboarding contextuel.
+- [x] Généraliser le catalogue en espaces isolés (`clothing`, `televisions`, `generic`) et facettes dynamiques.
+- [x] Ajouter collections, sélection multiple réutilisable, activité unifiée et brouillons Studio locaux.
+- [x] Exécuter des plans bornés import/découverte/filtre/similarité/Vision/collection/comparaison/artefact sans faux succès vide.
+- [x] Ajouter l’index visuel CLIP local incrémental, sa progression et son fallback métadonnées.
+- [x] Livrer un skill d’acquisition projet et documenter le recours interactif optionnel à Chrome.
+- [x] Isoler toutes les données par espace et durcir les imports publics, médias et planches-contact contre les chemins locaux et réseaux privés.
+
+Critère de sortie : une personne non technique peut créer un espace, demander ou importer une exploration visuelle, organiser sa sélection et retrouver son activité sans voir le vocabulaire d’implémentation par défaut.
 
 ## Prochaine extension — Studio d’essayage
 

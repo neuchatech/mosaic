@@ -12,15 +12,16 @@ async function render() {
   );
 }
 
-test("server-renders the Wardrobe Atlas product surface", async () => {
+test("server-renders the Mosaic assistant-first product surface", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
-  assert.match(html, /<title>Wardrobe Atlas<\/title>/i);
-  assert.match(html, /Carte de style/);
-  assert.match(html, /Demande n’importe quoi, colle des liens ou dépose des images/);
-  assert.match(html, /Envoyer/);
-  assert.match(html, /PCA compacte/);
+  assert.match(html, /<title>Mosaic<\/title>/i);
+  assert.match(html, /Assistant visuel/);
+  assert.match(html, /Qu’est-ce qu’on cherche aujourd’hui/);
+  assert.match(html, /Ajouter des images/);
+  assert.match(html, /Collections/);
+  assert.match(html, /Recadrées/);
   assert.doesNotMatch(html, /codex-preview|Building your site|react-loading-skeleton/);
 });

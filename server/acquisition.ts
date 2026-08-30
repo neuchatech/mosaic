@@ -4,6 +4,7 @@ import { chromium } from "playwright";
 import { adapterFor } from "../collector/registry";
 import type { CollectedStockStatus, RawProduct } from "../collector/types";
 import { productSchema, type Product } from "../src/domain/catalog";
+import { DEFAULT_CLOTHING_WORKSPACE_ID } from "../src/domain/workspace";
 import { fetchPublicHtml } from "./public-html";
 
 export type AcquisitionStatus =
@@ -30,6 +31,7 @@ export type AcquisitionItemSnapshot = AcquisitionTarget & {
 
 export type AcquisitionJobSnapshot = {
   id: string;
+  workspaceId: string;
   source: string;
   status: AcquisitionStatus;
   total: number;
@@ -76,10 +78,11 @@ type EnrichedProduct = Product & {
 };
 
 export type AcquisitionRepository = {
-  getProduct(id: string): Product | null;
+  getProduct(id: string, workspaceId?: string): Product | null;
   upsertProducts(products: Product[]): number;
   createAcquisitionJob?(input: {
     id?: string;
+    workspaceId?: string;
     source: string;
     kind?: string;
     items?: Array<{
@@ -104,6 +107,7 @@ export type AcquisitionRepository = {
   retryAcquisitionItems?(jobId: string, itemIds?: string[]): unknown;
   getAcquisitionJob?(id: string): {
     id: string;
+    workspaceId?: string;
     source: string;
     status: AcquisitionStatus;
     error: string | null;
@@ -112,8 +116,13 @@ export type AcquisitionRepository = {
     updatedAt: string;
     finishedAt: string | null;
   } | null;
-  listAcquisitionJobs?(options?: { status?: AcquisitionStatus; limit?: number }): Array<{
+  listAcquisitionJobs?(options?: {
+    workspaceId?: string;
+    status?: AcquisitionStatus;
+    limit?: number;
+  }): Array<{
     id: string;
+    workspaceId?: string;
     source: string;
     status: AcquisitionStatus;
     error: string | null;
@@ -377,12 +386,25 @@ export class AcquisitionService {
     this.idFactory = options.idFactory ?? randomUUID;
   }
 
-  start(input: { targets: AcquisitionTarget[]; source?: string }): AcquisitionJobSnapshot {
+  start(input: {
+    targets: AcquisitionTarget[];
+    workspaceId?: string;
+    source?: string;
+  }): AcquisitionJobSnapshot {
     const targets = validateTargets(input.targets);
     if (input.source === "size-enrichment") this.prioritizeTargets(targets);
-    for (const target of targets) {
-      const product = this.repository.getProduct(target.productId);
-      if (!product) throw new Error(`Unknown product: ${target.productId}`);
+    const products = targets.map((target) => this.repository.getProduct(target.productId, input.workspaceId));
+    const missing = targets.filter((_, index) => !products[index]).map(({ productId }) => productId);
+    if (missing.length > 0) throw new Error(`Unknown or cross-workspace products: ${missing.join(", ")}`);
+    const workspaceIds = [...new Set((products as Product[]).map(
+      (product) => product.workspaceId ?? DEFAULT_CLOTHING_WORKSPACE_ID,
+    ))];
+    if (workspaceIds.length !== 1) {
+      throw new Error("An acquisition job cannot span multiple workspaces.");
+    }
+    const workspaceId = input.workspaceId ?? workspaceIds[0] ?? DEFAULT_CLOTHING_WORKSPACE_ID;
+    for (const [index, target] of targets.entries()) {
+      const product = products[index]!;
       if (product.url !== target.url && new URL(product.url).href !== target.url) {
         throw new Error(`Target URL does not match product ${target.productId}.`);
       }
@@ -391,6 +413,7 @@ export class AcquisitionService {
     const id = this.idFactory();
     const job: MutableJob = {
       id,
+      workspaceId,
       source: input.source ?? "detail-enrichment",
       status: "queued",
       total: targets.length,
@@ -413,6 +436,7 @@ export class AcquisitionService {
     };
     this.repository.createAcquisitionJob?.({
       id,
+      workspaceId,
       source: job.source,
       kind: "detail",
       items: job.items.map((item) => ({
@@ -433,11 +457,12 @@ export class AcquisitionService {
     return job ? publicSnapshot(job) : null;
   }
 
-  list(): AcquisitionJobSnapshot[] {
-    for (const stored of this.repository.listAcquisitionJobs?.({ limit: 100 }) ?? []) {
+  list(workspaceId?: string): AcquisitionJobSnapshot[] {
+    for (const stored of this.repository.listAcquisitionJobs?.({ workspaceId, limit: 100 }) ?? []) {
       if (!this.jobs.has(stored.id)) this.hydrate(stored.id);
     }
     return [...this.jobs.values()]
+      .filter((job) => !workspaceId || job.workspaceId === workspaceId)
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
       .map(publicSnapshot);
   }
@@ -599,6 +624,7 @@ export class AcquisitionService {
     const completed = items.filter((item) => terminal(item.status)).length;
     const job: MutableJob = {
       id: stored.id,
+      workspaceId: stored.workspaceId ?? DEFAULT_CLOTHING_WORKSPACE_ID,
       source: stored.source,
       status: stored.status,
       total: items.length,
@@ -687,7 +713,7 @@ export class AcquisitionService {
         const raw = await this.fetcher.fetch(item, { signal: job.abortController.signal });
         if (job.cancelRequested) throw new AcquisitionCancelledError("Acquisition cancelled.");
         if (!raw) throw new AcquisitionFetchError("The shop adapter could not read this product detail page.");
-        const existing = this.repository.getProduct(item.productId);
+        const existing = this.repository.getProduct(item.productId, job.workspaceId);
         if (!existing) throw new AcquisitionFetchError(`Product disappeared during acquisition: ${item.productId}`);
         const observedAt = this.now().toISOString();
         const merged = mergeCollectedDetail(existing, raw, observedAt);
