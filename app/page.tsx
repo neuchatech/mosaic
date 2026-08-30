@@ -1011,7 +1011,10 @@ type MosaicArtifact = {
 
 type AtlasDiscoverySession = { plan: AtlasDiscoveryPlan; jobIds: string[]; workspaceId?: string };
 
-const ATLAS_API = "/api";
+// Vite's development server proxies `/api`; the production vinext server does
+// not. Keep the dev single-origin path, while the local production build talks
+// directly to the API process started alongside it by `npm start`.
+const ATLAS_API = process.env.NODE_ENV === "production" ? "http://127.0.0.1:8788/api" : "/api";
 const ATLAS_ORIGIN = ATLAS_API.slice(0, -4);
 const ATLAS_PAGE_SIZE = 240;
 const ATLAS_DEFAULT_ZOOM = 2;
