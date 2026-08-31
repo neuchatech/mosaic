@@ -1,0 +1,7 @@
+interface:
+  display_name: "MosAIc Research"
+  short_description: "Research and organize any visual workspace"
+  default_prompt: "Use $mosaic-research to turn this request into a useful result in my active MosAIc workspace."
+
+policy:
+  allow_implicit_invocation: true

@@ -67,6 +67,7 @@ export async function runVisualEmbeddingPipeline(
     emit({ phase: "item-start", itemId: item.id });
     const metadataVector = sanitizeVector(item.metadataVector);
     const candidateSources = uniqueSources(item.imageUrls, imagesPerItem);
+    const imageContext = { itemId: item.id, kind: item.kind };
     const visualVectors: number[][] = [];
     const usedImageUrls: string[] = [];
     const contentHashes: string[] = [];
@@ -78,8 +79,8 @@ export async function runVisualEmbeddingPipeline(
         if (options.signal?.aborted) throw options.signal.reason ?? new Error("Embedding run cancelled.");
         try {
           const image = options.encoder
-            ? await options.cache.getImage(source, { force: options.force, signal: options.signal })
-            : await options.cache.getCachedImage(source);
+            ? await options.cache.getImage(source, { force: options.force, signal: options.signal, context: imageContext })
+            : await options.cache.getCachedImage(source, { context: imageContext });
           if (!image) {
             everyEmbeddingWasCached = false;
             continue;

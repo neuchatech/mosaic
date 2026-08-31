@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { catalogMediaPath, persistCatalogImages } from "../server/media";
+import { setPublicNetworkTestHooksForTests } from "../server/public-html";
 import { embedCatalogProducts } from "../server/visual-embeddings";
-import { seedProducts } from "../src/catalog/seed";
+import { seedProducts } from "./fixtures/products";
 import {
   VisualEmbeddingCache,
   buildHybridVector,
@@ -27,6 +29,80 @@ async function temporaryCache(t: test.TestContext): Promise<string> {
   return path;
 }
 
+test("default visual image loading permits only pinned public HTTPS for shop items", async (t) => {
+  const rootDir = await temporaryCache(t);
+  let fetchCalls = 0;
+  setPublicNetworkTestHooksForTests({
+    resolver: async () => [{ address: "8.8.8.8", family: 4 }],
+    fetch: async () => {
+      fetchCalls += 1;
+      return new Response(Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]), {
+        status: 200,
+        headers: { "content-type": "image/jpeg" },
+      });
+    },
+  });
+  t.after(() => setPublicNetworkTestHooksForTests(null));
+  const cache = new VisualEmbeddingCache({ rootDir });
+  const context = { itemId: "shop-1", kind: "shop" as const };
+
+  const image = await cache.getImage("https://cdn.example.com/look.jpg", { context });
+  assert.equal(image.byteLength, 4);
+  assert.equal(fetchCalls, 1);
+  for (const source of [
+    "file:///etc/passwd",
+    "http://cdn.example.com/look.jpg",
+    "data:image/jpeg;base64,AQIDBA==",
+    "/api/media/shop-1/1.jpg",
+    "https://private.invalid/look.jpg",
+  ]) await assert.rejects(cache.getImage(source, { context }), /public HTTPS|local catalog media/i, source);
+  assert.equal(fetchCalls, 1);
+});
+
+test("default visual image loading rejects private DNS before transport", async (t) => {
+  const rootDir = await temporaryCache(t);
+  let fetchCalls = 0;
+  setPublicNetworkTestHooksForTests({
+    resolver: async () => [{ address: "169.254.169.254", family: 4 }],
+    fetch: async () => { fetchCalls += 1; return new Response("unexpected"); },
+  });
+  t.after(() => setPublicNetworkTestHooksForTests(null));
+  const cache = new VisualEmbeddingCache({ rootDir });
+  await assert.rejects(
+    cache.getImage("https://cdn.example.com/private.jpg", {
+      context: { itemId: "shop-private", kind: "shop" },
+    }),
+    /non-public address/i,
+  );
+  assert.equal(fetchCalls, 0);
+});
+
+test("visual owned/reference media requires matching item context and app containment", async (t) => {
+  const rootDir = await temporaryCache(t);
+  const id = `owned-cache-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const images = await persistCatalogImages(id, ["data:image/png;base64,AQIDBA=="]);
+  t.after(() => rm(dirname(catalogMediaPath(id, "1.png")), { recursive: true, force: true }));
+  const cache = new VisualEmbeddingCache({ rootDir });
+  const source = images[0]!;
+
+  const image = await cache.getImage(source, { context: { itemId: id, kind: "owned" } });
+  assert.equal(image.byteLength, 4);
+  assert.ok(await cache.getCachedImage(source, { context: { itemId: id, kind: "reference" } }));
+  await assert.rejects(
+    cache.getCachedImage(source, { context: { itemId: "another-item", kind: "owned" } }),
+    /does not belong/i,
+  );
+  await assert.rejects(cache.getImage(source), /explicit owned\/reference item context/i);
+  await assert.rejects(
+    cache.getImage(`https://cdn.example.com/${id}.jpg`, { context: { itemId: id, kind: "reference" } }),
+    /matching app-owned catalog media/i,
+  );
+  await assert.rejects(
+    cache.getImage(`/api/media/${id}/../1.png`, { context: { itemId: id, kind: "owned" } }),
+    /matching app-owned catalog media/i,
+  );
+});
+
 test("visual cache deduplicates images and embeddings across items and resumed runs", async (t) => {
   const rootDir = await temporaryCache(t);
   let imageLoads = 0;
@@ -40,8 +116,8 @@ test("visual cache deduplicates images and embeddings across items and resumed r
     async encodeImage() { encodes += 1; return [3, 4, 0]; },
   };
   const items = [
-    { id: "one", imageUrls: ["https://images.example/look.jpg"], metadataVector: [1, 0] },
-    { id: "two", imageUrls: ["https://images.example/look.jpg"], metadataVector: [0, 1] },
+    { id: "one", imageUrls: ["https://images.example.com/look.jpg"], metadataVector: [1, 0] },
+    { id: "two", imageUrls: ["https://images.example.com/look.jpg"], metadataVector: [0, 1] },
   ];
 
   const first = await runVisualEmbeddingPipeline({
@@ -90,8 +166,8 @@ test("per-image failures fall back to metadata and do not stop later items", asy
   };
   const run = await runVisualEmbeddingPipeline({
     items: [
-      { id: "broken", imageUrls: ["https://images.example/broken.jpg"], metadataVector: [2, 1] },
-      { id: "healthy", imageUrls: ["https://images.example/healthy.jpg"], metadataVector: [1, 2] },
+      { id: "broken", imageUrls: ["https://images.example.com/broken.jpg"], metadataVector: [2, 1] },
+      { id: "healthy", imageUrls: ["https://images.example.com/healthy.jpg"], metadataVector: [1, 2] },
     ],
     cache: new VisualEmbeddingCache({ rootDir, imageLoader }),
     model,
@@ -109,7 +185,7 @@ test("missing local model uses metadata only without downloading images", async 
   const rootDir = await temporaryCache(t);
   let imageLoads = 0;
   const run = await runVisualEmbeddingPipeline({
-    items: [{ id: "offline", imageUrls: ["https://images.example/offline.jpg"], metadataVector: [3, 4] }],
+    items: [{ id: "offline", imageUrls: ["https://images.example.com/offline.jpg"], metadataVector: [3, 4] }],
     cache: new VisualEmbeddingCache({
       rootDir,
       imageLoader: async () => { imageLoads += 1; return { bytes: Uint8Array.from([1]) }; },
@@ -136,10 +212,16 @@ test("hybrid block norms encode the requested cosine-distance weights", () => {
 
 test("catalog adapter returns hybrid vectors without mutating product decisions", async (t) => {
   const cacheDir = await temporaryCache(t);
+  const id = `owned-embedding-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const images = await persistCatalogImages(id, ["data:image/jpeg;base64,AQIDBA=="]);
+  t.after(() => rm(dirname(catalogMediaPath(id, "1.jpg")), { recursive: true, force: true }));
   const product = {
     ...seedProducts[0]!,
+    id,
+    sourceId: id,
+    kind: "owned" as const,
     decision: "saved" as const,
-    images: ["data:image/jpeg;base64,AQIDBA=="],
+    images,
   };
   const before = structuredClone(product);
   const encoder: VisualImageEncoder = {

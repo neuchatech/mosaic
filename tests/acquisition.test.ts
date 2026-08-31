@@ -376,6 +376,30 @@ test("same-domain requests observe the configured delay", async () => {
   await service.close();
 });
 
+test("a listing request delays the first detail request on the same shop", async () => {
+  const current = product("after-listing");
+  const repository = new MemoryRepository([current]);
+  let clock = Date.parse(observed);
+  const sleeps: number[] = [];
+  const service = new AcquisitionService(repository, {
+    fetcher: {
+      async fetch(target) {
+        return { url: target.url, name: target.productId, stockStatus: "unknown" };
+      },
+    },
+    sameDomainDelayMs: 5_000,
+    now: () => new Date(clock),
+    sleep: async (milliseconds) => { sleeps.push(milliseconds); clock += milliseconds; },
+    idFactory: ids(),
+  });
+  service.noteShopRequest(current.url, clock);
+  const started = service.start({ targets: [{ productId: current.id, url: current.url }] });
+  const finished = await service.waitFor(started.id);
+  assert.equal(finished.status, "succeeded");
+  assert.deepEqual(sleeps, [5_000]);
+  await service.close();
+});
+
 test("size enrichment uses jitter and prioritizes saved, affordable, high-score items", async () => {
   const products = [
     product("expensive", { decision: "unseen", price: 350, scores: { visual_match: 99 } }),
@@ -615,6 +639,7 @@ test("the acquisition API uses one status contract and exposes explicit recovery
 test("client status reports partial successes on a blocked terminal job", () => {
   const view = acquisitionClientView({
     id: "partial",
+    workspaceId: "default-clothing",
     source: "test",
     status: "blocked",
     total: 2,

@@ -1,6 +1,5 @@
-[mcp_servers.wardrobe_atlas]
+[mcp_servers.mosaic]
 command = "npm"
 args = ["run", "mcp"]
-cwd = "/Users/alex/Documents/code/wardrobe-atlas"
 startup_timeout_sec = 20
 tool_timeout_sec = 120

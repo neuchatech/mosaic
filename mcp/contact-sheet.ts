@@ -3,7 +3,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import sharpFactory from "sharp";
-import { catalogMediaPath } from "../server/media";
+import { readCatalogMedia } from "../server/media";
+import { fetchPublicBytes } from "../server/public-html";
+import { normalizePublicHttpsUrl } from "../server/public-network";
 import type { Product } from "../src/domain/catalog";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -35,36 +37,55 @@ export async function loadProductImage(product: Product): Promise<Buffer> {
   if (!source) {
     return sharp({ create: { width: 240, height: 270, channels: 3, background: "#ded9cf" } }).jpeg().toBuffer();
   }
-  if (source.startsWith("/api/media/")) {
-    const [, , , encodedItemId, fileName] = source.split("/");
-    if (!encodedItemId || !fileName) throw new Error("Invalid catalog media URL.");
-    return readFile(catalogMediaPath(decodeURIComponent(encodedItemId), fileName));
+  if (product.kind !== "shop") {
+    // User images are copied to app-owned storage at ingestion. Contact sheets
+    // never follow an arbitrary local path, even when a catalog row is edited
+    // or imported outside the normal API.
+    const mediaUrl = /^\/api\/media\/([^/?#]+)\/([1-6]\.(?:jpg|png|webp))$/.exec(source);
+    if (!mediaUrl) throw new Error("Owned and reference images must use app-owned catalog media.");
+    let itemId: string;
+    try {
+      itemId = decodeURIComponent(mediaUrl[1]!);
+    } catch {
+      throw new Error("Invalid catalog media URL.");
+    }
+    if (itemId !== product.id) throw new Error("Catalog media does not belong to this item.");
+    return readCatalogMedia(itemId, mediaUrl[2]!, 20 * 1024 * 1024);
   }
-  if (source.startsWith("/")) return readFile(resolve(projectRoot, "public", source.slice(1)));
-  if (source.startsWith("file://")) return readFile(new URL(source));
-  const dataUrl = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(source);
-  if (dataUrl) return Buffer.from(dataUrl[2], "base64");
-  const existingLoad = imageLoads.get(source);
+
+  const safeSource = normalizePublicHttpsUrl(source);
+  if (!safeSource) throw new Error("Shop images must use a public HTTPS URL.");
+  const existingLoad = imageLoads.get(safeSource);
   if (existingLoad) return existingLoad;
   const load = (async () => {
     const directory = resolve(projectRoot, "data/image-cache");
-    const path = resolve(directory, `${hash(source)}.img`);
+    // A namespace bump prevents data fetched by the former unrestricted loader
+    // (including file: and HTTP targets) from being treated as trusted cache.
+    const path = resolve(directory, `public-v1-${hash(safeSource)}.img`);
     try {
       return await readFile(path);
     } catch {
-      const response = await fetch(source, { signal: AbortSignal.timeout(12_000) });
-      if (!response.ok) throw new Error(`Image fetch failed: ${response.status}`);
-      const buffer = Buffer.from(await response.arrayBuffer());
+      const response = await fetchPublicBytes(safeSource, {
+        signal: AbortSignal.timeout(12_000),
+        timeoutMs: 12_000,
+        maxBytes: 20 * 1024 * 1024,
+        accept: "image/avif,image/webp,image/png,image/jpeg,image/gif;q=0.8",
+      });
+      if (response.status < 200 || response.status >= 300) throw new Error(`Image fetch failed: ${response.status}`);
+      const contentType = response.contentType.toLocaleLowerCase().split(";", 1)[0]?.trim();
+      if (!contentType?.startsWith("image/") && contentType !== "application/octet-stream") {
+        throw new Error(`Image fetch returned ${response.contentType || "an unknown content type"}.`);
+      }
       await mkdir(directory, { recursive: true });
-      await writeFile(path, buffer);
-      return buffer;
+      await writeFile(path, response.body);
+      return response.body;
     }
   })();
-  imageLoads.set(source, load);
+  imageLoads.set(safeSource, load);
   try {
     return await load;
   } finally {
-    imageLoads.delete(source);
+    imageLoads.delete(safeSource);
   }
 }
 

@@ -1,13 +1,18 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readCatalogMedia } from "../../server/media";
+import { fetchPublicBytes } from "../../server/public-html";
+import { normalizePublicHttpsUrl } from "../../server/public-network";
 import {
   VISUAL_EMBEDDING_SCHEMA_VERSION,
+  type VisualEmbeddingItemKind,
   type VisualModelSpec,
 } from "./types";
 
 const DEFAULT_MAX_IMAGE_BYTES = 16 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+const sha256 = /^[a-f0-9]{64}$/;
 
 type CachedImageRecord = {
   schemaVersion: typeof VISUAL_EMBEDDING_SCHEMA_VERSION;
@@ -42,9 +47,14 @@ export type ImageLoadResult = {
   contentType?: string;
 };
 
+export type VisualImageSourceContext = {
+  itemId: string;
+  kind?: VisualEmbeddingItemKind;
+};
+
 export type ImageSourceLoader = (
   source: string,
-  options: { signal?: AbortSignal; maxBytes: number },
+  options: { signal?: AbortSignal; maxBytes: number; context?: VisualImageSourceContext },
 ) => Promise<ImageLoadResult>;
 
 export type VisualEmbeddingCacheOptions = {
@@ -82,49 +92,62 @@ async function readJson<T>(path: string): Promise<T | null> {
   }
 }
 
-function decodeDataUrl(source: string): ImageLoadResult {
-  const match = source.match(/^data:([^;,]+)?(?:;charset=[^;,]+)?(;base64)?,([\s\S]*)$/);
-  if (!match) throw new Error("Invalid data image URL.");
-  const bytes = match[2]
-    ? Buffer.from(match[3], "base64")
-    : Buffer.from(decodeURIComponent(match[3]), "utf8");
-  return { bytes, ...(match[1] ? { contentType: match[1] } : {}) };
+type AuthorizedImageSource =
+  | { kind: "catalog-media"; source: string; itemId: string; fileName: string }
+  | { kind: "public-https"; source: string };
+
+function authorizeImageSource(source: string, context?: VisualImageSourceContext): AuthorizedImageSource {
+  const candidate = source.trim();
+  const mediaUrl = /^\/api\/media\/([^/?#]+)\/([1-6]\.(?:jpg|png|webp))$/.exec(candidate);
+  if (mediaUrl) {
+    if (context?.kind !== "owned" && context?.kind !== "reference") {
+      throw new Error("Local catalog media requires explicit owned/reference item context.");
+    }
+    let itemId: string;
+    try {
+      itemId = decodeURIComponent(mediaUrl[1]!);
+    } catch {
+      throw new Error("Invalid catalog media URL.");
+    }
+    if (itemId !== context.itemId) throw new Error("Catalog media does not belong to this item.");
+    return {
+      kind: "catalog-media",
+      source: candidate,
+      itemId,
+      fileName: mediaUrl[2]!,
+    };
+  }
+  if (context?.kind === "owned" || context?.kind === "reference") {
+    throw new Error("Owned and reference embeddings require matching app-owned catalog media.");
+  }
+  const safeUrl = normalizePublicHttpsUrl(candidate);
+  if (!safeUrl) throw new Error("Visual shop images require a public HTTPS URL.");
+  return { kind: "public-https", source: safeUrl };
+}
+
+/** Validate and canonicalize before cache lookup as well as before I/O. */
+export function normalizeVisualImageSource(source: string, context?: VisualImageSourceContext): string {
+  return authorizeImageSource(source, context).source;
 }
 
 export const defaultImageSourceLoader: ImageSourceLoader = async (source, options) => {
+  const authorized = authorizeImageSource(source, options.context);
   let result: ImageLoadResult;
-  if (source.startsWith("data:")) {
-    result = decodeDataUrl(source);
+  if (authorized.kind === "catalog-media") {
+    result = { bytes: await readCatalogMedia(authorized.itemId, authorized.fileName, options.maxBytes) };
   } else {
-    const url = new URL(source);
-    if (url.protocol === "file:") {
-      const path = fileURLToPath(url);
-      const fileStat = await stat(path);
-      if (fileStat.size > options.maxBytes) throw new Error(`Image exceeds ${options.maxBytes} bytes.`);
-      result = { bytes: await readFile(path) };
-    } else if (url.protocol === "http:" || url.protocol === "https:") {
-      const timeout = AbortSignal.timeout(20_000);
-      const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
-      const response = await fetch(url, {
-        redirect: "follow",
-        signal,
-        headers: {
-          accept: "image/avif,image/webp,image/jpeg,image/png,image/*;q=0.8",
-          "user-agent": "WardrobeAtlas/0.1 local-visual-index",
-        },
-      });
-      if (!response.ok) throw new Error(`Image download failed (${response.status} ${response.statusText}).`);
-      const declaredLength = Number(response.headers.get("content-length"));
-      if (Number.isFinite(declaredLength) && declaredLength > options.maxBytes) {
-        throw new Error(`Image exceeds ${options.maxBytes} bytes.`);
-      }
-      result = {
-        bytes: new Uint8Array(await response.arrayBuffer()),
-        contentType: response.headers.get("content-type")?.split(";")[0] || undefined,
-      };
-    } else {
-      throw new Error(`Unsupported image protocol: ${url.protocol}`);
+    const response = await fetchPublicBytes(authorized.source, {
+      signal: options.signal ?? new AbortController().signal,
+      timeoutMs: 20_000,
+      maxBytes: options.maxBytes,
+      accept: "image/avif,image/webp,image/jpeg,image/png",
+    });
+    if (response.status < 200 || response.status >= 300) throw new Error(`Image download failed (HTTP ${response.status}).`);
+    const contentType = response.contentType.toLocaleLowerCase().split(";", 1)[0]?.trim();
+    if (!contentType || !["image/avif", "image/webp", "image/jpeg", "image/png"].includes(contentType)) {
+      throw new Error(`Image download returned ${response.contentType || "an unsupported content type"}.`);
     }
+    result = { bytes: response.body, contentType };
   }
   if (result.bytes.byteLength === 0) throw new Error("Image payload is empty.");
   if (result.bytes.byteLength > options.maxBytes) throw new Error(`Image exceeds ${options.maxBytes} bytes.`);
@@ -143,29 +166,35 @@ export class VisualEmbeddingCache {
   constructor(options: VisualEmbeddingCacheOptions) {
     this.rootDir = resolve(options.rootDir);
     this.imageLoader = options.imageLoader ?? defaultImageSourceLoader;
-    this.maxImageBytes = options.maxImageBytes ?? DEFAULT_MAX_IMAGE_BYTES;
+    const maxImageBytes = options.maxImageBytes ?? DEFAULT_MAX_IMAGE_BYTES;
+    if (!Number.isSafeInteger(maxImageBytes) || maxImageBytes < 1 || maxImageBytes > MAX_IMAGE_BYTES) {
+      throw new Error(`Visual image byte limit must be an integer between 1 and ${MAX_IMAGE_BYTES}.`);
+    }
+    this.maxImageBytes = maxImageBytes;
   }
 
   async getImage(
     source: string,
-    options: { force?: boolean; signal?: AbortSignal } = {},
+    options: { force?: boolean; signal?: AbortSignal; context?: VisualImageSourceContext } = {},
   ): Promise<CachedImage> {
-    const sourceHash = hash(source);
+    const safeSource = normalizeVisualImageSource(source, options.context);
+    const sourceHash = hash(safeSource);
     if (!options.force) {
-      const cached = await this.getCachedImage(source);
+      const cached = await this.getCachedImage(safeSource, { context: options.context });
       if (cached) return cached;
     }
 
-    const loaded = await this.imageLoader(source, {
+    const loaded = await this.imageLoader(safeSource, {
       signal: options.signal,
       maxBytes: this.maxImageBytes,
+      context: options.context,
     });
     const contentHash = hash(loaded.bytes);
     const fileName = `${contentHash}.img`;
     const imagePath = join(this.rootDir, "images", fileName);
     try {
-      const imageStat = await stat(imagePath);
-      if (!imageStat.isFile() || imageStat.size !== loaded.bytes.byteLength) {
+      const imageStat = await lstat(imagePath);
+      if (!imageStat.isFile() || imageStat.isSymbolicLink() || imageStat.size !== loaded.bytes.byteLength) {
         await atomicWrite(imagePath, loaded.bytes);
       }
     } catch {
@@ -174,7 +203,7 @@ export class VisualEmbeddingCache {
     const record: CachedImageRecord = {
       schemaVersion: VISUAL_EMBEDDING_SCHEMA_VERSION,
       sourceHash,
-      sourceLabel: sourceLabel(source),
+      sourceLabel: sourceLabel(safeSource),
       contentHash,
       byteLength: loaded.bytes.byteLength,
       ...(loaded.contentType ? { contentType: loaded.contentType } : {}),
@@ -192,15 +221,21 @@ export class VisualEmbeddingCache {
     };
   }
 
-  async getCachedImage(source: string): Promise<CachedImage | null> {
-    const sourceHash = hash(source);
+  async getCachedImage(
+    source: string,
+    options: { context?: VisualImageSourceContext } = {},
+  ): Promise<CachedImage | null> {
+    const safeSource = normalizeVisualImageSource(source, options.context);
+    const sourceHash = hash(safeSource);
     const recordPath = join(this.rootDir, "sources", `${sourceHash}.json`);
     const record = await readJson<CachedImageRecord>(recordPath);
     if (record?.schemaVersion !== VISUAL_EMBEDDING_SCHEMA_VERSION || record.sourceHash !== sourceHash) return null;
+    if (!sha256.test(record.contentHash) || record.fileName !== `${record.contentHash}.img`) return null;
+    if (!Number.isSafeInteger(record.byteLength) || record.byteLength < 1 || record.byteLength > this.maxImageBytes) return null;
     const imagePath = join(this.rootDir, "images", record.fileName);
     try {
-      const imageStat = await stat(imagePath);
-      if (!imageStat.isFile() || imageStat.size !== record.byteLength) return null;
+      const imageStat = await lstat(imagePath);
+      if (!imageStat.isFile() || imageStat.isSymbolicLink() || imageStat.size !== record.byteLength) return null;
       return {
         path: imagePath,
         contentHash: record.contentHash,
@@ -214,6 +249,7 @@ export class VisualEmbeddingCache {
   }
 
   async getEmbedding(model: VisualModelSpec, contentHash: string): Promise<number[] | null> {
+    if (!sha256.test(contentHash)) return null;
     const path = this.embeddingPath(model, contentHash);
     const record = await readJson<CachedEmbeddingRecord>(path);
     if (!record || record.schemaVersion !== VISUAL_EMBEDDING_SCHEMA_VERSION) return null;
@@ -224,6 +260,7 @@ export class VisualEmbeddingCache {
   }
 
   async putEmbedding(model: VisualModelSpec, contentHash: string, vector: number[]): Promise<void> {
+    if (!sha256.test(contentHash)) throw new Error("Embedding content hash must be a SHA-256 digest.");
     if (!isFiniteVector(vector)) throw new Error("Refusing to cache an empty or non-finite visual embedding.");
     if (model.expectedDimension && vector.length !== model.expectedDimension) {
       throw new Error(`Expected a ${model.expectedDimension}D embedding, received ${vector.length}D.`);

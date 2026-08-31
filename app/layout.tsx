@@ -13,11 +13,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Wardrobe Atlas",
-  description: "Catalogue vestimentaire spatial, personnel et pilotable par Codex.",
+  title: "Neuchatech MosAIc",
+  description: "A local-first visual research canvas for collecting, comparing, and exploring anything.",
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    icon: "/favicon.svg?v=neuchatech-d52a1d",
+    shortcut: "/favicon.svg?v=neuchatech-d52a1d",
   },
 };
 
@@ -27,7 +27,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="fr">
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

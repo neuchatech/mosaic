@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="MosAIc mark">
+  <defs>
+    <linearGradient id="sand" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ded2b9"/><stop offset="1" stop-color="#cbbda3"/></linearGradient>
+    <linearGradient id="sage" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#8b8f73"/><stop offset="1" stop-color="#73775d"/></linearGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#302f2b"/><stop offset="1" stop-color="#1f1e1b"/></linearGradient>
+  </defs>
+  <rect x="17" y="18" width="53" height="55" rx="10" fill="#d52a1d"/>
+  <rect x="86" y="14" width="52" height="55" rx="9" fill="url(#sand)" transform="rotate(17 112 41.5)"/>
+  <rect x="17" y="85" width="56" height="56" rx="11" fill="url(#sage)"/>
+  <rect x="84" y="85" width="57" height="56" rx="11" fill="url(#ink)"/>
+  <path d="M77 64c1.45 8.7 5.8 13.05 14.5 14.5C82.8 79.95 78.45 84.3 77 93c-1.45-8.7-5.8-13.05-14.5-14.5C71.2 77.05 75.55 72.7 77 64Z" fill="#d52a1d"/>
+</svg>

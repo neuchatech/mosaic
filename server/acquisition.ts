@@ -1,10 +1,15 @@
 import { randomUUID } from "node:crypto";
-import type { Browser, BrowserContext } from "playwright";
-import { chromium } from "playwright";
+import type { BrowserContext } from "playwright";
 import { adapterFor } from "../collector/registry";
 import type { CollectedStockStatus, RawProduct } from "../collector/types";
 import { productSchema, type Product } from "../src/domain/catalog";
-import { fetchPublicHtml } from "./public-html";
+import { DEFAULT_CLOTHING_WORKSPACE_ID } from "../src/domain/workspace";
+import { fetchPublicHtml, parseRetryAfter } from "./public-html";
+import {
+  preferBrowserForShop,
+  sharedShopBrowser,
+  shopPrefersBrowser,
+} from "./shop-browser";
 
 export type AcquisitionStatus =
   | "queued"
@@ -30,6 +35,7 @@ export type AcquisitionItemSnapshot = AcquisitionTarget & {
 
 export type AcquisitionJobSnapshot = {
   id: string;
+  workspaceId: string;
   source: string;
   status: AcquisitionStatus;
   total: number;
@@ -76,10 +82,11 @@ type EnrichedProduct = Product & {
 };
 
 export type AcquisitionRepository = {
-  getProduct(id: string): Product | null;
+  getProduct(id: string, workspaceId?: string): Product | null;
   upsertProducts(products: Product[]): number;
   createAcquisitionJob?(input: {
     id?: string;
+    workspaceId?: string;
     source: string;
     kind?: string;
     items?: Array<{
@@ -104,6 +111,7 @@ export type AcquisitionRepository = {
   retryAcquisitionItems?(jobId: string, itemIds?: string[]): unknown;
   getAcquisitionJob?(id: string): {
     id: string;
+    workspaceId?: string;
     source: string;
     status: AcquisitionStatus;
     error: string | null;
@@ -112,8 +120,13 @@ export type AcquisitionRepository = {
     updatedAt: string;
     finishedAt: string | null;
   } | null;
-  listAcquisitionJobs?(options?: { status?: AcquisitionStatus; limit?: number }): Array<{
+  listAcquisitionJobs?(options?: {
+    workspaceId?: string;
+    status?: AcquisitionStatus;
+    limit?: number;
+  }): Array<{
     id: string;
+    workspaceId?: string;
     source: string;
     status: AcquisitionStatus;
     error: string | null;
@@ -155,6 +168,10 @@ type AcquisitionServiceOptions = {
 
 export class AcquisitionBlockedError extends Error {
   override readonly name = "AcquisitionBlockedError";
+
+  constructor(message: string, readonly retryAfterMs?: number) {
+    super(message);
+  }
 }
 
 export class AcquisitionCancelledError extends Error {
@@ -199,6 +216,16 @@ function productPriority(product: Product | null): [number, number, number, stri
   const priceRank = product.price !== null && product.price <= 200 ? 0 : product.price === null ? 1 : 2;
   const score = Math.max(0, ...Object.values(product.scores).filter(Number.isFinite));
   return [decisionRank, priceRank, -score, product.importedAt];
+}
+
+/** Share pacing across localized hosts such as fr.zalando.ch and www.zalando.ch. */
+export function shopRequestKey(url: string): string {
+  const parsed = new URL(url);
+  try {
+    return adapterFor(parsed, false).id;
+  } catch {
+    return parsed.hostname;
+  }
 }
 
 /**
@@ -377,12 +404,36 @@ export class AcquisitionService {
     this.idFactory = options.idFactory ?? randomUUID;
   }
 
-  start(input: { targets: AcquisitionTarget[]; source?: string }): AcquisitionJobSnapshot {
+  /**
+   * Share a request timestamp from the listing collector. The following detail
+   * page then observes the same per-shop delay instead of starting a second,
+   * independent burst immediately after discovery.
+   */
+  noteShopRequest(url: string, observedAt = this.now().getTime()): void {
+    const host = shopRequestKey(url);
+    const previous = this.lastRequestAt.get(host) ?? 0;
+    this.lastRequestAt.set(host, Math.max(previous, observedAt));
+  }
+
+  start(input: {
+    targets: AcquisitionTarget[];
+    workspaceId?: string;
+    source?: string;
+  }): AcquisitionJobSnapshot {
     const targets = validateTargets(input.targets);
     if (input.source === "size-enrichment") this.prioritizeTargets(targets);
-    for (const target of targets) {
-      const product = this.repository.getProduct(target.productId);
-      if (!product) throw new Error(`Unknown product: ${target.productId}`);
+    const products = targets.map((target) => this.repository.getProduct(target.productId, input.workspaceId));
+    const missing = targets.filter((_, index) => !products[index]).map(({ productId }) => productId);
+    if (missing.length > 0) throw new Error(`Unknown or cross-workspace products: ${missing.join(", ")}`);
+    const workspaceIds = [...new Set((products as Product[]).map(
+      (product) => product.workspaceId ?? DEFAULT_CLOTHING_WORKSPACE_ID,
+    ))];
+    if (workspaceIds.length !== 1) {
+      throw new Error("An acquisition job cannot span multiple workspaces.");
+    }
+    const workspaceId = input.workspaceId ?? workspaceIds[0] ?? DEFAULT_CLOTHING_WORKSPACE_ID;
+    for (const [index, target] of targets.entries()) {
+      const product = products[index]!;
       if (product.url !== target.url && new URL(product.url).href !== target.url) {
         throw new Error(`Target URL does not match product ${target.productId}.`);
       }
@@ -391,6 +442,7 @@ export class AcquisitionService {
     const id = this.idFactory();
     const job: MutableJob = {
       id,
+      workspaceId,
       source: input.source ?? "detail-enrichment",
       status: "queued",
       total: targets.length,
@@ -413,6 +465,7 @@ export class AcquisitionService {
     };
     this.repository.createAcquisitionJob?.({
       id,
+      workspaceId,
       source: job.source,
       kind: "detail",
       items: job.items.map((item) => ({
@@ -433,11 +486,12 @@ export class AcquisitionService {
     return job ? publicSnapshot(job) : null;
   }
 
-  list(): AcquisitionJobSnapshot[] {
-    for (const stored of this.repository.listAcquisitionJobs?.({ limit: 100 }) ?? []) {
+  list(workspaceId?: string): AcquisitionJobSnapshot[] {
+    for (const stored of this.repository.listAcquisitionJobs?.({ workspaceId, limit: 100 }) ?? []) {
       if (!this.jobs.has(stored.id)) this.hydrate(stored.id);
     }
     return [...this.jobs.values()]
+      .filter((job) => !workspaceId || job.workspaceId === workspaceId)
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
       .map(publicSnapshot);
   }
@@ -460,7 +514,7 @@ export class AcquisitionService {
       const blockedUntil = Date.parse(deadline);
       for (const item of job.items) {
         if (item.status === "queued" || item.status === "running" || item.status === "blocked") {
-          this.blockedHostsUntil.set(new URL(item.url).hostname, blockedUntil);
+          this.blockedHostsUntil.set(shopRequestKey(item.url), blockedUntil);
         }
       }
     }
@@ -599,6 +653,7 @@ export class AcquisitionService {
     const completed = items.filter((item) => terminal(item.status)).length;
     const job: MutableJob = {
       id: stored.id,
+      workspaceId: stored.workspaceId ?? DEFAULT_CLOTHING_WORKSPACE_ID,
       source: stored.source,
       status: stored.status,
       total: items.length,
@@ -687,7 +742,7 @@ export class AcquisitionService {
         const raw = await this.fetcher.fetch(item, { signal: job.abortController.signal });
         if (job.cancelRequested) throw new AcquisitionCancelledError("Acquisition cancelled.");
         if (!raw) throw new AcquisitionFetchError("The shop adapter could not read this product detail page.");
-        const existing = this.repository.getProduct(item.productId);
+        const existing = this.repository.getProduct(item.productId, job.workspaceId);
         if (!existing) throw new AcquisitionFetchError(`Product disappeared during acquisition: ${item.productId}`);
         const observedAt = this.now().toISOString();
         const merged = mergeCollectedDetail(existing, raw, observedAt);
@@ -714,8 +769,10 @@ export class AcquisitionService {
         }
         if (error instanceof AcquisitionBlockedError) {
           if (/HTTP 429/i.test(error.message) && rateLimitRetries < this.maxRateLimitRetries) {
-            const host = new URL(item.url).hostname;
-            const blockedUntil = this.now().getTime() + this.rateLimitCooldownMs;
+            const host = shopRequestKey(item.url);
+            const exponential = this.rateLimitCooldownMs * (2 ** rateLimitRetries);
+            const cooldownMs = Math.min(30 * 60_000, Math.max(0, error.retryAfterMs ?? exponential));
+            const blockedUntil = this.now().getTime() + cooldownMs;
             this.blockedHostsUntil.set(host, blockedUntil);
             rateLimitRetries += 1;
             item.error = `${error.message} Paused until ${new Date(blockedUntil).toISOString()}.`;
@@ -738,7 +795,7 @@ export class AcquisitionService {
           item.error = error.message;
           item.finishedAt = this.now().toISOString();
           if (/HTTP 429/i.test(error.message)) {
-            this.blockedHostsUntil.set(new URL(item.url).hostname, this.now().getTime() + this.rateLimitCooldownMs);
+            this.blockedHostsUntil.set(shopRequestKey(item.url), this.now().getTime() + this.rateLimitCooldownMs);
           }
           this.repository.blockAcquisitionItem?.(job.id, item.id, error.message);
           this.recount(job);
@@ -774,7 +831,7 @@ export class AcquisitionService {
   }
 
   private async throttle(url: string, signal: AbortSignal): Promise<void> {
-    const host = new URL(url).hostname;
+    const host = shopRequestKey(url);
     const blockedUntil = this.blockedHostsUntil.get(host) ?? 0;
     if (blockedUntil > this.now().getTime()) await this.waitUntil(blockedUntil, signal);
     if (blockedUntil && blockedUntil <= this.now().getTime()) this.blockedHostsUntil.delete(host);
@@ -904,15 +961,17 @@ async function accessBlockReason(context: BrowserContext, pageUrl: string, statu
 }
 
 export class PlaywrightDetailFetcher implements DetailFetcher {
-  private browser: Browser | null = null;
+  private readonly browserSession;
 
-  constructor(private readonly options: { headed?: boolean; timeoutMs?: number } = {}) {}
+  constructor(private readonly options: { headed?: boolean; timeoutMs?: number } = {}) {
+    this.browserSession = sharedShopBrowser(options.headed ?? false);
+  }
 
   async fetch(target: AcquisitionTarget, { signal }: DetailFetchContext): Promise<RawProduct | null> {
     if (signal.aborted) throw new AcquisitionCancelledError("Acquisition cancelled.");
     const requestedUrl = new URL(target.url);
     const adapter = adapterFor(requestedUrl, false);
-    if (adapter.extractDetailHtml) {
+    if (adapter.extractDetailHtml && !shopPrefersBrowser(requestedUrl.href)) {
       const response = await fetchPublicHtml(requestedUrl.href, {
         signal,
         timeoutMs: this.options.timeoutMs ?? 60_000,
@@ -930,7 +989,16 @@ export class PlaywrightDetailFetcher implements DetailFetcher {
         status: response.status,
         bodyText: plainText,
       });
-      if (blocked) throw new AcquisitionBlockedError(blocked);
+      if (blocked && (response.status === 403 || response.status === 429)) {
+        preferBrowserForShop(requestedUrl.href);
+        if (response.status === 429) {
+          throw new AcquisitionBlockedError(blocked, response.retryAfterMs);
+        }
+        // Retry through the persistent browser after the service's normal
+        // per-domain delay. A browser refusal remains a terminal block.
+        throw new AcquisitionFetchError("The stateless reader received HTTP 403; retrying once with the persistent browser session.");
+      }
+      if (blocked) throw new AcquisitionBlockedError(blocked, response.retryAfterMs);
       if (!adapter.matches(currentUrl)) {
         throw new AcquisitionFetchError(`Shop redirected outside its allowed hosts to ${currentUrl.hostname}.`);
       }
@@ -944,15 +1012,8 @@ export class PlaywrightDetailFetcher implements DetailFetcher {
       if (parsed) return parsed;
       // Keep the existing browser reader as a fallback for client-rendered data.
     }
-    this.browser ??= await chromium.launch({
-      headless: !this.options.headed,
-      channel: "chrome",
-    });
-    const context = await this.browser.newContext();
-    const closeOnAbort = () => void context.close().catch(() => undefined);
-    signal.addEventListener("abort", closeOnAbort, { once: true });
-    try {
-      const page = await context.newPage();
+    return this.browserSession.withPage(signal, async (page, context) => {
+      try {
       const response = await page.goto(requestedUrl.href, {
         waitUntil: "domcontentloaded",
         timeout: this.options.timeoutMs ?? 60_000,
@@ -960,22 +1021,35 @@ export class PlaywrightDetailFetcher implements DetailFetcher {
       if (signal.aborted) throw new AcquisitionCancelledError("Acquisition cancelled.");
       const currentUrl = new URL(page.url());
       const blocked = await accessBlockReason(context, currentUrl.href, response?.status());
-      if (blocked) throw new AcquisitionBlockedError(blocked);
+      if (blocked) {
+        preferBrowserForShop(requestedUrl.href);
+        throw new AcquisitionBlockedError(
+          blocked,
+          parseRetryAfter(response?.headers()["retry-after"] ?? null),
+        );
+      }
       if (!adapter.matches(currentUrl)) {
         throw new AcquisitionFetchError(`Shop redirected outside its allowed hosts to ${currentUrl.hostname}.`);
       }
+      if (adapter.extractDetailHtml) {
+        // Several shops inject the authoritative Product/ProductGroup JSON-LD
+        // shortly after DOMContentLoaded. Waiting for that public structured
+        // payload is faster and more stable than clicking size controls.
+        await page.waitForFunction(() => Array.from(
+          document.querySelectorAll('script[type="application/ld+json"]'),
+        ).some((node) => /"@type"\s*:\s*"Product(?:Group)?"/.test(node.textContent ?? "")), undefined, {
+          timeout: Math.min(8_000, this.options.timeoutMs ?? 60_000),
+        }).catch(() => undefined);
+      }
       return await adapter.extractDetail(page);
-    } catch (error) {
-      if (signal.aborted) throw new AcquisitionCancelledError("Acquisition cancelled.");
-      throw error;
-    } finally {
-      signal.removeEventListener("abort", closeOnAbort);
-      await context.close().catch(() => undefined);
-    }
+      } catch (error) {
+        if (signal.aborted) throw new AcquisitionCancelledError("Acquisition cancelled.");
+        throw error;
+      }
+    });
   }
 
   async close(): Promise<void> {
-    await this.browser?.close();
-    this.browser = null;
+    await this.browserSession.close();
   }
 }

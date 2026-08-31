@@ -1,5 +1,25 @@
+CREATE TABLE IF NOT EXISTS workspaces (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  profile TEXT NOT NULL DEFAULT 'generic',
+  schema_version INTEGER NOT NULL DEFAULT 1,
+  settings_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+INSERT OR IGNORE INTO workspaces (
+  id, name, description, profile, schema_version, settings_json, created_at, updated_at
+) VALUES (
+  'default-clothing', 'My workspace', 'Default Neuchatech MosAIc workspace', 'clothing', 1,
+  '{}',
+  strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+);
+
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default-clothing',
   kind TEXT NOT NULL DEFAULT 'shop',
   source TEXT NOT NULL,
   source_id TEXT NOT NULL,
@@ -9,9 +29,9 @@ CREATE TABLE IF NOT EXISTS products (
   description TEXT NOT NULL DEFAULT '',
   price REAL,
   original_price REAL,
-  currency TEXT NOT NULL DEFAULT 'CHF',
-  category TEXT NOT NULL DEFAULT 'Autre',
-  color TEXT NOT NULL DEFAULT 'Inconnue',
+  currency TEXT NOT NULL DEFAULT 'XXX',
+  category TEXT NOT NULL DEFAULT 'Other',
+  color TEXT NOT NULL DEFAULT 'Unknown',
   color_family TEXT NOT NULL DEFAULT 'unknown',
   fit TEXT NOT NULL DEFAULT 'unknown',
   attributes_json TEXT NOT NULL DEFAULT '{}',
@@ -28,14 +48,17 @@ CREATE TABLE IF NOT EXISTS products (
   decision TEXT NOT NULL DEFAULT 'unseen',
   x REAL NOT NULL DEFAULT .5,
   y REAL NOT NULL DEFAULT .5,
+  embedding_revision TEXT,
   scores_json TEXT NOT NULL DEFAULT '{}',
   imported_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  UNIQUE(source, source_id)
+  UNIQUE(workspace_id, source, source_id),
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS saved_filters (
   id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default-clothing',
   name TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   spec_json TEXT NOT NULL,
@@ -45,6 +68,7 @@ CREATE TABLE IF NOT EXISTS saved_filters (
 
 CREATE TABLE IF NOT EXISTS saved_views (
   id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default-clothing',
   name TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   filter_json TEXT NOT NULL,
@@ -55,8 +79,10 @@ CREATE TABLE IF NOT EXISTS saved_views (
 
 CREATE TABLE IF NOT EXISTS decision_actions (
   id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default-clothing',
   created_at TEXT NOT NULL,
-  undone_at TEXT
+  undone_at TEXT,
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS decision_action_items (
@@ -83,6 +109,7 @@ CREATE TABLE IF NOT EXISTS import_runs (
 
 CREATE TABLE IF NOT EXISTS visual_jobs (
   id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default-clothing',
   prompt TEXT NOT NULL,
   status TEXT NOT NULL,
   message TEXT NOT NULL DEFAULT '',
@@ -95,7 +122,8 @@ CREATE TABLE IF NOT EXISTS visual_jobs (
   candidates_frozen_at TEXT,
   error TEXT,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS visual_job_candidates (
@@ -123,6 +151,7 @@ CREATE TABLE IF NOT EXISTS visual_assessments (
 
 CREATE TABLE IF NOT EXISTS acquisition_jobs (
   id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default-clothing',
   source TEXT NOT NULL,
   kind TEXT NOT NULL DEFAULT 'enrichment',
   status TEXT NOT NULL DEFAULT 'queued',
@@ -135,7 +164,8 @@ CREATE TABLE IF NOT EXISTS acquisition_jobs (
   created_at TEXT NOT NULL,
   started_at TEXT,
   updated_at TEXT NOT NULL,
-  finished_at TEXT
+  finished_at TEXT,
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS acquisition_job_items (
@@ -157,11 +187,13 @@ CREATE TABLE IF NOT EXISTS acquisition_job_items (
 
 CREATE TABLE IF NOT EXISTS outfit_boards (
   id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default-clothing',
   name TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   metadata_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS outfit_board_items (
@@ -174,6 +206,135 @@ CREATE TABLE IF NOT EXISTS outfit_board_items (
   PRIMARY KEY(board_id, product_id),
   FOREIGN KEY(board_id) REFERENCES outfit_boards(id) ON DELETE CASCADE,
   FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS workspace_field_definitions (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  field_key TEXT NOT NULL,
+  label TEXT NOT NULL,
+  primitive_type TEXT NOT NULL,
+  unit TEXT,
+  semantic_role TEXT,
+  facetable INTEGER NOT NULL DEFAULT 0,
+  sortable INTEGER NOT NULL DEFAULT 0,
+  display_enabled INTEGER NOT NULL DEFAULT 1,
+  coverage REAL NOT NULL DEFAULT 0,
+  cardinality INTEGER NOT NULL DEFAULT 0,
+  source_aliases_json TEXT NOT NULL DEFAULT '[]',
+  normalizer TEXT,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  schema_version INTEGER NOT NULL DEFAULT 1,
+  inferred INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(workspace_id, field_key),
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS collections (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  collection_type TEXT NOT NULL DEFAULT 'manual',
+  name TEXT NOT NULL,
+  color TEXT,
+  icon TEXT,
+  description TEXT NOT NULL DEFAULT '',
+  smart_filter_json TEXT,
+  system_key TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(workspace_id, system_key),
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS collection_items (
+  collection_id TEXT NOT NULL,
+  product_id TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
+  role TEXT,
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(collection_id, product_id),
+  FOREIGN KEY(collection_id) REFERENCES collections(id) ON DELETE CASCADE,
+  FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  artifact_type TEXT NOT NULL DEFAULT 'other',
+  name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  local_files_json TEXT NOT NULL DEFAULT '[]',
+  prompt TEXT NOT NULL DEFAULT '',
+  input_item_ids_json TEXT NOT NULL DEFAULT '[]',
+  input_collection_ids_json TEXT NOT NULL DEFAULT '[]',
+  generator TEXT,
+  error TEXT,
+  provenance_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  finished_at TEXT,
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS research_runs (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  model TEXT NOT NULL,
+  reasoning_effort TEXT NOT NULL DEFAULT 'medium',
+  input_json TEXT NOT NULL DEFAULT '{}',
+  budget_json TEXT NOT NULL DEFAULT '{}',
+  manifest_json TEXT NOT NULL DEFAULT '{}',
+  result_json TEXT,
+  message TEXT NOT NULL DEFAULT '',
+  error TEXT,
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  updated_at TEXT NOT NULL,
+  finished_at TEXT,
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS research_run_events (
+  run_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  message TEXT NOT NULL DEFAULT '',
+  data_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(run_id, sequence),
+  FOREIGN KEY(run_id) REFERENCES research_runs(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS assistant_conversations (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS assistant_messages (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  status TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  research_run_id TEXT,
+  context_json TEXT NOT NULL DEFAULT '{}',
+  result_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(research_run_id, role),
+  FOREIGN KEY(conversation_id) REFERENCES assistant_conversations(id) ON DELETE CASCADE,
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+  FOREIGN KEY(research_run_id) REFERENCES research_runs(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_products_source_category ON products(source, category);
@@ -190,3 +351,19 @@ CREATE INDEX IF NOT EXISTS idx_acquisition_jobs_status_updated ON acquisition_jo
 CREATE INDEX IF NOT EXISTS idx_acquisition_items_job_status ON acquisition_job_items(job_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_outfit_boards_updated_at ON outfit_boards(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_outfit_items_board_position ON outfit_board_items(board_id, position);
+CREATE INDEX IF NOT EXISTS idx_workspaces_updated_at ON workspaces(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workspace_fields_order ON workspace_field_definitions(workspace_id, display_order, field_key);
+CREATE INDEX IF NOT EXISTS idx_workspace_fields_facets ON workspace_field_definitions(workspace_id, facetable, display_order);
+CREATE INDEX IF NOT EXISTS idx_collections_workspace_updated ON collections(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_collection_items_order ON collection_items(collection_id, position, created_at);
+CREATE INDEX IF NOT EXISTS idx_artifacts_workspace_updated ON artifacts(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_research_runs_workspace_updated
+  ON research_runs(workspace_id, updated_at DESC, id);
+CREATE INDEX IF NOT EXISTS idx_research_runs_workspace_status
+  ON research_runs(workspace_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_research_run_events_sequence
+  ON research_run_events(run_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_assistant_conversations_workspace_updated
+  ON assistant_conversations(workspace_id, updated_at DESC, id);
+CREATE INDEX IF NOT EXISTS idx_assistant_messages_conversation_created
+  ON assistant_messages(conversation_id, created_at, id);

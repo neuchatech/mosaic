@@ -38,6 +38,7 @@ import {
   type DiscoveryJobSnapshot,
   type DiscoveryJobStore,
 } from "../server/discovery";
+import { setPublicNetworkTestHooksForTests } from "../server/public-html";
 
 const zalandoListingHtml = `<!doctype html><script>window.__hydrationDataConsume({"graphqlCache":{"card":{"data":{"product":{"id":"ern:product::TEST22Q001-O11","sku":"TEST22Q001-O11","name":"BOXY CARDIGAN - Gilet - brown","brand":{"name":"Test Brand"},"displayPrice":{"trackingCurrentAmount":79,"original":{"amount":9900,"currency":"CHF"}},"mediumModelImage":{"uri":"https://img.example.test/cardigan.jpg"},"uri":"https://fr.zalando.ch/test-boxy-cardigan-test22q001-o11.html","silhouette":"CARDIGAN"}}}}})</script>`;
 
@@ -91,8 +92,36 @@ test("About You listings expose exact M/L availability without inventing detail 
   assert.equal(adapterFor(new URL("https://fr.aboutyou.ch/p/brand/boxy-jacket-32163979")).id, "aboutyou-ch");
 });
 
+test("About You maps baggy lightweight pants to its public listing facets", () => {
+  const [target] = buildAboutYouDiscoveryTargets({
+    source: "aboutyou-ch",
+    category: "Pantalons",
+    query: "pantalon baggy léger homme",
+    maxItems: 30,
+  });
+  const url = new URL(target!.url);
+  assert.equal(url.pathname, "/c/men/clothing/pants-20330");
+  assert.equal(url.searchParams.get("trousersCut"), "216289");
+  assert.equal(url.searchParams.get("materialStyle"), "56687");
+  assert.equal(target?.appliedFilters.query, "listing");
+});
+
+test("About You maps multilingual sock searches to the exact men's socks listing", () => {
+  for (const query of ["chaussettes homme", "men socks", "Socken Herren", "calzini uomo", "calcetines hombre"]) {
+    const [target] = buildAboutYouDiscoveryTargets({
+      source: "aboutyou-ch",
+      category: "Accessoires",
+      query,
+      maxItems: 30,
+    });
+    assert.equal(new URL(target!.url).pathname, "/c/maenner/bekleidung/waesche/socken-20294", query);
+    assert.equal(target?.appliedFilters.query, "listing", query);
+    assert.equal(target?.appliedFilters.category, "listing", query);
+  }
+});
+
 test("About You product HTML imports exact in-stock variants and a shared gallery", async () => {
-  const html = `<!doctype html><script type="application/ld+json">[{"@context":"https://schema.org/","@type":"ProductGroup","productGroupID":"MFX0566-130","name":"DAN FOX APPAREL Shirt 'Jonte'","category":"T-Shirts","brand":{"@type":"Brand","name":"DAN FOX APPAREL"},"hasVariant":[{"@type":"Product","color":"Taupe","size":"M","image":["https://cdn.example.test/front.jpg","https://cdn.example.test/back.jpg"],"offers":{"@type":"Offer","price":34.9,"priceCurrency":"CHF","availability":"https://schema.org/InStock"}},{"@type":"Product","color":"Taupe","size":"L","image":["https://cdn.example.test/front.jpg","https://cdn.example.test/back.jpg"],"offers":{"@type":"Offer","price":34.9,"priceCurrency":"CHF","availability":"https://schema.org/InStock"}},{"@type":"Product","color":"Taupe","size":"XL","image":["https://cdn.example.test/front.jpg"],"offers":{"@type":"Offer","price":34.9,"priceCurrency":"CHF","availability":"https://schema.org/OutOfStock"}}]}]</script>`;
+  const html = `<!doctype html><script type="application/ld+json">[{"@context":"https://schema.org/","@type":"ProductGroup","productGroupID":"MFX0566-130","name":"DAN FOX APPAREL Shirt 'Jonte'","category":"T-Shirts","brand":{"@type":"Brand","name":"DAN FOX APPAREL"},"hasVariant":[{"@type":"Product","color":"Taupe","size":"M","image":["https://cdn.example.com/front.jpg","https://cdn.example.com/back.jpg"],"offers":{"@type":"Offer","price":34.9,"priceCurrency":"CHF","availability":"https://schema.org/InStock"}},{"@type":"Product","color":"Taupe","size":"L","image":["https://cdn.example.com/front.jpg","https://cdn.example.com/back.jpg"],"offers":{"@type":"Offer","price":34.9,"priceCurrency":"CHF","availability":"https://schema.org/InStock"}},{"@type":"Product","color":"Taupe","size":"XL","image":["https://cdn.example.com/front.jpg"],"offers":{"@type":"Offer","price":34.9,"priceCurrency":"CHF","availability":"https://schema.org/OutOfStock"}}]}]</script>`;
   const product = await aboutYouAdapter.extractDetailHtml?.(
     html,
     "https://en.aboutyou.ch/p/dan-fox-apparel/shirt-jonte-16508944?tracking=1",
@@ -105,8 +134,8 @@ test("About You product HTML imports exact in-stock variants and a shared galler
   assert.equal(product.price, 34.9);
   assert.deepEqual(product.sizes, ["M", "L"]);
   assert.deepEqual(product.images, [
-    "https://cdn.example.test/front.jpg",
-    "https://cdn.example.test/back.jpg",
+    "https://cdn.example.com/front.jpg",
+    "https://cdn.example.com/back.jpg",
   ]);
   assert.equal(product.attributes?.sizeAvailabilityKnown, true);
 });
@@ -201,14 +230,16 @@ test("Zalando server HTML exposes listing cards and exact ProductGroup stock", (
 });
 
 test("HTTP-first discovery uses structured HTML without launching a browser", async (t) => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response(zalandoListingHtml, {
-    status: 200,
-    headers: { "content-type": "text/html; charset=utf-8" },
+  setPublicNetworkTestHooksForTests({
+    resolver: async () => [{ address: "8.8.8.8", family: 4 }],
+    fetch: async () => new Response(zalandoListingHtml, {
+      status: 200,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    }),
   });
   const fetcher = new PlaywrightDiscoveryFetcher({ maxScrolls: 0 });
   t.after(async () => {
-    globalThis.fetch = originalFetch;
+    setPublicNetworkTestHooksForTests(null);
     await fetcher.close();
   });
   const products = await fetcher.fetch({
@@ -433,6 +464,41 @@ test("a block is never auto-retried but can be retried explicitly", async () => 
   assert.equal(retried.status, "succeeded");
   assert.equal(retried.items[0]!.attempts, 2);
   assert.equal(retried.results[0]!.url, "https://www.aliexpress.com/item/1005007654321000.html");
+  await service.close();
+});
+
+test("HTTP 429 pauses and resumes the same listing automatically", async () => {
+  let calls = 0;
+  let clock = Date.parse("2026-08-31T10:00:00.000Z");
+  const sleeps: number[] = [];
+  const service = new DiscoveryService({
+    fetcher: {
+      async fetch() {
+        calls += 1;
+        if (calls === 1) {
+          throw new DiscoveryBlockedError(
+            "Shop access stopped with HTTP 429; no bypass was attempted.",
+            12_000,
+          );
+        }
+        return [product("after-rate-limit")];
+      },
+    },
+    sameDomainDelayMs: 0,
+    rateLimitCooldownMs: 30_000,
+    maxRateLimitRetries: 1,
+    now: () => new Date(clock),
+    sleep: async (milliseconds) => { sleeps.push(milliseconds); clock += milliseconds; },
+    idFactory: ids(),
+  });
+  const started = service.start({
+    intent: { source: "zalando-ch", query: "brown knit", maxItems: 5 },
+  });
+  const finished = await service.waitFor(started.id);
+  assert.equal(finished.status, "succeeded");
+  assert.equal(calls, 2);
+  assert.deepEqual(sleeps, [12_000]);
+  assert.equal(finished.cooldownUntil, undefined);
   await service.close();
 });
 

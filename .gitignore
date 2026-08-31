@@ -41,12 +41,7 @@ yarn-error.log*
 /.playwright-cli/
 *.tsbuildinfo
 
-# local catalog and collector output
-/data/*.sqlite*
-/data/codex-jobs/
-/data/contact-sheets/
-/data/discovery-jobs/
-/data/image-cache/
-/data/media/
-/data/backups/
+# local catalog, user media, model cache, and collector output
+/data/**
+!/data/.gitkeep
 /storage/

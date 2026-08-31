@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mosaic Acquisition"
+  short_description: "Collect visual products safely from the web"
+  default_prompt: "Use $mosaic-acquisition to collect and organize products for this Mosaic workspace."

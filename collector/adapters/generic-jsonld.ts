@@ -1,5 +1,6 @@
 import { jsonLdValuesFromHtml, visitJson } from "../html";
 import type { RawProduct, ShopAdapter } from "../types";
+import { normalizePublicHttpsUrl } from "../../server/public-network";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -43,6 +44,39 @@ function returnPolicy(product: JsonRecord, offers: JsonRecord[]): RawProduct["at
       : days !== null ? `${days} jours` : "Politique de retour disponible",
     ...(days !== null ? { returnsWindowDays: days } : {}),
   };
+}
+
+function attributeKey(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/([a-z\d])([A-Z])/g, "$1_$2")
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 120);
+}
+
+function structuredAttributes(product: JsonRecord, variants: JsonRecord[]): RawProduct["attributes"] {
+  const attributes: NonNullable<RawProduct["attributes"]> = {};
+  const properties = [product, ...variants].flatMap((candidate) => records(candidate.additionalProperty));
+  for (const property of properties) {
+    if (String(property["@type"] ?? "PropertyValue") !== "PropertyValue") continue;
+    const label = text(property.name) ?? text(property.propertyID);
+    const key = label ? attributeKey(label) : "";
+    if (!key || key in attributes) continue;
+    const rawValue = property.value;
+    if (typeof rawValue === "number" || typeof rawValue === "boolean") {
+      attributes[key] = rawValue;
+    } else if (typeof rawValue === "string" && rawValue.trim()) {
+      const numeric = /^\s*(-?\d+(?:[.,]\d+)?)\s*([^\d]*)$/.exec(rawValue);
+      attributes[key] = numeric ? Number(numeric[1]!.replace(",", ".")) : rawValue.trim();
+      const inlineUnit = numeric?.[2]?.trim();
+      const unit = text(property.unitText) ?? text(property.unitCode) ?? inlineUnit;
+      if (unit) attributes[`${key}_unit`] = unit;
+    }
+  }
+  return attributes;
 }
 
 export function extractGenericJsonLdProduct(
@@ -98,7 +132,8 @@ export function extractGenericJsonLdProduct(
     const direct = text(value);
     const nested = text(record(value)?.url) ?? text(record(value)?.contentUrl);
     const resolved = direct ?? nested;
-    return resolved ? [resolved] : [];
+    const safeUrl = resolved ? normalizePublicHttpsUrl(resolved, pageUrl) : null;
+    return safeUrl ? [safeUrl] : [];
   }))];
   const name = text(product.name);
   if (!name) return null;
@@ -141,6 +176,7 @@ export function extractGenericJsonLdProduct(
       detailCaptured: true,
       sizeAvailabilityKnown,
       rawSizes: [...new Set(rawSizes)],
+      ...structuredAttributes(product, variants),
       ...returnPolicy(product, allOffers),
     },
   };

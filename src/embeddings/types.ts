@@ -9,8 +9,11 @@ export type VisualModelSpec = {
   expectedDimension?: number;
 };
 
+export type VisualEmbeddingItemKind = "shop" | "reference" | "owned";
+
 export type VisualEmbeddingItem = {
   id: string;
+  kind?: VisualEmbeddingItemKind;
   imageUrls: string[];
   metadataVector: number[];
   updatedAt?: string;

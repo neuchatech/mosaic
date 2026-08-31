@@ -11,6 +11,7 @@ export const stockStatusSchema = z.enum([
 
 export const productSchema = z.object({
   id: z.string().min(1),
+  workspaceId: z.string().min(1).default("default-clothing"),
   kind: z.enum(["shop", "reference", "owned"]).default("shop"),
   source: z.string().min(1),
   sourceId: z.string().min(1),
@@ -20,9 +21,9 @@ export const productSchema = z.object({
   description: z.string().default(""),
   price: z.number().nonnegative().nullable(),
   originalPrice: z.number().nonnegative().nullable().default(null),
-  currency: z.string().length(3).default("CHF"),
-  category: z.string().default("Autre"),
-  color: z.string().default("Inconnue"),
+  currency: z.string().length(3).default("XXX"),
+  category: z.string().default("Other"),
+  color: z.string().default("Unknown"),
   colorFamily: z.string().default("unknown"),
   fit: z.string().default("unknown"),
   attributes: z.record(
@@ -42,6 +43,7 @@ export const productSchema = z.object({
   decision: decisionSchema.default("unseen"),
   x: z.number().min(0).max(1).default(0.5),
   y: z.number().min(0).max(1).default(0.5),
+  embeddingRevision: z.string().min(1).nullable().default(null),
   scores: z.record(z.string(), z.number()).default({}),
   importedAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -53,10 +55,10 @@ type ParsedProduct = z.infer<typeof productSchema>;
 // productSchema.parse() still materializes every default at runtime.
 export type Product = Omit<
   ParsedProduct,
-  "annotations" | "stockStatus" | "stockCheckedAt" | "priceCheckedAt" | "sizesCheckedAt"
+  "workspaceId" | "annotations" | "stockStatus" | "stockCheckedAt" | "priceCheckedAt" | "sizesCheckedAt" | "embeddingRevision"
 > & Partial<Pick<
   ParsedProduct,
-  "annotations" | "stockStatus" | "stockCheckedAt" | "priceCheckedAt" | "sizesCheckedAt"
+  "workspaceId" | "annotations" | "stockStatus" | "stockCheckedAt" | "priceCheckedAt" | "sizesCheckedAt" | "embeddingRevision"
 >>;
 export type ProductDecision = z.infer<typeof decisionSchema>;
 export type StockStatus = z.infer<typeof stockStatusSchema>;

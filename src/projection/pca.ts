@@ -17,6 +17,8 @@ export type ProjectionVectorOptions = {
   vectorsById?: ReadonlyMap<string, readonly number[]>;
   /** Hybrid CLIP vectors are already block-normalized and must not be standardized per column. */
   scale?: boolean;
+  /** Pure visual projections keep items without CLIP vectors in a neutral zero-vector cluster. */
+  missingVector?: "metadata" | "zero";
 };
 
 export function projectProductsWithVectors(
@@ -25,14 +27,13 @@ export function projectProductsWithVectors(
 ): Product[] {
   if (products.length < 3) return products;
   const supplied = options.vectorsById;
-  const suppliedDimension = supplied
-    ? Math.max(0, ...products.map((product) => supplied.get(product.id)?.length ?? 0))
-    : 0;
+  const suppliedDimension = supplied?.values().next().value?.length ?? 0;
   const vectors = products.map((product) => {
     const vector = supplied?.get(product.id);
     if (vector?.length === suppliedDimension) return Array.from(vector);
     const metadata = productFeatureVector(product);
     if (!suppliedDimension) return metadata;
+    if (options.missingVector === "zero") return Array.from({ length: suppliedDimension }, () => 0);
     // Hybrid vectors concatenate [visual, metadata]. Missing/stale visual rows
     // therefore receive a zero visual block while retaining metadata alignment.
     return metadata.length <= suppliedDimension

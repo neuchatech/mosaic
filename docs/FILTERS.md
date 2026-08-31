@@ -12,4 +12,4 @@ Expressions support:
 
 Canonical fields include `kind`, `source`, `brand`, `name`, `description`, `price`, `originalPrice`, the computed `discountPercent`, `currency`, `category`, `color`, `colorFamily`, `fit`, `materials`, `tags`, `sizes`, `available`, `decision`, timestamps, `scores.*`, and `attributes.*`.
 
-See `filters/earth-tones-wide.json` for a complete nested example. The same schema is used by the HTTP API, Codex bridge, MCP tools, and tests.
+The same schema is used by the HTTP API, Codex bridge, MCP tools, and tests. Deterministic examples live in the filter test suite.

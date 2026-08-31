@@ -10,12 +10,13 @@ import { createApp } from "../server/app";
 import { heuristicAssistantPlan } from "../server/codex-assistant";
 import { generateOutfits } from "../server/outfit-generator";
 import { catalogMediaPath, catalogMediaType } from "../server/media";
+import { setPublicNetworkTestHooksForTests } from "../server/public-html";
 import { projectCompactCached } from "../server/projection-cache";
 import { CatalogRepository } from "../server/repository";
 import { findSimilarProducts } from "../server/similarity";
 import { filterVisualCandidates } from "../server/visual-constraints";
-import { visualCodexArgs } from "../server/visual-selection";
-import { seedProducts } from "../src/catalog/seed";
+import { createVisualAssessmentEventConsumer, rankVisualCandidates, visualCodexArgs } from "../server/visual-selection";
+import { seedProducts } from "./fixtures/products";
 import { productSchema, type Product } from "../src/domain/catalog";
 
 const checkedAt = "2026-08-28T10:00:00.000Z";
@@ -59,6 +60,24 @@ test("visual constraints enforce exact fresh size, budget, kind, and rejection",
   assert.deepEqual(mediumOrLarge.map((product) => product.id), ["m", "l"]);
 });
 
+test("visual constraints enforce dynamic workspace fields", () => {
+  const products = [
+    productSchema.parse({ ...checkedProduct("oled", "M", 900), attributes: { panel: "OLED", refresh_rate: 120 } }),
+    productSchema.parse({ ...checkedProduct("lcd", "M", 650), attributes: { panel: "LCD", refresh_rate: 60 } }),
+  ];
+  const selected = filterVisualCandidates(products, {
+    where: {
+      type: "group",
+      conjunction: "and",
+      children: [
+        { type: "clause", field: "attributes.panel", operator: "eq", value: "OLED" },
+        { type: "clause", field: "attributes.refresh_rate", operator: "gte", value: 100 },
+      ],
+    },
+  }, now);
+  assert.deepEqual(selected.map((product) => product.id), ["oled"]);
+});
+
 test("outfit generation prioritizes owned complementary garments and reports gaps", () => {
   const anchor = productSchema.parse({ ...seedProducts[0], id: "anchor", sourceId: "anchor", category: "Vestes", decision: "saved" });
   const top = productSchema.parse({ ...seedProducts[2], id: "owned-top", sourceId: "owned-top", kind: "owned", decision: "owned", category: "Mailles" });
@@ -78,14 +97,65 @@ test("projection cache reuses coordinates while preserving newer product metadat
   assert.equal(second[0].y, initial[0].y);
 });
 
-test("Vision launches Codex non-interactively without incompatible sandbox flags", () => {
+test("catalog API accepts mixed, visual-only, and metadata-only projections", async () => {
+  const db = new Database(":memory:");
+  db.exec(readFileSync(resolve(process.cwd(), "server/schema.sql"), "utf8"));
+  const repository = new CatalogRepository(db);
+  repository.upsertProducts(seedProducts);
+  const app = createApp(repository);
+  try {
+    for (const projection of ["hybrid", "visual", "metadata"] as const) {
+      const response = await app.request(`/api/products?limit=100&projection=${projection}`);
+      assert.equal(response.status, 200);
+      const products = productSchema.array().parse(await response.json());
+      assert.equal(products.length, seedProducts.length);
+      assert.ok(products.every((product) => Number.isFinite(product.x) && Number.isFinite(product.y)));
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test("Vision launches Codex with a read-only sandbox and approvals disabled", () => {
   const args = visualCodexArgs({ jobId: "job-test", referenceImages: ["/tmp/mood.jpg"], reasoningEffort: "medium" });
-  assert.ok(args.includes("--approve-for-me"));
-  assert.ok(!args.includes("--sandbox"));
-  assert.ok(!args.some((value) => value.includes("approval_policy")));
+  assert.ok(!args.includes("--approve-for-me"));
+  assert.deepEqual(args.slice(args.indexOf("--sandbox"), args.indexOf("--sandbox") + 2), ["--sandbox", "read-only"]);
+  assert.ok(args.includes("approval_policy=\"never\""));
   assert.ok(args.includes("features.shell_tool=false"));
   assert.ok(args.some((value) => value.includes("WARDROBE_VISUAL_JOB_ID=\"job-test\"")));
   assert.deepEqual(args.slice(-3), ["--image", "/tmp/mood.jpg", "-"]);
+});
+
+test("the read-only visual runner persists only proposals made after a successful inspection", () => {
+  const recorded: unknown[] = [];
+  const consume = createVisualAssessmentEventConsumer("job-test", {
+    recordVisualAssessment(input) { recorded.push(input); return {} as never; },
+  });
+  const event = (tool: string, args: object, error: unknown = null) => JSON.stringify({
+    type: "item.completed",
+    item: { type: "mcp_tool_call", server: "wardrobe_atlas", tool, arguments: args, result: {}, error, status: error ? "failed" : "completed" },
+  });
+  const assessment = { jobId: "job-test", productId: "item-1", score: 0.82, rejected: false, reason: "Strong silhouette match", signals: ["wide", "brown"] };
+  assert.equal(consume(event("propose_visual_assessment", assessment)), null);
+  assert.equal(consume(event("inspect_visual_candidate", { jobId: "job-test", productId: "item-1" }, { message: "failed" })), null);
+  assert.equal(consume(event("inspect_visual_candidate", { jobId: "job-test", productId: "item-1" })), "presented");
+  assert.equal(consume(event("propose_visual_assessment", assessment)), "recorded");
+  assert.equal(consume(event("inspect_visual_candidate", { jobId: "job-test", productId: "item-2" })), "presented");
+  assert.equal(consume(event("propose_visual_assessment", {
+    jobId: "job-test",
+    productId: "item-2",
+    score: 0.64,
+    reason: "Useful texture match",
+    signals: ["cable knit"],
+  })), "recorded");
+  assert.deepEqual(recorded, [assessment, {
+    jobId: "job-test",
+    productId: "item-2",
+    score: 0.64,
+    rejected: false,
+    reason: "Useful texture match",
+    signals: ["cable knit"],
+  }]);
 });
 
 test("personal catalog media stays inside its dedicated local directory", () => {
@@ -117,6 +187,8 @@ test("scoped visual MCP does not expose global catalog enumeration tools", async
   await client.connect(transport);
   const names = new Set((await client.listTools()).tools.map((tool) => tool.name));
   assert.ok(names.has("get_visual_job_context"));
+  assert.ok(names.has("propose_visual_assessment"));
+  assert.ok(!names.has("record_visual_assessment"));
   assert.ok(!names.has("catalog_stats"));
   assert.ok(!names.has("search_products"));
   assert.ok(!names.has("find_similar_products"));
@@ -166,19 +238,21 @@ test("public Product JSON-LD URLs from a new shop can create catalog sheets", as
   db.exec(readFileSync(resolve(process.cwd(), "server/schema.sql"), "utf8"));
   const repository = new CatalogRepository(db);
   const app = createApp(repository);
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input) => {
-    const url = String(input);
-    const suffix = url.includes("second") ? "2" : "1";
-    return new Response(`<!doctype html><script type="application/ld+json">{
-    "@context":"https://schema.org/","@type":"Product","sku":"TEST-${suffix}",
-    "name":"Cotton Cardigan ${suffix}","brand":{"name":"Independent Shop"},"color":"Dark Green",
-    "image":["https://image.example.test/cardigan.jpg"],
-    "offers":{"price":"129","priceCurrency":"CHF","availability":"https://schema.org/InStock"}
-  }</script>`, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
-  };
+  setPublicNetworkTestHooksForTests({
+    resolver: async () => [{ address: "8.8.8.8", family: 4 }],
+    fetch: async (input) => {
+      const url = input;
+      const suffix = url.includes("second") ? "2" : "1";
+      return new Response(`<!doctype html><script type="application/ld+json">{
+      "@context":"https://schema.org/","@type":"Product","sku":"TEST-${suffix}",
+      "name":"Cotton Cardigan ${suffix}","brand":{"name":"Independent Shop"},"color":"Dark Green",
+      "image":["https://images.example.com/cardigan.jpg"],
+      "offers":{"price":"129","priceCurrency":"CHF","availability":"https://schema.org/InStock"}
+    }</script>`, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+    },
+  });
   t.after(() => {
-    globalThis.fetch = originalFetch;
+    setPublicNetworkTestHooksForTests(null);
     db.close();
   });
 
@@ -243,4 +317,31 @@ test("similar products use catalog coordinates when a CLIP vector is not cached"
   const similar = await findSimilarProducts({ productIds: ["anchor-local"], limit: 2 }, repository);
   assert.deepEqual(similar.map((item) => item.id), ["nearest-local", "far-local"]);
   assert.match(String(similar[0]?.attributes.selectionReason), /projection locale/);
+});
+
+test("visual candidate preselection ranks by local CLIP similarity and stays bounded", () => {
+  const products = [
+    productSchema.parse({ ...seedProducts[0], id: "visual-near", sourceId: "visual-near" }),
+    productSchema.parse({ ...seedProducts[1], id: "visual-far", sourceId: "visual-far" }),
+    productSchema.parse({ ...seedProducts[2], id: "visual-missing", sourceId: "visual-missing" }),
+  ];
+  const ranked = rankVisualCandidates(products, new Map([
+    ["visual-near", [1, 0]],
+    ["visual-far", [0, 1]],
+  ]), [[1, 0]], 2);
+  assert.deepEqual(ranked.map(({ id }) => id), ["visual-near", "visual-far"]);
+});
+
+test("visual preselection round-robins multiple reference views instead of letting one crop dominate", () => {
+  const products = [
+    productSchema.parse({ ...seedProducts[0], id: "whole-first", sourceId: "whole-first" }),
+    productSchema.parse({ ...seedProducts[1], id: "crop-first", sourceId: "crop-first" }),
+    productSchema.parse({ ...seedProducts[2], id: "whole-second", sourceId: "whole-second" }),
+  ];
+  const ranked = rankVisualCandidates(products, new Map([
+    ["whole-first", [1, 0]],
+    ["crop-first", [0, 1]],
+    ["whole-second", [.8, .2]],
+  ]), [[1, 0], [0, 1]], 2);
+  assert.deepEqual(ranked.map(({ id }) => id), ["whole-first", "crop-first"]);
 });

@@ -133,7 +133,7 @@ button { color: inherit; font: inherit; }
 .spaceMode .productCard:hover { z-index: 8; width: var(--hover-width, var(--card-width)); height: var(--hover-height, var(--card-height)); transform: translateY(-3px) scale(var(--hover-scale, 1)); filter: brightness(1.025); box-shadow: 0 14px 36px #1c17103d; }
 .gridMode .productCard:hover { z-index: 8; transform: translateY(-3px) scale(var(--hover-scale, 1)); filter: brightness(1.025); box-shadow: 0 14px 36px #1c17103d; }
 .dragging .productCard:hover { transform: translateZ(0); box-shadow: none; }
-.productImage { height: 100%; min-height: 100%; background-color: #e9e5dc; background-image: url('/seed/reference-board.png'); background-size: 500%; filter: saturate(.8) contrast(.98); }
+.productImage { height: 100%; min-height: 100%; background-color: #e9e5dc; background-image: linear-gradient(135deg, #f2ece3, #d8d0c4); filter: saturate(.8) contrast(.98); }
 .productImage.hasImage { background-image: none; }
 .productImage img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .imageMode-cropped .productImage img { object-fit: cover; }
@@ -305,11 +305,12 @@ button { color: inherit; font: inherit; }
   display: grid; gap: 4px; color: #81796e; font: 700 7px/1.2 var(--font-geist-mono);
   letter-spacing: .04em; text-transform: uppercase;
 }
-.filterPopover input, .filterPopover select, .personalForm input, .personalForm select {
+.filterPopover input, .filterPopover select, .personalForm input, .personalForm select, .personalForm textarea {
   width: 100%; min-height: 31px; padding: 6px 8px; border: 1px solid #d7d0c4; border-radius: 6px;
   outline: 0; background: white; color: var(--ink); font: 10px/1.2 Arial, sans-serif; text-transform: none;
 }
-.filterPopover input:focus, .filterPopover select:focus, .personalForm input:focus, .personalForm select:focus { border-color: #827462; box-shadow: 0 0 0 2px #8e503713; }
+.personalForm textarea { resize: vertical; line-height: 1.4; }
+.filterPopover input:focus, .filterPopover select:focus, .personalForm input:focus, .personalForm select:focus, .personalForm textarea:focus { border-color: #827462; box-shadow: 0 0 0 2px #8e503713; }
 .priceRange, .formColumns { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .filterPopover .checkboxLine { display: flex; align-items: center; gap: 7px; color: var(--ink); font: 9px/1.2 Arial, sans-serif; text-transform: none; }
 .filterPopover .checkboxLine input { width: 14px; min-height: 14px; margin: 0; accent-color: var(--clay); }
@@ -387,25 +388,19 @@ button { color: inherit; font: inherit; }
 .atlasBoardPanel .atlas { border-radius: 6px; }
 .atlasBoardPanel .productCard { content-visibility: auto; contain-intrinsic-size: 120px 180px; outline: none; }
 .atlasBoardPanel .productCard:focus-visible { z-index: 10; outline: 2px solid #fff; box-shadow: 0 0 0 4px var(--clay), 0 14px 36px #1c17103d; }
-.atlasBoardPanel .productCard.comparing { box-shadow: inset 0 0 0 2px #d69d67; }
+.atlasBoardPanel .productCard.comparing .productMeta > strong { background: #6f5b47d9; }
 .atlasBoardPanel .productCard.inOutfit::before {
   content: "TENUE"; position: absolute; z-index: 5; left: 5px; bottom: 5px; padding: 3px 4px;
   border-radius: 3px; background: #526049e6; color: white; font: 700 6px/1 var(--font-geist-mono); letter-spacing: .08em;
 }
 .atlasBoardPanel .productCard.decision-rejected { filter: saturate(.4) brightness(.77); }
 .atlasBoardPanel .productCard.decision-rejected:hover { filter: saturate(.6) brightness(.9); }
-.atlasBoardPanel .productCard.decision-saved { outline: 2px solid #c94d44; outline-offset: -2px; }
-.atlasBoardPanel .productCard[data-source="zalando-ch"]::after,
-.atlasBoardPanel .productCard[data-source="aboutyou-ch"]::after,
-.atlasBoardPanel .productCard[data-source="aliexpress"]::after {
-  content: ""; position: absolute; z-index: 6; right: 0; bottom: 0; left: 0; height: 3px;
-  pointer-events: none;
+.atlasBoardPanel .productCard[data-source]::after {
+  content: ""; position: absolute; z-index: 6; right: 6px; bottom: 6px; width: clamp(4px, 5cqw, 8px); height: clamp(4px, 5cqw, 8px);
+  border-radius: 50%; background: var(--source-color, #746d62); box-shadow: 0 2px 7px #17120d45; pointer-events: none;
 }
-.atlasBoardPanel .productCard[data-source="zalando-ch"]::after { background: #e66f42; }
-.atlasBoardPanel .productCard[data-source="aboutyou-ch"]::after { background: #3195a6; }
-.atlasBoardPanel .productCard[data-source="aliexpress"]::after { background: #7254a2; }
 
-.atlasBoardPanel .productMeta {
+.mosaicShell .atlasBoardPanel .productMeta {
   position: absolute; z-index: 2; inset: auto auto 5px 5px; max-width: calc(100% - 10px); min-width: 0;
   display: grid; justify-items: start; gap: clamp(0px, 1cqw, 2px); padding: 0; background: none; color: white; pointer-events: none;
 }
@@ -438,6 +433,12 @@ button { color: inherit; font: inherit; }
 }
 .cardActions button:hover, .cardActions button:focus-visible, .cardActions button.active { background: #f8f3e9; color: var(--clay); outline: none; }
 .cardActions button.reject.active, .cardActions button.reject:hover { background: #774235; color: #fff; }
+.cardSavedMark {
+  position: absolute; z-index: 6; top: clamp(3px, 3cqw, 6px); left: clamp(3px, 3cqw, 6px);
+  min-width: clamp(12px, 13cqw, 20px); height: clamp(12px, 13cqw, 20px); display: grid; place-items: center;
+  border-radius: clamp(3px, 4cqw, 6px); background: #d52a1de8; color: white; box-shadow: 0 3px 10px #28130f40;
+  font-size: clamp(6px, 7cqw, 11px); line-height: 1; pointer-events: none;
+}
 .atlasBoardPanel .productLinkOverlay { z-index: 3; }
 .atlasBoardPanel .productMeta { pointer-events: none; }
 .imageMode-cropped .spaceMode .productCard:hover .productImage img { width: 100%; height: 100%; object-fit: cover; }
@@ -520,7 +521,7 @@ body:has(.compareDock) .toast { bottom: 61px; }
 .staleText { color: #9b5c42; }
 .compareDecision { display: flex; gap: 4px; }
 .compareDecision button { min-height: 26px; padding: 4px 7px; border: 1px solid var(--line); border-radius: 5px; background: #fff; cursor: pointer; font-size: 7px; }
-.compareDecision button.active { border-color: #a57359; background: #f3e7dc; color: var(--clay); }
+.compareDecision button.active { background: #ead9ce; color: #754638; font-weight: 650; }
 
 .inlineCreate { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
 .inlineCreate input {
@@ -604,17 +605,17 @@ body:has(.compareDock) .toast { bottom: 61px; }
   background: white; color: #625a4f; cursor: pointer; font-size: 8px; text-align: left;
 }
 .productPreviewTools button:hover, .productPreviewTools button:focus-visible, .productPreviewTools button.active {
-  border-color: #b46655; background: #f3e7df; color: #8d4537; outline: none;
+  background: #ead9ce; color: #754638; outline: none;
 }
 .productPreviewTools button.reject { grid-column: 1 / -1; text-align: center; }
-.productPreviewTools button.reject:hover, .productPreviewTools button.reject.active { border-color: #75483c; background: #75483c; color: white; }
+.productPreviewTools button.reject:hover, .productPreviewTools button.reject.active { background: #75483c; color: white; }
 .productPreviewSizes { display: flex; flex-wrap: wrap; gap: 4px; }
 .productPreviewSizes b { min-width: 27px; padding: 5px 6px; border: 1px solid #c9c1b5; border-radius: 5px; background: white; color: #554d43; font-size: 8px; text-align: center; }
 .productPreviewSizes em { color: #766d61; font-size: 9px; font-style: normal; }
 .productPreviewFacts dl { display: grid; gap: 6px; margin: 0; }
 .productPreviewFacts dl > div { display: flex; justify-content: space-between; gap: 10px; }
 .productPreviewFacts dt { color: #958c80; font-size: 8px; }
-.productPreviewFacts dd { margin: 0; color: #514a40; font-size: 8px; font-weight: 650; text-align: right; }
+.productPreviewFacts dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #514a40; font-size: 8px; font-weight: 650; text-align: right; }
 .productPreviewFacts section > p { margin: 0; color: #5e564b; font-size: 9px; line-height: 1.45; }
 .productPreviewNote { margin: 11px 0 0; color: #9a9185; font-size: 7px; line-height: 1.4; }
 
@@ -703,4 +704,817 @@ body:has(.compareDock) .toast { bottom: 61px; }
   .productQuickLook { grid-template-columns: 1fr; grid-template-rows: minmax(42vh, 1fr) auto; }
   .productPreviewGallery { grid-auto-rows: minmax(240px, 42vh); }
   .productPreviewFacts { max-height: 43vh; border-top: 1px solid var(--line); border-left: 0; }
+}
+
+/* Mosaic V1 — warm editorial shell around the existing spatial engine. */
+.mosaicShell {
+  --mosaic-coral: #d52a1d;
+  --mosaic-coral-dark: #a91f15;
+  --mosaic-cream: #f2eee6;
+  --mosaic-card: #fffdf8;
+  --mosaic-nav: #ebe5db;
+  --mosaic-glass: rgba(255, 253, 248, .72);
+  --mosaic-glass-strong: rgba(255, 253, 248, .86);
+  --mosaic-glass-shadow: 0 8px 26px rgba(64, 52, 38, .12), inset 0 0 0 1px rgba(255, 255, 255, .66);
+  --mosaic-radius: 12px;
+  width: 100%; height: 100dvh; min-height: 520px; display: grid;
+  grid-template-columns: 174px minmax(0, 1fr); padding: 0; overflow: hidden;
+  background: var(--mosaic-cream); color: #28231d;
+}
+.mosaicSidebar {
+  min-width: 0; display: flex; flex-direction: column; gap: 20px; padding: 17px 12px 13px;
+  overflow-y: auto; border-right: 1px solid #d9d1c5; background: var(--mosaic-nav);
+}
+.mosaicIdentity { min-width: 0; display: flex; align-items: center; gap: 9px; padding: 0 5px; }
+.mosaicMark {
+  width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 8px;
+  color: #fffaf1; font: 600 13px/1 Georgia, serif;
+}
+.mosaicMark img { width: 100%; height: 100%; display: block; }
+.mosaicIdentity div { min-width: 0; display: grid; gap: 2px; }
+.mosaicIdentity b { font: 600 15px/1 Georgia, serif; letter-spacing: -.02em; }
+.mosaicIdentity small { overflow: hidden; color: #8e8579; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.mosaicPrimaryNav, .mosaicLibrary { display: grid; gap: 3px; }
+.mosaicPrimaryNav button, .mosaicLibrary button, .mosaicAdd {
+  min-width: 0; min-height: 33px; display: flex; align-items: center; gap: 9px; padding: 7px 9px;
+  border: 0; border-radius: 7px; background: transparent; color: #6d655a; cursor: pointer; font-size: 9px; text-align: left;
+}
+.mosaicPrimaryNav button > span { flex: 1; }
+.mosaicPrimaryNav button > b { min-width: 18px; padding: 2px 5px; border-radius: 999px; background: #ddd5c8; color: #837a6e; font-size: 6px; text-align: center; }
+.mosaicPrimaryNav button:hover, .mosaicPrimaryNav button.active, .mosaicLibrary button:hover, .mosaicLibrary button.active { background: #fffaf2b8; color: #2e2821; }
+.mosaicPrimaryNav button.active { background: #fffaf2; box-shadow: 0 4px 12px #4a372112; font-weight: 650; transform: translateX(2px); }
+.mosaicLibrary { padding-top: 12px; border-top: 1px solid #d8cfc2; }
+.mosaicLibrary > small { padding: 0 8px 4px; color: #9b9184; font: 650 6px/1 var(--font-geist-mono); letter-spacing: .12em; text-transform: uppercase; }
+.mosaicLibrary button { min-height: 28px; padding-block: 5px; font-size: 8px; }
+.mosaicLibrary button span { width: 14px; color: #958a7d; text-align: center; }
+.mosaicAdd { justify-content: center; margin-top: auto; border: 1px solid #cfc5b7; background: #fffaf2; color: #40382f; }
+.mosaicAdd:hover { border-color: #ac9e8d; }
+.mosaicCredit {
+  padding: 0 6px; color: #948a7d; font-size: 7px; line-height: 1.35; text-decoration: none;
+}
+.mosaicCredit:hover { color: #d52a1d; }
+.mosaicCredit span { color: #d52a1d; }
+
+.mosaicWorkspace { position: relative; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; }
+.mosaicTopbar {
+  position: absolute; z-index: 38; top: 9px; right: 10px; left: 10px; min-width: 0;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 0; background: transparent; pointer-events: none;
+}
+.mosaicTopbar > div:first-child {
+  min-width: 0; max-width: 300px; min-height: 38px; display: flex; align-items: center; gap: 8px;
+  padding: 5px 12px; border-radius: 999px; background: var(--mosaic-glass); box-shadow: var(--mosaic-glass-shadow);
+  backdrop-filter: blur(20px) saturate(1.22); -webkit-backdrop-filter: blur(20px) saturate(1.22); pointer-events: auto;
+}
+.mosaicTopbar > div:first-child > span { flex: none; color: #978d80; font: 650 7px/1 var(--font-geist-mono); letter-spacing: .1em; text-transform: uppercase; }
+.mosaicTopbar h1 { overflow: hidden; margin: 0; font: 500 14px/1 Georgia, serif; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
+.mosaicTopActions {
+  flex: none; display: flex; align-items: center; gap: 5px; pointer-events: auto;
+}
+.mosaicLanguage {
+  min-height: 32px; display: flex; align-items: center; gap: 5px; padding: 4px 11px;
+  border: 0; border-radius: 999px; background: var(--mosaic-glass); color: #625a50; font-size: 8px;
+  box-shadow: var(--mosaic-glass-shadow); backdrop-filter: blur(20px) saturate(1.22); -webkit-backdrop-filter: blur(20px) saturate(1.22);
+}
+.mosaicLanguage span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.mosaicLanguage select { border: 0; outline: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.mosaicTopActions > button, .mosaicViewMenu > summary {
+  position: relative; min-height: 32px; display: flex; align-items: center; gap: 5px; padding: 6px 11px;
+  border: 0; border-radius: 999px; background: var(--mosaic-glass); color: #625a50; cursor: pointer; font-size: 8px; list-style: none;
+  box-shadow: var(--mosaic-glass-shadow); backdrop-filter: blur(20px) saturate(1.22); -webkit-backdrop-filter: blur(20px) saturate(1.22);
+}
+.mosaicTopActions > button.hasBadge::after {
+  content: attr(data-count); position: absolute; top: -5px; right: -5px; min-width: 15px; height: 15px; display: grid; place-items: center;
+  padding: 0 3px; border: 2px solid #f7f3ec; border-radius: 999px; background: var(--mosaic-coral); color: white; font: 700 6px/1 Arial, sans-serif;
+}
+.mosaicTopActions > .mosaicAddTop { background: rgba(50, 44, 37, .9); color: white; }
+.mosaicViewMenu { position: relative; }
+.mosaicViewMenu > summary::-webkit-details-marker { display: none; }
+.mosaicViewMenu[open] > summary { border-color: #9d8f7f; }
+.mosaicViewMenu > div {
+  position: absolute; z-index: 80; top: calc(100% + 7px); right: 0; width: min(260px, calc(100vw - 24px)); display: grid; gap: 9px;
+  padding: 10px; border: 1px solid #d5cdc1; border-radius: 10px; background: #fffdf9; box-shadow: 0 16px 48px #352a1d2d;
+}
+.mosaicViewMenu fieldset { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin: 0; padding: 0; border: 0; }
+.mosaicViewMenu legend { grid-column: 1 / -1; margin-bottom: 3px; color: #93897d; font: 650 6px/1 var(--font-geist-mono); letter-spacing: .08em; text-transform: uppercase; }
+.mosaicViewMenu button { min-height: 29px; border: 1px solid #ded7cc; border-radius: 6px; background: #f8f5ef; cursor: pointer; font-size: 8px; }
+.mosaicViewMenu button.active { background: #f4dfd9; color: #913d32; font-weight: 650; }
+.mosaicViewMenu .mosaicZoom { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.mosaicViewMenu > div > details { padding: 7px; border: 1px solid #e2dbd0; border-radius: 7px; }
+.mosaicViewMenu > div > details summary { cursor: pointer; color: #71685e; font-size: 8px; }
+.mosaicViewMenu > div > details label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 7px; font-size: 8px; }
+.mosaicViewMenu select { min-width: 0; padding: 5px; border: 1px solid #d9d1c6; border-radius: 5px; background: white; font-size: 8px; }
+
+.mosaicBoardPanel {
+  position: relative; height: 100%; min-height: 0; display: block; margin: 0; padding: 0; overflow: hidden;
+  border: 0; border-radius: 0; background: #f5f1e9; box-shadow: none;
+}
+.mosaicComposer {
+  position: absolute; z-index: 30; top: 9px; left: 50%; width: min(520px, calc(100% - 24px)); min-width: 0;
+  display: grid; gap: 8px; margin: 0; padding: 5px; border: 0; border-radius: 999px;
+  background: #fffdf9; box-shadow: 0 10px 34px rgba(48, 35, 23, .16), inset 0 0 0 1px rgba(255, 255, 255, .92);
+  backdrop-filter: none; -webkit-backdrop-filter: none; transform: translateX(-50%);
+  transition: top .2s ease, width .2s ease, padding .2s ease, box-shadow .2s ease, opacity .2s ease;
+}
+.mosaicComposer.compact { gap: 0; opacity: .9; }
+.mosaicComposer.compact:hover, .mosaicComposer.compact:focus-within { opacity: 1; box-shadow: 0 12px 34px #3023172b; }
+.mosaicComposer.expanded {
+  top: 58px; width: min(900px, calc(100% - 24px)); max-height: min(72vh, 680px); overflow-y: auto;
+  padding: 15px 17px 12px; border-radius: 20px; box-shadow: 0 22px 64px #35261938;
+}
+.mosaicComposer.dropActive { border-color: var(--mosaic-coral); box-shadow: 0 0 0 3px #d52a1d20, 0 18px 50px #503b2920; }
+.mosaicComposerIntro { display: grid; justify-items: center; gap: 5px; padding: 0 12px 3px; text-align: center; }
+.mosaicComposerIntro > span { color: var(--mosaic-coral-dark); font: 700 6px/1 var(--font-geist-mono); letter-spacing: .12em; text-transform: uppercase; }
+.mosaicComposerIntro h2 { margin: 0; font: 500 clamp(19px, 2.3vw, 28px)/1.05 Georgia, serif; letter-spacing: -.025em; }
+.mosaicComposerIntro p { max-width: 610px; margin: 0; color: #81786d; font-size: 8px; line-height: 1.45; }
+.mosaicConversation { min-width: 0; display: grid; gap: 7px; }
+.mosaicConversationHeader { display: flex; align-items: center; justify-content: space-between; gap: 7px; padding: 0 2px; }
+.mosaicConversationHeader label { min-width: 0; flex: 1; }
+.mosaicConversationHeader select {
+  width: min(360px, 100%); min-height: 30px; padding: 5px 28px 5px 10px; border: 0; border-radius: 999px;
+  background: #f1ece4; color: #655c51; font: 650 8px/1.2 Arial, sans-serif; cursor: pointer;
+}
+.mosaicConversationHeader button {
+  width: 30px; min-width: 30px; height: 30px; padding: 0; display: grid; place-items: center;
+  border: 0; border-radius: 50%; background: #f1ece4; color: #655c51; cursor: pointer;
+}
+.mosaicConversationHeader .mosaicIcon { width: 14px; height: 14px; }
+.mosaicConversationFeed {
+  min-height: 0; max-height: min(34vh, 300px); overflow: auto; display: grid; align-content: start; gap: 7px;
+  padding: 2px 5px 3px 2px; scrollbar-width: thin; overscroll-behavior: contain;
+}
+.mosaicChatMessage { max-width: min(82%, 620px); display: grid; gap: 4px; padding: 9px 11px; border-radius: 17px; font-size: 10px; line-height: 1.45; }
+.mosaicChatMessage > div { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mosaicChatMessage.user { justify-self: end; border-bottom-right-radius: 6px; background: #2c2823; color: #fffdf9; }
+.mosaicChatMessage.assistant { justify-self: start; border-bottom-left-radius: 6px; background: #f1ece4; color: #3f3932; }
+.mosaicChatMessage.status-failed, .mosaicChatMessage.status-blocked, .mosaicChatMessage.status-interrupted { background: #f8e4df; color: #7d3e34; }
+.mosaicChatMessage small { color: inherit; font-size: 7px; opacity: .67; }
+.mosaicChatReasoning { margin-top: 2px; border-radius: 12px; background: rgba(255, 253, 249, .62); }
+.mosaicChatReasoning summary {
+  min-height: 27px; display: flex; align-items: center; gap: 6px; padding: 5px 8px;
+  color: #7c6b61; cursor: pointer; list-style: none; font-size: 7px; font-weight: 700;
+}
+.mosaicChatReasoning summary::-webkit-details-marker { display: none; }
+.mosaicChatReasoning summary span { flex: 1; }
+.mosaicChatReasoning summary small { min-width: 17px; text-align: center; }
+.mosaicChatReasoning summary .mosaicIcon { width: 11px; height: 11px; transition: transform .16s ease; }
+.mosaicChatReasoning[open] summary .mosaicIcon { transform: rotate(180deg); }
+.mosaicChatReasoning ol { display: grid; gap: 3px; margin: 0; padding: 0 10px 8px 24px; color: #766a61; font-size: 7px; line-height: 1.4; }
+.mosaicChatFollowUps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.mosaicChatFollowUps button {
+  min-height: 25px; padding: 4px 9px; border: 0; border-radius: 999px; background: #fffaf4; color: #795148;
+  box-shadow: inset 0 0 0 1px #d9c9c1; cursor: pointer; font-size: 7px; text-align: left;
+}
+.mosaicChatProgress { max-width: min(88%, 660px); display: grid; gap: 6px; padding: 9px 11px; border-radius: 17px 17px 17px 6px; background: #f6e9e5; color: #5d4942; }
+.mosaicChatProgress header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mosaicChatProgress header span { display: flex; align-items: center; gap: 5px; font-size: 9px; font-weight: 700; }
+.mosaicChatProgress header .mosaicIcon { width: 13px; height: 13px; color: var(--mosaic-coral); }
+.mosaicChatProgress header button { min-height: 24px; padding: 3px 8px; border: 0; border-radius: 999px; background: #fff9f5; color: #7d453c; cursor: pointer; font-size: 7px; }
+.mosaicChatProgress > b { color: #8a665e; font-size: 7px; letter-spacing: .06em; text-transform: uppercase; }
+.mosaicChatProgress ol { display: grid; gap: 3px; margin: 0; padding-left: 16px; color: #70615b; font-size: 8px; line-height: 1.35; }
+.mosaicComposerInput {
+  min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 6px;
+  padding: 5px 5px 5px 10px; border: 1px solid #d6cdc1; border-radius: 9px; background: white;
+}
+.mosaicSpark { width: 15px; height: 15px; color: var(--mosaic-coral); }
+.mosaicComposerInput textarea {
+  width: 100%; min-width: 0; max-height: 92px; resize: none; padding: 5px 2px; border: 0; outline: 0;
+  background: transparent; color: #302a23; font: 10px/1.4 Arial, sans-serif;
+}
+.mosaicComposer.expanded .mosaicComposerInput textarea { font-size: 11px; }
+.mosaicComposer.compact .mosaicComposerInput { padding-block: 3px; border: 0; background: transparent; }
+.mosaicComposer.compact .mosaicComposerInput textarea { max-height: 31px; padding-block: 4px; font-size: 9px; }
+.mosaicComposer.compact .mosaicAttach, .mosaicComposer.compact .mosaicSend { min-width: 29px; min-height: 29px; }
+.mosaicComposerInput textarea::placeholder { color: #a29a8f; }
+.mosaicAttach, .mosaicSend { width: 34px; min-width: 34px; height: 34px; min-height: 34px; padding: 0; border: 0; border-radius: var(--mosaic-radius); cursor: pointer; }
+.mosaicAttach { display: grid; place-items: center; background: #f0ebe3; color: #655d53; }
+.mosaicSend { display: grid; place-items: center; background: #2c2823; color: white; }
+.mosaicSend:disabled { opacity: .42; cursor: default; }
+.mosaicComposer.compact .mosaicSend span { display: none; }
+.mosaicComposerContext { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.mosaicComposer.compact .mosaicComposerContext {
+  position: absolute; top: calc(100% + 5px); left: 50%; max-width: min(680px, calc(100vw - 30px)); max-height: 29px;
+  overflow: hidden; padding: 3px 5px; border-radius: 7px; background: #fffdf8e8; box-shadow: 0 5px 18px #3023171a;
+  backdrop-filter: blur(12px); transform: translateX(-50%); white-space: nowrap;
+}
+.mosaicContextChip { min-height: 25px; display: flex; align-items: center; gap: 5px; padding: 3px 4px 3px 7px; border: 1px solid #ddd5c9; border-radius: 999px; color: #6d6459; font-size: 7px; }
+.mosaicContextChip button { width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: #eee8de; cursor: pointer; }
+.mosaicComposerFooter { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #8b8276; font-size: 7px; }
+.mosaicComposerFooter label { display: flex; align-items: center; gap: 5px; }
+.mosaicComposerFooter select { padding: 4px 5px; border: 1px solid #dbd3c8; border-radius: 5px; background: white; color: #625a50; font-size: 7px; }
+
+.mosaicBoardBar {
+  position: absolute; z-index: 18; top: 61px; right: 10px; left: 10px; min-width: 0;
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px;
+  padding: 0; background: transparent; box-shadow: none; backdrop-filter: none;
+  pointer-events: none; transition: opacity .16s ease, transform .16s ease;
+}
+.mosaicBoardBar > * { pointer-events: auto; }
+.mosaicBoardPanel:has(.mosaicComposer.expanded) .mosaicBoardBar { opacity: 0; transform: translateY(-5px); pointer-events: none; }
+.mosaicBoardPanel:has(.mosaicComposer.expanded) .mosaicBoardBar > * { pointer-events: none; }
+.mosaicBoardBar > div:first-child, .mosaicBoardMeta {
+  min-height: 32px; border-radius: 999px; background: var(--mosaic-glass); box-shadow: var(--mosaic-glass-shadow);
+  backdrop-filter: blur(20px) saturate(1.22); -webkit-backdrop-filter: blur(20px) saturate(1.22);
+}
+.mosaicBoardBar > div:first-child { min-width: 150px; display: flex; align-items: center; gap: 7px; padding: 0 12px; }
+.mosaicBoardBar h2 { max-width: 260px; overflow: hidden; margin: 0; font: 500 12px/1.05 Georgia, serif; text-overflow: ellipsis; white-space: nowrap; }
+.mosaicActiveChips { min-width: 0; display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.mosaicActiveChips::-webkit-scrollbar { display: none; }
+.mosaicActiveChips button {
+  flex: none; min-height: 28px; padding: 4px 9px; border: 0; border-radius: 999px; background: var(--mosaic-glass);
+  color: #71685d; cursor: pointer; font-size: 7px; box-shadow: var(--mosaic-glass-shadow);
+  backdrop-filter: blur(20px) saturate(1.22); -webkit-backdrop-filter: blur(20px) saturate(1.22);
+}
+.mosaicActiveChips .mosaicFilterButton { background: rgba(255, 253, 248, .56); }
+.mosaicBoardMeta { flex: none; display: flex; align-items: center; gap: 6px; padding: 0 6px 0 11px; color: #8b8276; font-size: 7px; }
+
+.mosaicFiltersDrawer { padding: 0 14px; }
+.mosaicFilterSection { display: grid; gap: 8px; padding: 14px 0; border-bottom: 1px solid #e0d9ce; }
+.mosaicFilterSection > header { display: flex; align-items: center; justify-content: space-between; }
+.mosaicFilterSection > header > div { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.mosaicFilterSection > header span, .mosaicFilterSection label > span { color: #5f574d; font-size: 9px; font-weight: 650; }
+.mosaicFilterSection > header small { color: #9b9286; font-size: 7px; font-weight: 400; }
+.mosaicFilterSection > p { margin: 0; color: #978e82; font-size: 7px; line-height: 1.4; }
+.mosaicChoiceGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.mosaicChoiceGrid button { min-width: 0; min-height: 32px; display: flex; align-items: center; justify-content: space-between; gap: 5px; padding: 6px 7px; border: 1px solid #ded6cb; border-radius: 7px; background: white; cursor: pointer; font-size: 8px; }
+.mosaicChoiceGrid button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mosaicChoiceGrid button b { color: #a0978b; font-size: 6px; }
+.mosaicChoiceGrid button.active { background: #f4dfd9; color: #913d32; font-weight: 650; }
+.mosaicSizeGrid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.mosaicFilterSection label { min-width: 0; display: grid; gap: 5px; }
+.mosaicFilterSection input, .mosaicFilterSection select { width: 100%; min-width: 0; min-height: 34px; padding: 7px 8px; border: 1px solid #d9d1c5; border-radius: 7px; outline: 0; background: white; color: #3e3831; font-size: 9px; }
+.mosaicFilterSection input:focus, .mosaicFilterSection select:focus { border-color: #d27668; box-shadow: 0 0 0 3px #ef6c5b16; }
+.mosaicFilterColumns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.mosaicFilterSection .checkboxLine { display: flex; align-items: center; gap: 7px; }
+.mosaicFilterSection .checkboxLine input { width: 15px; min-height: 15px; }
+.mosaicRefresh { min-height: 31px; border: 1px solid #d6cdc1; border-radius: 7px; background: #f8f4ed; cursor: pointer; color: #6d6459; font-size: 8px; }
+.mosaicStickyFooter { position: sticky; z-index: 3; bottom: -1px; margin: 10px -14px 0; padding: 10px 14px; border-top: 1px solid #d9d1c5; background: #fffdf9ed; backdrop-filter: blur(12px); }
+
+.mosaicShell .operationStack {
+  position: absolute; z-index: 24; top: 107px; right: 10px; left: 10px; max-height: 96px; overflow-y: auto; margin: 0;
+}
+.mosaicShell .atlas { position: absolute; inset: 0; border: 0; border-radius: 0; background: #e7e1d7; }
+.mosaicShell .atlasBoardFooter {
+  position: absolute; z-index: 16; right: 10px; bottom: 7px; left: 10px; padding: 0;
+  background: transparent; color: #766e62; box-shadow: none; backdrop-filter: none; pointer-events: none;
+}
+.mosaicShell .atlasBoardFooter > span {
+  padding: 5px 9px; border-radius: 999px; background: var(--mosaic-glass); box-shadow: var(--mosaic-glass-shadow);
+  backdrop-filter: blur(18px) saturate(1.18); -webkit-backdrop-filter: blur(18px) saturate(1.18);
+}
+.mosaicShell .atlasMinimap { right: 18px; bottom: 29px; border-color: #bdb2a4; background: #efe9df; }
+
+@media (max-width: 1100px) and (min-width: 621px) {
+  .mosaicTopbar > div:first-child { display: none; }
+  .mosaicTopbar { justify-content: flex-end; }
+  .mosaicComposer { right: 270px; left: 10px; width: auto; transform: none; }
+  .mosaicComposer.expanded { right: 10px; width: auto; }
+}
+
+@media (max-width: 900px) {
+  .mosaicShell { grid-template-columns: 58px minmax(0, 1fr); }
+  .mosaicSidebar { padding-inline: 8px; align-items: stretch; }
+  .mosaicIdentity { justify-content: center; padding: 0; }
+  .mosaicIdentity > div, .mosaicPrimaryNav button > span, .mosaicPrimaryNav button > b, .mosaicLibrary > small, .mosaicLibrary button:not(.active), .mosaicAdd, .mosaicCredit { display: none; }
+  .mosaicPrimaryNav button, .mosaicLibrary button { justify-content: center; padding-inline: 0; font-size: 12px; }
+  .mosaicLibrary button.active { display: flex; }
+  .mosaicComposer.expanded { padding: 12px; }
+}
+
+@media (max-width: 620px) {
+  .mosaicShell { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) 54px; }
+  .mosaicWorkspace { grid-row: 1; grid-template-rows: minmax(0, 1fr); }
+  .mosaicSidebar {
+    z-index: 90; grid-row: 2; flex-direction: row; align-items: center; justify-content: space-around; gap: 3px;
+    padding: 5px 8px max(5px, env(safe-area-inset-bottom)); overflow: visible; border-top: 1px solid #d4cabc; border-right: 0;
+  }
+  .mosaicIdentity, .mosaicLibrary, .mosaicAdd { display: none; }
+  .mosaicPrimaryNav { width: 100%; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+  .mosaicPrimaryNav button { min-height: 40px; display: grid; place-items: center; gap: 1px; padding: 3px; font-size: 12px; }
+  .mosaicPrimaryNav button > span { display: block; font-size: 6px; }
+  .mosaicTopbar { top: 6px; right: 6px; left: 6px; justify-content: flex-end; }
+  .mosaicTopbar > div:first-child { display: none; }
+  .mosaicTopActions { padding: 3px; }
+  .mosaicTopbar h1 { font-size: 14px; }
+  .mosaicTopActions > button, .mosaicViewMenu > summary { min-width: 31px; justify-content: center; padding-inline: 6px; font-size: 0; }
+  .mosaicLanguage { min-width: 31px; justify-content: center; padding-inline: 4px; }
+  .mosaicLanguage select { width: 25px; font-size: 7px; }
+  .mosaicTopActions > button::first-letter, .mosaicViewMenu > summary::first-letter { font-size: 12px; }
+  .mosaicTopActions > .mosaicAddTop { display: none; }
+  .mosaicBoardPanel { padding: 0; }
+  .mosaicComposer { top: 53px; right: 6px; left: 6px; width: auto; border-radius: 999px; transform: none; }
+  .mosaicComposer.expanded { top: 53px; width: auto; padding: 10px; border-radius: 18px; }
+  .mosaicComposerIntro p { display: none; }
+  .mosaicComposerIntro h2 { font-size: 18px; }
+  .mosaicComposerFooter > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mosaicSend span { display: none; }
+  .mosaicBoardBar { top: 101px; right: 6px; left: 6px; grid-template-columns: minmax(95px, auto) minmax(0, 1fr) auto; gap: 6px; }
+  .mosaicBoardBar h2 { max-width: 120px; font-size: 12px; }
+  .mosaicBoardMeta > span { display: none; }
+  .mosaicShell .operationStack { top: 146px; right: 6px; left: 6px; }
+  .mosaicShell .atlasBoardFooter { right: 6px; bottom: 5px; left: 6px; }
+  .mosaicSizeGrid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .mosaicChoiceGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mosaicFilterColumns { grid-template-columns: 1fr; }
+  .mosaicShell .drawer { width: 100%; max-width: none; }
+}
+
+@media (max-height: 700px) and (min-width: 621px) {
+  .mosaicComposer.expanded .mosaicComposerIntro p { display: none; }
+  .mosaicComposer.expanded { padding-block: 10px; }
+}
+
+/* Mosaic interaction surfaces added after the shell preview gate. */
+.mosaicWorkspaceSwitcher { position: relative; }
+.mosaicWorkspaceSwitcher > summary { cursor: pointer; list-style: none; }
+.mosaicWorkspaceSwitcher > summary::-webkit-details-marker { display: none; }
+.mosaicWorkspaceSwitcher .mosaicIdentity > i { margin-left: auto; color: #998f82; font-size: 8px; font-style: normal; }
+.mosaicWorkspaceMenu {
+  position: fixed; z-index: 120; top: 56px; left: 10px; width: min(280px, calc(100vw - 20px)); display: grid; gap: 8px;
+  padding: 10px; border: 1px solid #d1c7b9; border-radius: 10px; background: #fffdf9; box-shadow: 0 18px 52px #33271935;
+}
+.mosaicWorkspaceMenu > span, .mosaicDrawerHeading > span { color: #8c8174; font: 700 7px/1 var(--font-geist-mono); letter-spacing: .1em; text-transform: uppercase; }
+.mosaicWorkspaceMenu > div { display: grid; gap: 3px; max-height: 220px; overflow-y: auto; }
+.mosaicWorkspaceMenu > div > button { min-width: 0; min-height: 38px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 6px 8px; border: 0; border-radius: 7px; background: transparent; cursor: pointer; text-align: left; }
+.mosaicWorkspaceMenu > div > button:hover, .mosaicWorkspaceMenu > div > button.active { background: #f2ede4; }
+.mosaicWorkspaceMenu > div b { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.mosaicWorkspaceMenu > div small { grid-column: 1; color: #91887c; font-size: 8px; }
+.mosaicWorkspaceMenu > div i { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--mosaic-coral-dark); font-style: normal; }
+.mosaicWorkspaceMenu form { display: grid; grid-template-columns: minmax(0, 1fr) 92px auto; gap: 4px; padding-top: 8px; border-top: 1px solid #e2dbd1; }
+.mosaicWorkspaceMenu input, .mosaicWorkspaceMenu select, .mosaicWorkspaceMenu form button { min-width: 0; min-height: 32px; padding: 5px 7px; border: 1px solid #d9d0c4; border-radius: 6px; background: white; font-size: 8px; }
+.mosaicWorkspaceMenu form button { border-color: #332d26; background: #332d26; color: white; cursor: pointer; }
+.mosaicWorkspaceMenu form button:disabled { opacity: .45; }
+
+.mosaicPrimaryNav button { font-size: 10px; }
+.mosaicLibrary button { font-size: 9px; }
+.mosaicTopActions > button, .mosaicViewMenu > summary, .mosaicViewMenu button, .mosaicViewMenu > div > details summary { font-size: 9px; }
+.mosaicComposerIntro p, .mosaicComposerFooter, .mosaicActiveChips button, .mosaicBoardMeta { font-size: 8px; }
+.mosaicComposerInput textarea { font-size: 11px; }
+.mosaicComposer.expanded .mosaicComposerInput textarea { font-size: 12px; }
+.mosaicComposerFooter select { font-size: 8px; }
+
+.mosaicOnboarding {
+  position: relative; display: grid; grid-template-columns: minmax(150px, .7fr) minmax(0, 1.3fr); align-items: center; gap: 10px;
+  padding: 8px 29px 8px 10px; border: 1px solid #ead2c9; border-radius: 8px; background: #fdf3ef;
+}
+.mosaicOnboarding > div:first-child { display: grid; gap: 3px; }
+.mosaicOnboarding > div:first-child b { color: #72483e; font-size: 9px; }
+.mosaicOnboarding > div:first-child span { color: #947168; font-size: 8px; line-height: 1.35; }
+.mosaicOnboarding > div:nth-child(2) { min-width: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.mosaicOnboarding > div:nth-child(2)::-webkit-scrollbar { display: none; }
+.mosaicOnboarding > div:nth-child(2) button { min-width: 0; width: 100%; min-height: 31px; padding: 5px 8px; border: 1px solid #e3c9c1; border-radius: 6px; background: #fffaf7; color: #78574e; cursor: pointer; font-size: 8px; line-height: 1.25; text-align: left; }
+.mosaicOnboardingDismiss { position: absolute; top: 5px; right: 5px; width: 21px; height: 21px; border: 0; border-radius: 50%; background: transparent; color: #9c786e; cursor: pointer; }
+
+.atlasBoardPanel .productCard.mosaicSelected {
+  outline: none; filter: brightness(1.045) saturate(1.06); box-shadow: 0 11px 28px #7d271f4a;
+}
+.atlasBoardPanel .productCard.mosaicSelected .productMeta h3,
+.atlasBoardPanel .productCard.mosaicSelected .productMeta > strong { background: #a5291fdf; }
+.mosaicShell button.productLinkOverlay { padding: 0; border: 0; background: transparent; }
+
+.mosaicSelectionTray {
+  position: fixed; z-index: 96; left: calc(50% + 87px); bottom: 15px; max-width: min(780px, calc(100vw - 210px)); min-height: 48px;
+  display: flex; align-items: center; gap: 9px; padding: 5px 7px; border: 1px solid #cbbfb0; border-radius: 12px;
+  background: #fffdf8ed; box-shadow: 0 12px 42px #2f251a38; backdrop-filter: blur(14px); transform: translateX(-50%);
+}
+.mosaicSelectionThumbs {
+  max-width: 210px; flex: 0 1 auto; display: flex; align-items: center; padding: 3px 4px 3px 2px;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+}
+.mosaicSelectionThumbs::-webkit-scrollbar { display: none; }
+.mosaicSelectionThumb { position: relative; width: 37px; height: 39px; flex: none; margin-left: -6px; }
+.mosaicSelectionThumb:first-child { margin-left: 0; }
+.mosaicSelectionPreview {
+  width: 33px; height: 35px; display: grid; place-items: center; overflow: hidden; padding: 0; border: 0; border-radius: 6px;
+  background: #ded7cc; box-shadow: 0 2px 7px #2f251a22; color: #665c50; cursor: pointer; font-size: 8px;
+}
+.mosaicSelectionPreview:hover, .mosaicSelectionPreview:focus-visible { transform: translateY(-2px); box-shadow: 0 5px 12px #2f251a35; outline: none; }
+.mosaicSelectionPreview img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.mosaicSelectionPreview i { font-style: normal; font-weight: 700; }
+.mosaicSelectionRemove {
+  position: absolute; z-index: 2; top: -4px; right: 0; width: 15px; height: 15px; display: grid; place-items: center;
+  padding: 0; border: 0; border-radius: 50%; background: #2c2721e8; color: white; box-shadow: 0 2px 6px #211a1540;
+  cursor: pointer; font-size: 10px; line-height: 1;
+}
+.mosaicSelectionRemove:hover, .mosaicSelectionRemove:focus-visible { background: #d52a1d; outline: none; }
+.mosaicSelectionTray > strong { flex: none; font-size: 9px; }
+.mosaicTrayActions { min-width: 0; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.mosaicTrayActions::-webkit-scrollbar { display: none; }
+.mosaicTrayActions button, .mosaicTrayClear { flex: none; min-height: 34px; padding: 6px 9px; border: 1px solid #ded5c9; border-radius: 7px; background: #f7f2ea; color: #5e554b; cursor: pointer; font-size: 8px; }
+.mosaicTrayActions button:nth-child(2) { background: var(--mosaic-coral); color: white; }
+.mosaicTrayClear { width: 31px; padding: 0; background: transparent; font-size: 14px; }
+.compareDock.behindSelection { display: none; }
+body:has(.mosaicSelectionTray) .toast { bottom: 74px; }
+
+.mosaicCollectionCreate { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+.mosaicCollectionCreate input { min-width: 0; min-height: 36px; padding: 7px 9px; border: 1px solid #d6cec2; border-radius: 7px; outline: 0; background: white; font-size: 10px; }
+.mosaicCollectionCreate button { min-height: 36px; padding-inline: 11px; border: 0; border-radius: 7px; cursor: pointer; font-size: 9px; }
+.mosaicSystemCollections, .mosaicCollectionList { display: grid; gap: 6px; }
+.mosaicSystemCollections { padding-bottom: 14px; border-bottom: 1px solid #e0d9ce; }
+.mosaicSystemCollections > button { min-width: 0; min-height: 48px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 6px 8px; border: 1px solid #ddd5ca; border-radius: 8px; background: white; cursor: pointer; text-align: left; }
+.mosaicCollectionIcon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 7px; color: white; }
+.mosaicCollectionIcon.coral { background: #df7768; }.mosaicCollectionIcon.moss { background: #69755f; }.mosaicCollectionIcon.ochre { background: #b28755; }
+.mosaicSystemCollections > button div { display: grid; gap: 2px; }
+.mosaicSystemCollections strong, .mosaicCollectionMain strong { font-size: 10px; }
+.mosaicSystemCollections small, .mosaicCollectionMain small { color: #8e8579; font-size: 8px; }
+.mosaicSystemCollections > button > i { color: #9c9387; font-size: 7px; font-style: normal; }
+.mosaicDrawerHeading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 16px 0 8px; }
+.mosaicDrawerHeading > small { color: #9a9185; font-size: 8px; }
+.mosaicCollectionList > article { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border: 1px solid #ddd5ca; border-radius: 8px; background: white; }
+.mosaicCollectionMain { min-width: 0; display: flex; align-items: center; gap: 9px; padding: 6px; border: 0; background: transparent; cursor: pointer; text-align: left; }
+.mosaicCollectionMain > span:last-child { min-width: 0; display: grid; gap: 3px; }
+.mosaicCollectionMosaic { flex: none; width: 48px; height: 39px; overflow: hidden; display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; border-radius: 5px; background: #e5ded3; }
+.mosaicCollectionMosaic img, .mosaicCollectionMosaic i { width: 100%; height: 100%; min-height: 0; object-fit: cover; background: #d8d0c4; }
+.mosaicCollectionMosaic > b { grid-column: 1 / -1; display: grid; place-items: center; color: #8c8275; }
+.mosaicCollectionList > article > div { display: flex; gap: 3px; padding-right: 6px; }
+.mosaicCollectionList > article > div button { min-height: 30px; padding: 5px 7px; border: 1px solid #ddd4c8; border-radius: 6px; background: #f7f3ec; cursor: pointer; font-size: 8px; }
+.mosaicCollectionList > article > div button.active { background: #f4dfd9; color: #913d32; font-weight: 650; }
+
+.mosaicActivityList, .mosaicArtifactList { display: grid; gap: 7px; }
+.mosaicActivityList > article { min-width: 0; min-height: 55px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 8px; border: 1px solid #ddd5ca; border-radius: 8px; background: white; }
+.mosaicActivityList > article.failed { border-color: #e2b9ae; background: #fff8f5; }
+.mosaicRunIcon { width: 31px; height: 31px; display: grid; place-items: center; border-radius: 7px; background: #eee9e0; color: #6f665b; }
+.mosaicActivityList article > div { min-width: 0; display: grid; gap: 4px; }
+.mosaicActivityList strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.mosaicActivityList small { color: #8d8478; font-size: 8px; line-height: 1.3; }
+.mosaicActivityList progress { width: 100%; height: 4px; accent-color: var(--mosaic-coral); }
+.mosaicActivityList article > button { min-height: 31px; padding: 5px 8px; border: 1px solid #d8cfc3; border-radius: 6px; background: #f8f4ed; cursor: pointer; font-size: 8px; }
+.mosaicPrimaryNav b.attention { background: var(--mosaic-coral); color: white; }
+
+.mosaicResearchProgress {
+  position: relative; min-width: 0; min-height: 32px; display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 9px;
+  overflow: hidden; padding: 4px 7px; border: 1px solid #cfc9bd; border-radius: 8px;
+  background: #fffdf8ed; color: #565047; box-shadow: 0 6px 18px #30231712; backdrop-filter: blur(12px);
+}
+.mosaicResearchFill { position: absolute; z-index: 0; inset: 0 auto 0 0; background: #f0ded8; transition: width .35s ease; }
+.mosaicResearchProgress > div, .mosaicResearchProgress > em { position: relative; z-index: 1; }
+.mosaicResearchProgress > div:first-of-type { min-width: 0; display: grid; gap: 1px; }
+.mosaicResearchProgress > div:first-of-type b,
+.mosaicResearchProgress > div:first-of-type small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mosaicResearchProgress > div:first-of-type b { color: #493f37; font: 650 8px/1.2 Arial, sans-serif; }
+.mosaicResearchProgress > div:first-of-type small { color: #786f64; font-size: 7px; }
+.mosaicResearchProgress > em { color: #7b7166; font-size: 7px; font-style: normal; white-space: nowrap; }
+.mosaicResearchProgress > div:last-child { display: flex; gap: 4px; }
+.mosaicResearchProgress button,
+.mosaicResearchFollowUp,
+.mosaicRunFollowUps button {
+  min-height: 23px; padding: 3px 8px; border: 1px solid #d9c9c1; border-radius: 999px;
+  background: #fff9f5; color: #7d453c; cursor: pointer; font-size: 7px;
+}
+.mosaicResearchProgress.status-failed,
+.mosaicResearchProgress.status-blocked,
+.mosaicResearchProgress.status-needs_input,
+.mosaicResearchProgress.status-interrupted { border-color: #dfb7ac; background: #fff8f5ed; }
+.mosaicResearchProgress.status-succeeded .mosaicResearchFill { background: #dfe8d7; }
+.mosaicResearchProgress.status-cancelled .mosaicResearchFill { background: #e6e1d8; }
+.atlasAiStatus > b { margin-right: 4px; color: var(--mosaic-coral); }
+.atlasAiStatus.research-blocked,
+.atlasAiStatus.research-needs_input,
+.atlasAiStatus.research-failed,
+.atlasAiStatus.research-interrupted { color: #8a4337; }
+.mosaicResearchFollowUp { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mosaicRunFollowUps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.mosaicComposer.compact .mosaicResearchFollowUp { display: none; }
+
+@media (max-width: 760px) {
+  .mosaicResearchProgress { grid-template-columns: minmax(0, 1fr) auto; gap: 5px; }
+  .mosaicResearchProgress > em { display: none; }
+  .mosaicResearchProgress > div:last-child button { min-width: 54px; }
+}
+
+.mosaicPrivacyNote { display: flex; gap: 10px; padding: 11px; border: 1px solid #d8d7c5; border-radius: 9px; background: #f1f2e8; }
+.mosaicPrivacyNote > span { color: #697358; font-size: 20px; }
+.mosaicPrivacyNote div { display: grid; gap: 4px; }
+.mosaicPrivacyNote strong { color: #4e5846; font-size: 10px; }
+.mosaicPrivacyNote p { margin: 0; color: #7b8370; font-size: 8px; line-height: 1.45; }
+.mosaicStudioDrawer > form { display: grid; gap: 9px; margin-top: 12px; }
+.mosaicStudioDrawer > form label { display: grid; gap: 5px; color: #62594f; font-size: 9px; font-weight: 650; }
+.mosaicStudioDrawer > form input { min-height: 36px; padding: 7px 9px; border: 1px solid #d8cfc3; border-radius: 7px; background: white; font-size: 10px; }
+.mosaicStudioContext { display: flex; flex-wrap: wrap; gap: 4px; }
+.mosaicStudioContext span { padding: 5px 7px; border: 1px solid #ddd5c9; border-radius: 999px; background: #f7f3ec; color: #776e63; font-size: 8px; }
+.mosaicStudioDrawer > form > button { min-height: 36px; border: 0; border-radius: 7px; cursor: pointer; font-size: 9px; }
+.mosaicArtifactList > article { min-width: 0; display: flex; gap: 9px; padding: 9px; border: 1px solid #ddd5ca; border-radius: 8px; background: white; }
+.mosaicArtifactList > article > span { width: 31px; height: 31px; flex: none; display: grid; place-items: center; border-radius: 6px; background: #eee8de; color: #756b5e; }
+.mosaicArtifactList > article > .mosaicArtifactThumbs { grid-template-columns: repeat(2, 1fr); overflow: hidden; }
+.mosaicArtifactThumbs img { width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: cover; }
+.mosaicArtifactThumbs img:first-child:nth-last-child(3) { grid-row: span 2; }
+.mosaicArtifactList > article div { min-width: 0; display: grid; gap: 3px; }
+.mosaicArtifactList strong { font-size: 10px; }.mosaicArtifactList small { color: #8d8478; font-size: 8px; }.mosaicArtifactList p { overflow: hidden; margin: 1px 0 0; color: #6f665c; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.mosaicDynamicFilters { border-top: 1px solid #e0d9ce; }
+
+/* A lightweight inspector keeps the board visible instead of replacing it. */
+.mosaicShell .productPreviewBackdrop { justify-items: end; padding: 0; background: #26201940; backdrop-filter: blur(2px); }
+.mosaicShell .productPreviewDialog {
+  width: min(500px, calc(100vw - 58px)); height: 100dvh; min-height: 0; border-width: 0 0 0 1px; border-radius: 0;
+  background: #fbf8f2; box-shadow: -18px 0 60px #21170e30;
+}
+.mosaicShell .productPreviewDialog > header { min-height: 58px; }
+.mosaicShell .productPreviewDialog h2 { font-size: 15px; }
+.mosaicShell .productQuickLook { min-height: 0; grid-template-columns: 1fr; grid-template-rows: minmax(240px, 46vh) minmax(0, 1fr); }
+.mosaicShell .productPreviewGallery { grid-auto-rows: minmax(210px, 46vh); }
+.mosaicShell .productPreviewFacts { border-top: 1px solid var(--line); border-left: 0; }
+.mosaicShell .productPreviewTools button { font-size: 9px; }
+
+@media (hover: none), (pointer: coarse) {
+  .mosaicPrimaryNav button, .mosaicLibrary button, .mosaicTopActions > button, .mosaicViewMenu > summary { min-height: 40px; }
+}
+
+@media (max-width: 900px) {
+  .mosaicWorkspaceSwitcher .mosaicIdentity > div, .mosaicWorkspaceSwitcher .mosaicIdentity > i { display: none; }
+  .mosaicWorkspaceMenu { position: fixed; top: 54px; left: 8px; }
+  .mosaicSelectionTray { left: calc(50% + 29px); max-width: calc(100vw - 84px); }
+}
+
+@media (max-width: 620px) {
+  .mosaicSelectionTray { left: 50%; bottom: 62px; max-width: calc(100vw - 12px); width: calc(100vw - 12px); gap: 5px; }
+  .mosaicSelectionThumbs { max-width: 92px; }
+  .mosaicSelectionTray > strong { max-width: 65px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mosaicTrayActions { flex: 1; }
+  .mosaicWorkspaceMenu { top: auto; bottom: 60px; left: 8px; }
+  .mosaicOnboarding { grid-template-columns: 1fr; }
+  .mosaicOnboarding > div:first-child span { display: none; }
+  .mosaicOnboarding > div:nth-child(2) { display: flex; overflow-x: auto; scrollbar-width: none; }
+  .mosaicOnboarding > div:nth-child(2) button { flex: 0 0 min(230px, 78vw); width: auto; }
+  .mosaicWorkspaceMenu form { grid-template-columns: minmax(0, 1fr) auto; }
+  .mosaicWorkspaceMenu form select { grid-column: 1; }
+  .mosaicShell .productPreviewDialog { width: 100vw; }
+  .mosaicSidebar > .mosaicWorkspaceSwitcher { display: block; flex: none; }
+  .mosaicSidebar > .mosaicWorkspaceSwitcher > .mosaicIdentity { min-height: 40px; display: flex; padding: 0; }
+  .mosaicSidebar > .mosaicWorkspaceSwitcher .mosaicMark { width: 40px; height: 40px; }
+}
+
+/* V1 consistency pass — one control radius, one icon family, restrained motion. */
+.mosaicIcon { width: 14px; height: 14px; flex: none; stroke-width: 1.8; }
+.mosaicInlineIcon { width: 10px; height: 10px; vertical-align: -2px; }
+.mosaicChevron { margin-left: auto; color: #998f82; transition: transform .22s cubic-bezier(.2, .8, .2, 1); }
+.mosaicWorkspaceSwitcher[open] .mosaicChevron { transform: rotate(180deg); }
+.mosaicSrOnly {
+  position: absolute !important; width: 1px !important; height: 1px !important; overflow: hidden !important;
+  clip: rect(0 0 0 0) !important; clip-path: inset(50%) !important; white-space: nowrap !important;
+}
+
+.mosaicShell button:not(.productLinkOverlay),
+.mosaicShell input,
+.mosaicShell select,
+.mosaicShell textarea { border-radius: var(--mosaic-radius); }
+.mosaicShell :where(.mosaicWorkspaceMenu, .mosaicViewMenu > div, .mosaicOnboarding, .mosaicSelectionTray, .mosaicPrivacyNote) { border-radius: var(--mosaic-radius); }
+.mosaicShell :where(.mosaicComposerInput, .mosaicFilterSection input, .mosaicFilterSection select, .mosaicWorkspaceMenu input, .mosaicWorkspaceMenu select, .mosaicStudioDrawer input) { border-radius: var(--mosaic-radius); }
+.mosaicComposer.compact { background: #fffdf9; }
+.mosaicComposer.expanded { background: #fffdf9; border-radius: calc(var(--mosaic-radius) + 6px); }
+.mosaicComposerInput {
+  min-height: 42px; padding: 3px 3px 3px 10px; border: 1px solid #ded6cb; border-radius: 20px;
+  background: #f7f3ec; box-shadow: inset 0 1px 2px rgba(56, 45, 33, .035); transition: border-color .18s ease, background-color .18s ease, box-shadow .2s ease;
+}
+.mosaicComposerInput:focus-within { border-color: #d6b5ad; background: #fff; box-shadow: 0 0 0 4px rgba(213, 42, 29, .07), 0 7px 18px rgba(48, 35, 23, .08); }
+.mosaicComposer.compact .mosaicComposerInput { min-height: 40px; padding: 3px 3px 3px 10px; border: 0; border-radius: 999px; background: #fffdf9; box-shadow: none; }
+.mosaicComposer.expanded .mosaicComposerInput { min-height: 54px; }
+.mosaicComposer.expanded .mosaicAttach, .mosaicComposer.expanded .mosaicSend { align-self: end; }
+.mosaicComposerInput textarea { border-radius: 0; }
+.mosaicSpark { box-sizing: content-box; padding: 6px; border-radius: 50%; background: #f8e6e2; }
+.mosaicAttach, .mosaicSend { border-radius: 50% !important; }
+.mosaicAttach .mosaicIcon, .mosaicSend .mosaicIcon { width: 16px; height: 16px; }
+.mosaicSend:not(:disabled) { box-shadow: 0 5px 14px rgba(44, 40, 35, .24); }
+.mosaicSend:disabled { background: #d8d2c9; color: #9a9185; opacity: 1; cursor: default; box-shadow: none; }
+.mosaicSpinner { animation: mosaicSpin .85s linear infinite; }
+
+.mosaicPrimaryNav button,
+.mosaicLibrary button,
+.mosaicTopActions > button,
+.mosaicViewMenu > summary,
+.mosaicAttach,
+.mosaicSend,
+.mosaicActiveChips button,
+.mosaicTrayActions button,
+.mosaicTrayClear,
+.cardActions button {
+  transition: color .18s ease, background-color .18s ease, box-shadow .2s ease, transform .2s cubic-bezier(.2, .8, .2, 1), opacity .18s ease;
+}
+.mosaicPrimaryNav button .mosaicIcon,
+.mosaicLibrary button .mosaicIcon,
+.mosaicTopActions .mosaicIcon,
+.mosaicTrayActions .mosaicIcon,
+.cardActions .mosaicIcon {
+  transition: transform .22s cubic-bezier(.2, .8, .2, 1);
+}
+.cardActions .mosaicIcon { width: clamp(4px, 7.5cqw, 13px); height: clamp(4px, 7.5cqw, 13px); }
+.cardActions button { border-radius: clamp(2px, 3cqw, 5px); }
+.mosaicActiveChips button { border-radius: 999px; }
+.cardSavedMark .mosaicIcon { width: clamp(7px, 8cqw, 13px); height: clamp(7px, 8cqw, 13px); }
+.mosaicSelectionRemove .mosaicIcon { width: 9px; height: 9px; stroke-width: 2.4; }
+.mosaicShell .drawerClose,
+.mosaicShell .productPreviewDialog > header button { display: grid; place-items: center; }
+.mosaicShell .productPreviewTools button { display: flex; align-items: center; justify-content: flex-start; gap: 7px; }
+.mosaicShell .productPreviewTools button.reject { justify-content: center; }
+
+.mosaicBoardBar { grid-template-columns: auto minmax(48px, 1fr) auto auto; }
+.mosaicViewControls { min-width: 0; display: flex; align-items: center; gap: 5px; pointer-events: auto; }
+.mosaicViewControls > button,
+.mosaicZoomPill,
+.mosaicAxisPill,
+.mosaicSimilarityPill {
+  min-height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border: 0; border-radius: 999px;
+  background: var(--mosaic-glass); color: #675f55; box-shadow: var(--mosaic-glass-shadow);
+  backdrop-filter: blur(20px) saturate(1.22); -webkit-backdrop-filter: blur(20px) saturate(1.22); font-size: 8px;
+}
+.mosaicViewControls > button { cursor: pointer; }
+.mosaicViewControls > button:hover { transform: translateY(-1px); background: var(--mosaic-glass-strong); }
+.mosaicViewControls .mosaicSavedViewsButton { width: 32px; padding: 0; justify-content: center; }
+.mosaicZoomPill { gap: 0; padding: 2px; }
+.mosaicZoomPill button { min-width: 27px; height: 27px; padding: 0 5px; border: 0; border-radius: 999px; background: transparent; color: inherit; cursor: pointer; font-size: 7px; }
+.mosaicZoomPill button:nth-child(2) { min-width: 44px; }
+.mosaicZoomPill button:hover:not(:disabled) { background: rgba(255, 255, 255, .72); }
+.mosaicZoomPill button:disabled { opacity: .35; cursor: default; }
+.mosaicAxisPill { gap: 3px; padding-right: 5px; }
+.mosaicAxisPill > span { color: #9a8f82; font: 750 7px/1 var(--font-geist-mono); }
+.mosaicAxisPill select { width: 58px; min-width: 0; padding: 0 3px; border: 0; border-radius: 999px; outline: 0; background: transparent; color: #554e45; font-size: 7px; cursor: pointer; }
+.mosaicSimilarityPill { gap: 4px; padding: 0 6px 0 8px; }
+.mosaicSimilarityPill .mosaicIcon { width: 12px; height: 12px; color: var(--mosaic-coral); }
+.mosaicSimilarityPill select { width: 58px; min-width: 0; padding: 0 3px; border: 0; border-radius: 999px; outline: 0; background: transparent; color: #554e45; font-size: 7px; cursor: pointer; }
+
+.atlasBoardPanel .productCard { border-radius: clamp(6px, 3cqw, 12px); }
+.atlasBoardPanel .productMeta { gap: clamp(2px, 1.5cqw, 4px); }
+.atlasBoardPanel .productMeta {
+  right: clamp(3px, 4cqw, 7px); bottom: clamp(3px, 4cqw, 7px); left: clamp(3px, 4cqw, 7px);
+  width: auto; max-width: none; align-items: end; justify-items: stretch; gap: clamp(1px, 1.5cqw, 3px);
+}
+.atlasBoardPanel .mosaicCardSummary {
+  width: 100%; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: clamp(2px, 2cqw, 5px);
+  color: #fff; font-size: clamp(4px, 5.2cqw, 9px); line-height: 1; white-space: nowrap;
+}
+.atlasBoardPanel .mosaicCardBrand,
+.atlasBoardPanel .mosaicCardPrice {
+  min-width: 0; overflow: hidden; padding: clamp(2px, 1.9cqw, 4px) clamp(3px, 3.2cqw, 6px);
+  border-radius: 999px; background: rgba(23, 20, 15, .76); color: #fff; text-overflow: ellipsis;
+}
+.atlasBoardPanel .mosaicCardBrand { max-width: 58%; color: rgba(255,255,255,.86); }
+.atlasBoardPanel .mosaicCardPrice {
+  max-width: none; flex: none; display: flex; align-items: baseline; gap: .15em; overflow: visible;
+  font-variant-numeric: tabular-nums; font-weight: 750; text-overflow: clip;
+}
+.atlasBoardPanel .mosaicCardPrice > span { flex: none; }
+.atlasBoardPanel .mosaicCardPrice > small { flex: none; color: rgba(255,255,255,.68); font-size: .72em; font-weight: 700; }
+.atlasBoardPanel .productMeta h3 {
+  width: 100%; padding: clamp(1px, 1.4cqw, 2px) clamp(1px, 1.7cqw, 3px); border-radius: 0;
+  background: transparent; box-shadow: none; color: #fff; font-size: clamp(4px, 5.7cqw, 10px);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .92), 0 0 7px rgba(0, 0, 0, .58);
+}
+.atlasBoardPanel .productCard.mosaicSelected .mosaicCardBrand,
+.atlasBoardPanel .productCard.mosaicSelected .mosaicCardPrice { background: rgba(165, 41, 31, .92); }
+.mosaicShell .atlasBoardPanel .productCard.mosaicSelected .productMeta h3 { background: transparent; }
+.atlasBoardPanel .kindBadge,
+.atlasBoardPanel .productCard.inOutfit::before { border-radius: 999px; }
+
+@container (max-width: 74px) {
+  .atlasBoardPanel .productMeta h3 {
+    display: block; padding-inline: 1px; font-size: clamp(3px, 6cqw, 5px); line-height: 1.05;
+  }
+  .atlasBoardPanel .mosaicCardSummary { gap: 1px; font-size: clamp(3px, 7cqw, 6px); }
+  .atlasBoardPanel .mosaicCardBrand,
+  .atlasBoardPanel .mosaicCardPrice { padding: 1px 2px; }
+}
+
+@container (max-width: 38px) {
+  .atlasBoardPanel .mosaicCardBrand { display: none; }
+  .atlasBoardPanel .mosaicCardPrice { max-width: 100%; margin-left: auto; }
+  .atlasBoardPanel .mosaicCardPrice > small { display: none; }
+}
+
+.mosaicOnboarding {
+  grid-template-columns: 1fr; gap: 7px; padding: 4px 2px 0; border: 0; border-radius: 0; background: transparent;
+}
+.mosaicOnboarding > div:first-child { display: flex; align-items: center; gap: 8px; padding: 0 4px; }
+.mosaicOnboarding > div:first-child b { color: #645b51; font-size: 8px; }
+.mosaicOnboarding > div:first-child span { overflow: hidden; color: #999084; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.mosaicOnboarding > div:nth-child(2) { display: flex; gap: 6px; overflow-x: auto; padding: 1px 2px 4px; scrollbar-width: none; }
+.mosaicOnboarding > div:nth-child(2) button {
+  width: auto; min-width: 0; min-height: 34px; flex: 1 1 0; display: flex; align-items: center; gap: 7px;
+  padding: 7px 10px; border: 0; border-radius: 999px; background: #f2ede5; color: #655c52;
+  box-shadow: inset 0 0 0 1px rgba(116, 99, 82, .09); font-size: 8px; line-height: 1.25; text-align: left;
+  transition: background-color .18s ease, color .18s ease, box-shadow .2s ease, transform .2s cubic-bezier(.2,.8,.2,1);
+}
+.mosaicOnboarding > div:nth-child(2) button .mosaicIcon { color: var(--mosaic-coral); }
+.mosaicOnboarding > div:nth-child(2) button:hover { transform: translateY(-1px); background: #fff; box-shadow: 0 7px 18px rgba(48,35,23,.09), inset 0 0 0 1px rgba(116,99,82,.1); }
+.mosaicOnboardingDismiss { top: -4px; right: -4px; display: grid; place-items: center; border-radius: 50% !important; }
+.mosaicOnboardingDismiss .mosaicIcon { width: 11px; height: 11px; }
+
+@media (max-width: 900px) {
+  .mosaicAxisPill { display: none; }
+  .mosaicViewControls > button { width: 32px; justify-content: center; padding: 0; }
+  .mosaicViewControls > button > span { display: none; }
+}
+
+@media (max-width: 620px) {
+  .mosaicBoardBar { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .mosaicBoardBar > div:first-child { display: none; }
+  .mosaicViewControls { gap: 3px; }
+  .mosaicZoomPill button:nth-child(2) { min-width: 38px; }
+  .mosaicViewControls .mosaicSavedViewsButton { display: none; }
+  .mosaicOnboarding > div:first-child span { display: none; }
+  .mosaicOnboarding > div:nth-child(2) button { flex: 0 0 min(245px, 78vw); }
+}
+
+/* Keep the spatial scene cheap to composite while it moves. */
+.mosaicShell .atlas .productImage { filter: none; }
+.mosaicShell .atlas .mosaicCardSummary,
+.mosaicShell .atlas .productMeta h3,
+.mosaicShell .atlas .cardActions button {
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.mosaicShell .atlas .cardActions { visibility: hidden; pointer-events: none; }
+.mosaicShell .atlas .productCard:hover .cardActions,
+.mosaicShell .atlas .productCard:focus-within .cardActions,
+.mosaicShell .atlas .productCard:focus .cardActions { visibility: visible; pointer-events: auto; }
+.mosaicShell .atlas.isInteracting .productCard { transition: none; }
+.mosaicShell .atlas.isInteracting .cardActions { visibility: hidden; pointer-events: none; }
+
+.mosaicShell:has(.atlas.isInteracting) .mosaicTopbar > div:first-child,
+.mosaicShell:has(.atlas.isInteracting) .mosaicLanguage,
+.mosaicShell:has(.atlas.isInteracting) .mosaicTopActions > button,
+.mosaicShell:has(.atlas.isInteracting) .mosaicBoardBar > div:first-child,
+.mosaicShell:has(.atlas.isInteracting) .mosaicBoardMeta,
+.mosaicShell:has(.atlas.isInteracting) .mosaicActiveChips button,
+.mosaicShell:has(.atlas.isInteracting) .mosaicViewControls > button,
+.mosaicShell:has(.atlas.isInteracting) .mosaicZoomPill,
+.mosaicShell:has(.atlas.isInteracting) .mosaicAxisPill,
+.mosaicShell:has(.atlas.isInteracting) .mosaicSimilarityPill,
+.mosaicShell:has(.atlas.isInteracting) .atlasBoardFooter > span {
+  background: rgba(255, 253, 248, .94);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+@media (hover: hover) {
+  .mosaicTopActions > button:hover,
+  .mosaicViewMenu > summary:hover,
+  .mosaicActiveChips button:hover { transform: translateY(-1px); background: var(--mosaic-glass-strong); box-shadow: 0 11px 30px rgba(64, 52, 38, .16), inset 0 0 0 1px rgba(255, 255, 255, .74); }
+  .mosaicPrimaryNav button:hover .mosaicIcon,
+  .mosaicLibrary button:hover .mosaicIcon,
+  .mosaicTrayActions button:hover .mosaicIcon { transform: scale(1.12); }
+  .mosaicAttach:hover { background: #e8e1d7; transform: translateY(-1px); }
+  .mosaicAttach:hover .mosaicIcon { transform: rotate(-5deg) scale(1.08); }
+  .mosaicSend:not(:disabled):hover { background: var(--mosaic-coral); transform: translateY(-1px) scale(1.04); box-shadow: 0 8px 18px rgba(169, 31, 21, .28); }
+  .mosaicSend:not(:disabled):hover .mosaicIcon { transform: translateY(-1px); }
+  .cardActions button:hover .mosaicIcon { transform: scale(1.13); }
+}
+
+.mosaicShell button:not(:disabled):active,
+.mosaicShell summary:active { transform: scale(.97); transition-duration: .07s; }
+.mosaicSend:not(:disabled):active { transform: scale(.94); }
+
+@keyframes mosaicSpin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .mosaicShell *, .mosaicShell *::before, .mosaicShell *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+}
+
+/* One definition per solid card glyph; every card only paints a lightweight <use>. */
+.mosaicIconSprite {
+  position: absolute; width: 0; height: 0; overflow: hidden; pointer-events: none;
+}
+.mosaicSolidIcon { fill: currentColor; }
+
+/* Card controls stay easy to hit while the visual language remains icon-only. */
+.mosaicShell .atlas .cardActions button {
+  border: 0; border-radius: 0; outline: 0; background: transparent; color: #fff;
+  filter: drop-shadow(0 1px 2px rgba(16, 12, 8, .72));
+}
+.mosaicShell .atlas .cardActions button:hover,
+.mosaicShell .atlas .cardActions button:focus-visible,
+.mosaicShell .atlas .cardActions button.active,
+.mosaicShell .atlas .cardActions button.reject:hover,
+.mosaicShell .atlas .cardActions button.reject.active {
+  background: transparent; color: var(--mosaic-coral); filter: drop-shadow(0 1px 2px rgba(255, 255, 255, .85));
+}
+.mosaicShell .atlas .cardSavedMark {
+  min-width: 0; width: auto; height: auto; border-radius: 0; background: transparent; color: var(--mosaic-coral);
+  box-shadow: none; filter: drop-shadow(0 1px 2px rgba(255, 255, 255, .82));
+}
+
+/* The compact composer keeps its identity cue; the working state gives the prompt full focus. */
+.mosaicComposer.expanded .mosaicSpark { display: none; }
+.mosaicComposer.expanded .mosaicComposerInput { grid-template-columns: minmax(0, 1fr) auto auto; }
+.mosaicComposer.expanded .mosaicSend {
+  width: 46px; min-width: 46px; height: 46px; min-height: 46px;
+  border-radius: 17px !important;
+}
+
+/* The action rail is always bounded by its card, even for tiny spatial tiles. */
+.mosaicShell .atlas .cardActions {
+  right: clamp(1px, 2cqw, 4px); left: clamp(1px, 2cqw, 4px); max-width: none;
+  align-items: flex-start; overflow: hidden;
+}
+.mosaicShell .atlas .cardActions button {
+  width: auto; min-width: 0; max-width: 22px; height: auto; max-height: 22px;
+  flex: 1 1 0; aspect-ratio: 1;
+}
+.mosaicShell .atlas .cardActions .mosaicIcon {
+  width: min(60%, 13px); min-width: 0; height: auto; max-height: 60%; aspect-ratio: 1;
+}
+.mosaicShell .atlas .productCard:hover .cardSavedMark,
+.mosaicShell .atlas .productCard:focus-within .cardSavedMark { opacity: 0; }
+.mosaicShell .atlas .productCard[data-source]::after {
+  top: 50%; right: clamp(2px, 3cqw, 5px); bottom: auto; transform: translateY(-50%);
 }

@@ -1,21 +1,228 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Wardrobe Atlas assistant plan",
+  "title": "Mosaic bounded assistant plan",
   "type": "object",
   "additionalProperties": false,
-  "required": ["action", "title", "message", "query", "sizePolicy", "sizes", "shopPolicy", "shops", "pricePolicy", "minPrice", "maxPrice", "targetCount"],
+  "required": [
+    "version",
+    "action",
+    "primaryStepId",
+    "title",
+    "message",
+    "query",
+    "sizePolicy",
+    "sizes",
+    "shopPolicy",
+    "shops",
+    "pricePolicy",
+    "minPrice",
+    "maxPrice",
+    "targetCount",
+    "steps"
+  ],
   "properties": {
+    "version": { "const": 1 },
     "action": { "enum": ["filter", "similar", "visual", "discover", "import_links", "outfit", "clarify"] },
-    "title": { "type": "string" },
-    "message": { "type": "string" },
-    "query": { "type": "string" },
+    "primaryStepId": { "type": "string", "minLength": 1, "maxLength": 50 },
+    "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "message": { "type": "string", "minLength": 1, "maxLength": 800 },
+    "query": { "type": "string", "maxLength": 2000 },
     "sizePolicy": { "enum": ["default", "explicit", "all"] },
-    "sizes": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+    "sizes": {
+      "type": "array",
+      "maxItems": 12,
+      "items": { "type": "string", "minLength": 1, "maxLength": 30 }
+    },
     "shopPolicy": { "enum": ["default", "explicit", "all"] },
-    "shops": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+    "shops": {
+      "type": "array",
+      "maxItems": 12,
+      "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+    },
     "pricePolicy": { "enum": ["default", "explicit", "all"] },
     "minPrice": { "type": "number", "minimum": 0, "maximum": 10000 },
     "maxPrice": { "type": "number", "minimum": 0, "maximum": 10000 },
-    "targetCount": { "type": "integer", "minimum": 1, "maximum": 300 }
+    "targetCount": { "type": "integer", "minimum": 1, "maximum": 300 },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "type", "title", "dependsOn", "query", "targetCount"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 50 },
+              "type": { "const": "filter" },
+              "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "dependsOn": { "type": "array", "maxItems": 11, "items": { "type": "string", "minLength": 1, "maxLength": 50 } },
+              "query": { "type": "string", "maxLength": 2000 },
+              "targetCount": { "type": "integer", "minimum": 1, "maximum": 300 }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "type", "title", "dependsOn", "urls", "targetCount"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 50 },
+              "type": { "const": "import_urls" },
+              "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "dependsOn": { "type": "array", "maxItems": 11, "items": { "type": "string", "minLength": 1, "maxLength": 50 } },
+              "urls": { "type": "array", "minItems": 1, "maxItems": 24, "items": { "type": "string", "pattern": "^[hH][tT][tT][pP][sS]?://", "maxLength": 2000 } },
+              "targetCount": { "type": "integer", "minimum": 1, "maximum": 24 }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "type", "title", "dependsOn", "query", "sources", "targetCount"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 50 },
+              "type": { "const": "discover_adapter" },
+              "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "dependsOn": { "type": "array", "maxItems": 11, "items": { "type": "string", "minLength": 1, "maxLength": 50 } },
+              "query": { "type": "string", "minLength": 1, "maxLength": 2000 },
+              "sources": { "type": "array", "maxItems": 12, "items": { "type": "string", "minLength": 1, "maxLength": 100 } },
+              "targetCount": { "type": "integer", "minimum": 1, "maximum": 300 }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "type", "title", "dependsOn", "scope", "itemIds", "collectionIds", "fields", "targetCount"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 50 },
+              "type": { "const": "enrich" },
+              "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "dependsOn": { "type": "array", "maxItems": 11, "items": { "type": "string", "minLength": 1, "maxLength": 50 } },
+              "scope": { "enum": ["workspace", "filtered_workspace", "selected_items", "selected_collections", "imported_urls", "previous_step"] },
+              "itemIds": { "type": "array", "maxItems": 160, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+              "collectionIds": { "type": "array", "maxItems": 12, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+              "fields": { "type": "array", "minItems": 1, "maxItems": 24, "items": { "type": "string", "minLength": 1, "maxLength": 100 } },
+              "targetCount": { "type": "integer", "minimum": 1, "maximum": 160 }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "type", "title", "dependsOn", "scope", "itemIds", "collectionIds", "targetCount"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 50 },
+              "type": { "const": "similarity" },
+              "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "dependsOn": { "type": "array", "maxItems": 11, "items": { "type": "string", "minLength": 1, "maxLength": 50 } },
+              "scope": { "enum": ["workspace", "filtered_workspace", "selected_items", "selected_collections", "imported_urls", "previous_step"] },
+              "itemIds": { "type": "array", "maxItems": 160, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+              "collectionIds": { "type": "array", "maxItems": 12, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+              "targetCount": { "type": "integer", "minimum": 1, "maximum": 100 }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "type", "title", "dependsOn", "scope", "itemIds", "collectionIds", "prompt", "candidateLimit", "topN", "threshold"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 50 },
+              "type": { "const": "visual_score" },
+              "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "dependsOn": { "type": "array", "maxItems": 11, "items": { "type": "string", "minLength": 1, "maxLength": 50 } },
+              "scope": { "enum": ["workspace", "filtered_workspace", "selected_items", "selected_collections", "imported_urls", "previous_step"] },
+              "itemIds": { "type": "array", "maxItems": 160, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+              "collectionIds": { "type": "array", "maxItems": 12, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+              "prompt": { "type": "string", "minLength": 1, "maxLength": 2000 },
+              "candidateLimit": { "type": "integer", "minimum": 1, "maximum": 50 },
+              "topN": { "type": "integer", "minimum": 1, "maximum": 24 },
+              "threshold": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "type", "title", "dependsOn", "scope", "itemIds", "collectionIds", "operation", "name", "targetCount"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 50 },
+              "type": { "const": "collection_operation" },
+              "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "dependsOn": { "type": "array", "maxItems": 11, "items": { "type": "string", "minLength": 1, "maxLength": 50 } },
+              "scope": { "enum": ["workspace", "filtered_workspace", "selected_items", "selected_collections", "imported_urls", "previous_step"] },
+              "itemIds": { "type": "array", "maxItems": 160, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+              "collectionIds": { "type": "array", "maxItems": 12, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+              "operation": { "enum": ["create", "update", "add_items", "remove_items"] },
+              "name": { "type": "string", "maxLength": 120 },
+              "targetCount": { "type": "integer", "minimum": 1, "maximum": 160 }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "type", "title", "dependsOn", "scope", "itemIds", "collectionIds", "mode", "question", "targetCount"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 50 },
+              "type": { "const": "compare_summarize" },
+              "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "dependsOn": { "type": "array", "maxItems": 11, "items": { "type": "string", "minLength": 1, "maxLength": 50 } },
+              "scope": { "enum": ["workspace", "filtered_workspace", "selected_items", "selected_collections", "imported_urls", "previous_step"] },
+              "itemIds": { "type": "array", "maxItems": 160, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+              "collectionIds": { "type": "array", "maxItems": 12, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+              "mode": { "enum": ["compare", "summarize"] },
+              "question": { "type": "string", "maxLength": 2000 },
+              "targetCount": { "type": "integer", "minimum": 1, "maximum": 60 }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "type", "title", "dependsOn", "scope", "itemIds", "collectionIds", "profile", "kind", "prompt", "targetCount"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 50 },
+              "type": { "const": "compose" },
+              "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "dependsOn": { "type": "array", "maxItems": 11, "items": { "type": "string", "minLength": 1, "maxLength": 50 } },
+              "scope": { "enum": ["workspace", "filtered_workspace", "selected_items", "selected_collections", "imported_urls", "previous_step"] },
+              "itemIds": { "type": "array", "maxItems": 160, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+              "collectionIds": { "type": "array", "maxItems": 12, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+              "profile": { "enum": ["clothing", "televisions", "generic"] },
+              "kind": { "enum": ["outfit", "domain_set"] },
+              "prompt": { "type": "string", "maxLength": 2000 },
+              "targetCount": { "type": "integer", "minimum": 1, "maximum": 12 }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "type", "title", "dependsOn", "scope", "itemIds", "collectionIds", "mode", "artifactKind", "prompt", "targetCount"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 50 },
+              "type": { "const": "artifact" },
+              "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "dependsOn": { "type": "array", "maxItems": 11, "items": { "type": "string", "minLength": 1, "maxLength": 50 } },
+              "scope": { "enum": ["workspace", "filtered_workspace", "selected_items", "selected_collections", "imported_urls", "previous_step"] },
+              "itemIds": { "type": "array", "maxItems": 160, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+              "collectionIds": { "type": "array", "maxItems": 12, "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+              "mode": { "enum": ["draft", "generate"] },
+              "artifactKind": { "enum": ["image", "mood_board", "comparison", "report", "studio"] },
+              "prompt": { "type": "string", "maxLength": 2000 },
+              "targetCount": { "type": "integer", "minimum": 1, "maximum": 12 }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "type", "title", "dependsOn", "question", "reason"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 50 },
+              "type": { "const": "clarify" },
+              "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "dependsOn": { "type": "array", "maxItems": 11, "items": { "type": "string", "minLength": 1, "maxLength": 50 } },
+              "question": { "type": "string", "minLength": 1, "maxLength": 500 },
+              "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
+            }
+          }
+        ]
+      }
+    }
   }
 }

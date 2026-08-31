@@ -66,7 +66,13 @@ console.log(`Collecting product data at a conservative rate. Checkout and accoun
 const crawler = new PlaywrightCrawler({
   headless: !options.headed,
   maxConcurrency: 1,
-  sameDomainDelaySecs: 1.5,
+  // Human-paced by default. Sessions preserve the same cookie jar instead of
+  // presenting each product page as a brand-new visitor.
+  sameDomainDelaySecs: 5,
+  maxRequestsPerMinute: 10,
+  useSessionPool: true,
+  persistCookiesPerSession: true,
+  maxSessionRotations: 0,
   maxRequestRetries: 1,
   requestHandlerTimeoutSecs: 90,
   launchContext: { launchOptions: { channel: "chrome" } },

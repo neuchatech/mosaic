@@ -1,6 +1,12 @@
-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path d="M22 19.2727C22 20.779 20.779 22 19.2727 22H14.7273C13.221 22 12 20.779 12 19.2727V12H19.2727C20.779 12 22 13.221 22 14.7273V19.2727Z" fill="#68C4FF"/>
-<path d="M20 2C21.1046 2 22 2.89543 22 4V7C22 8.10457 21.1046 9 20 9H17C15.8954 9 15 8.10457 15 7V4C15 2.89543 15.8954 2 17 2H20Z" fill="#0C79D8"/>
-<path d="M7 15C8.10457 15 9 15.8954 9 17V20C9 21.1046 8.10457 22 7 22H4C2.89543 22 2 21.1046 2 20V17C2 15.8954 2.89543 15 4 15H7Z" fill="#0C79D8"/>
-<path d="M12 12H4.72727C3.22104 12 2 10.779 2 9.27273V4.72727C2 3.22104 3.22104 2 4.72727 2H9.27273C10.779 2 12 3.22104 12 4.72727V12Z" fill="#2E9EFF"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="MosAIc">
+  <defs>
+    <linearGradient id="sand" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ded2b9"/><stop offset="1" stop-color="#cbbda3"/></linearGradient>
+    <linearGradient id="sage" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#8b8f73"/><stop offset="1" stop-color="#73775d"/></linearGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#302f2b"/><stop offset="1" stop-color="#1f1e1b"/></linearGradient>
+  </defs>
+  <rect x="17" y="18" width="53" height="55" rx="10" fill="#d52a1d"/>
+  <rect x="86" y="14" width="52" height="55" rx="9" fill="url(#sand)" transform="rotate(17 112 41.5)"/>
+  <rect x="17" y="85" width="56" height="56" rx="11" fill="url(#sage)"/>
+  <rect x="84" y="85" width="57" height="56" rx="11" fill="url(#ink)"/>
+  <path d="M77 64c1.45 8.7 5.8 13.05 14.5 14.5C82.8 79.95 78.45 84.3 77 93c-1.45-8.7-5.8-13.05-14.5-14.5C71.2 77.05 75.55 72.7 77 64Z" fill="#d52a1d"/>
 </svg>

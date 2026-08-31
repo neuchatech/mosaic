@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 510 160" role="img" aria-label="Neuchatech MosAIc">
+  <g>
+    <rect x="17" y="18" width="53" height="55" rx="10" fill="#d52a1d"/>
+    <rect x="86" y="14" width="52" height="55" rx="9" fill="#d3c6aa" transform="rotate(17 112 41.5)"/>
+    <rect x="17" y="85" width="56" height="56" rx="11" fill="#7d8266"/>
+    <rect x="84" y="85" width="57" height="56" rx="11" fill="#24231f"/>
+    <path d="M77 64c1.45 8.7 5.8 13.05 14.5 14.5C82.8 79.95 78.45 84.3 77 93c-1.45-8.7-5.8-13.05-14.5-14.5C71.2 77.05 75.55 72.7 77 64Z" fill="#d52a1d"/>
+  </g>
+  <g font-family="Inter, ui-sans-serif, system-ui, sans-serif">
+    <text x="175" y="102" font-size="66" font-weight="720" letter-spacing="-3" fill="#28231f"><tspan>Mos</tspan><tspan fill="#d52a1d">AI</tspan><tspan>c</tspan></text>
+    <text x="408" y="100" font-size="13" font-weight="650" letter-spacing="1" fill="#7b736a">BY</text>
+    <text x="408" y="119" font-size="13" font-weight="650" letter-spacing="1" fill="#7b736a">NEUCHATECH</text>
+  </g>
+</svg>
