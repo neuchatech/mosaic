@@ -1282,6 +1282,65 @@ export function createApp(
     return context.json({ deleted: true });
   });
 
+  app.get("/api/assistant/conversations", (context) => {
+    const workspaceId = context.req.query("workspaceId") ?? DEFAULT_CLOTHING_WORKSPACE_ID;
+    if (!repository.getWorkspace(workspaceId)) return context.json({ error: "workspace not found" }, 404);
+    return context.json({
+      conversations: repository.listAssistantConversations(
+        workspaceId,
+        boundedLimit(context.req.query("limit"), 30, 200),
+      ),
+    });
+  });
+
+  app.post("/api/assistant/conversations", async (context) => {
+    const parsed = z.object({
+      workspaceId: z.string().trim().min(1).max(128),
+      title: z.string().trim().min(1).max(160).optional(),
+    }).safeParse(await context.req.json());
+    if (!parsed.success) return context.json({ error: "invalid conversation", issues: parsed.error.issues }, 400);
+    try {
+      return context.json({ conversation: repository.createAssistantConversation(parsed.data) }, 201);
+    } catch (error) {
+      return context.json({ error: error instanceof Error ? error.message : "conversation creation failed" }, 409);
+    }
+  });
+
+  app.get("/api/assistant/conversations/:id", (context) => {
+    const workspaceId = context.req.query("workspaceId") ?? DEFAULT_CLOTHING_WORKSPACE_ID;
+    const conversation = repository.getAssistantConversation(context.req.param("id"), workspaceId);
+    if (!conversation) return context.json({ error: "conversation not found" }, 404);
+    return context.json({
+      conversation,
+      messages: repository.listAssistantMessages(
+        conversation.id,
+        workspaceId,
+        boundedLimit(context.req.query("limit"), 100, 500),
+      ),
+    });
+  });
+
+  app.patch("/api/assistant/conversations/:id", async (context) => {
+    const workspaceId = context.req.query("workspaceId") ?? DEFAULT_CLOTHING_WORKSPACE_ID;
+    const parsed = z.object({ title: z.string().trim().min(1).max(160) }).safeParse(await context.req.json());
+    if (!parsed.success) return context.json({ error: "invalid conversation update", issues: parsed.error.issues }, 400);
+    const conversation = repository.updateAssistantConversation(context.req.param("id"), parsed.data, workspaceId);
+    return conversation ? context.json({ conversation }) : context.json({ error: "conversation not found" }, 404);
+  });
+
+  app.delete("/api/assistant/conversations/:id", (context) => {
+    const workspaceId = context.req.query("workspaceId") ?? DEFAULT_CLOTHING_WORKSPACE_ID;
+    const messages = repository.listAssistantMessages(context.req.param("id"), workspaceId, 500);
+    if (messages.some((message) => {
+      if (!message.researchRunId) return false;
+      const run = research.get(message.researchRunId, workspaceId);
+      return run?.status === "queued" || run?.status === "running";
+    })) return context.json({ error: "cancel active research before deleting this conversation" }, 409);
+    return repository.deleteAssistantConversation(context.req.param("id"), workspaceId)
+      ? context.json({ deleted: true })
+      : context.json({ error: "conversation not found" }, 404);
+  });
+
   app.post("/api/research/runs", async (context) => {
     const parsed = researchApiRequestSchema.safeParse(await context.req.json());
     if (!parsed.success) return context.json({ error: "invalid research request", issues: parsed.error.issues }, 400);

@@ -59,12 +59,41 @@ export function migrateResearchRunSchema(db: Database.Database): void {
       PRIMARY KEY(run_id, sequence),
       FOREIGN KEY(run_id) REFERENCES research_runs(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS assistant_conversations (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS assistant_messages (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      status TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      research_run_id TEXT,
+      context_json TEXT NOT NULL DEFAULT '{}',
+      result_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(research_run_id, role),
+      FOREIGN KEY(conversation_id) REFERENCES assistant_conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+      FOREIGN KEY(research_run_id) REFERENCES research_runs(id) ON DELETE SET NULL
+    );
     CREATE INDEX IF NOT EXISTS idx_research_runs_workspace_updated
       ON research_runs(workspace_id, updated_at DESC, id);
     CREATE INDEX IF NOT EXISTS idx_research_runs_workspace_status
       ON research_runs(workspace_id, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_research_run_events_sequence
       ON research_run_events(run_id, sequence);
+    CREATE INDEX IF NOT EXISTS idx_assistant_conversations_workspace_updated
+      ON assistant_conversations(workspace_id, updated_at DESC, id);
+    CREATE INDEX IF NOT EXISTS idx_assistant_messages_conversation_created
+      ON assistant_messages(conversation_id, created_at, id);
   `);
 }
 

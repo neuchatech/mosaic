@@ -45,9 +45,15 @@ import {
   type WorkspaceUpdate,
 } from "../src/domain/workspace";
 import {
+  assistantConversationSchema,
+  assistantMessageSchema,
+  assistantMessageStatusSchema,
   researchRunEventSchema,
   researchRunSchema,
   researchRunStatusSchema,
+  type AssistantConversation,
+  type AssistantMessage,
+  type AssistantMessageStatus,
   type ResearchAgentResult,
   type ResearchRequest,
   type ResearchRun,
@@ -229,6 +235,18 @@ export type ResearchRunEventListOptions = {
   limit?: number;
 };
 
+export type AssistantMessageCreate = {
+  id?: string;
+  conversationId: string;
+  workspaceId: string;
+  role: "user" | "assistant";
+  status: AssistantMessageStatus;
+  content: string;
+  researchRunId?: string | null;
+  context?: JsonObject;
+  result?: ResearchAgentResult | null;
+};
+
 function parseJson<T>(value: unknown, fallback: T): T {
   try {
     return JSON.parse(String(value)) as T;
@@ -358,6 +376,34 @@ function rowToResearchRunEvent(row: Record<string, unknown>): ResearchRunEvent {
     message: row.message,
     data: parseJson(row.data_json, {}),
     createdAt: row.created_at,
+  });
+}
+
+function rowToAssistantConversation(row: Record<string, unknown>): AssistantConversation {
+  return assistantConversationSchema.parse({
+    id: row.id,
+    workspaceId: row.workspace_id,
+    title: row.title,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+}
+
+function rowToAssistantMessage(row: Record<string, unknown>): AssistantMessage {
+  return assistantMessageSchema.parse({
+    id: row.id,
+    conversationId: row.conversation_id,
+    workspaceId: row.workspace_id,
+    role: row.role,
+    status: row.status,
+    content: row.content,
+    researchRunId: row.research_run_id ?? null,
+    context: parseJson(row.context_json, {}),
+    result: row.result_json === null || row.result_json === undefined
+      ? null
+      : parseJson(row.result_json, null),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   });
 }
 
@@ -1190,6 +1236,148 @@ export class CatalogRepository {
         invalidCollections.length ? `collections: ${invalidCollections.join(", ")}` : "",
       ].filter(Boolean).join("; "));
     }
+  }
+
+  createAssistantConversation(input: {
+    id?: string;
+    workspaceId: string;
+    title?: string;
+  }): AssistantConversation {
+    if (!this.getWorkspace(input.workspaceId)) throw new Error(`Unknown workspace: ${input.workspaceId}`);
+    const id = input.id ?? `conversation-${randomUUID()}`;
+    const now = new Date().toISOString();
+    const conversation = assistantConversationSchema.parse({
+      id,
+      workspaceId: input.workspaceId,
+      title: input.title?.trim() || "New conversation",
+      createdAt: now,
+      updatedAt: now,
+    });
+    this.db.prepare(`
+      INSERT INTO assistant_conversations (id, workspace_id, title, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(conversation.id, conversation.workspaceId, conversation.title, now, now);
+    return this.getAssistantConversation(id, input.workspaceId)!;
+  }
+
+  getAssistantConversation(id: string, workspaceId?: string): AssistantConversation | null {
+    const row = this.db.prepare(`
+      SELECT * FROM assistant_conversations
+      WHERE id = ? AND (? IS NULL OR workspace_id = ?)
+    `).get(id, workspaceId ?? null, workspaceId ?? null) as Record<string, unknown> | undefined;
+    return row ? rowToAssistantConversation(row) : null;
+  }
+
+  listAssistantConversations(workspaceId: string, limit = 50): AssistantConversation[] {
+    const bounded = Math.min(Math.max(Math.trunc(limit), 1), 200);
+    const rows = this.db.prepare(`
+      SELECT * FROM assistant_conversations
+      WHERE workspace_id = ? ORDER BY updated_at DESC, id LIMIT ?
+    `).all(workspaceId, bounded) as Record<string, unknown>[];
+    return rows.map(rowToAssistantConversation);
+  }
+
+  updateAssistantConversation(
+    id: string,
+    patch: { title?: string },
+    workspaceId?: string,
+  ): AssistantConversation | null {
+    const current = this.getAssistantConversation(id, workspaceId);
+    if (!current) return null;
+    const title = patch.title?.trim() || current.title;
+    const updatedAt = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE assistant_conversations SET title = ?, updated_at = ?
+      WHERE id = ? AND workspace_id = ?
+    `).run(title, updatedAt, id, current.workspaceId);
+    return this.getAssistantConversation(id, current.workspaceId);
+  }
+
+  deleteAssistantConversation(id: string, workspaceId?: string): boolean {
+    const current = this.getAssistantConversation(id, workspaceId);
+    if (!current) return false;
+    return this.db.prepare("DELETE FROM assistant_conversations WHERE id = ? AND workspace_id = ?")
+      .run(id, current.workspaceId).changes > 0;
+  }
+
+  saveAssistantMessage(input: AssistantMessageCreate): AssistantMessage {
+    const conversation = this.getAssistantConversation(input.conversationId, input.workspaceId);
+    if (!conversation) throw new Error(`Unknown assistant conversation: ${input.conversationId}`);
+    if (input.researchRunId && !this.getResearchRun(input.researchRunId, input.workspaceId)) {
+      throw new Error(`Unknown research run for assistant message: ${input.researchRunId}`);
+    }
+    const existing = input.researchRunId
+      ? this.db.prepare(`
+          SELECT * FROM assistant_messages
+          WHERE research_run_id = ? AND role = ? AND workspace_id = ?
+        `).get(input.researchRunId, input.role, input.workspaceId) as Record<string, unknown> | undefined
+      : undefined;
+    const now = new Date().toISOString();
+    const message = assistantMessageSchema.parse({
+      id: existing?.id ?? input.id ?? `message-${randomUUID()}`,
+      conversationId: input.conversationId,
+      workspaceId: input.workspaceId,
+      role: input.role,
+      status: assistantMessageStatusSchema.parse(input.status),
+      content: input.content,
+      researchRunId: input.researchRunId ?? null,
+      context: input.context ?? {},
+      result: input.result ?? null,
+      createdAt: existing?.created_at ?? now,
+      updatedAt: now,
+    });
+    this.db.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO assistant_messages (
+          id, conversation_id, workspace_id, role, status, content,
+          research_run_id, context_json, result_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET status = excluded.status,
+          content = excluded.content, context_json = excluded.context_json,
+          result_json = excluded.result_json, updated_at = excluded.updated_at
+      `).run(
+        message.id,
+        message.conversationId,
+        message.workspaceId,
+        message.role,
+        message.status,
+        message.content,
+        message.researchRunId,
+        JSON.stringify(message.context),
+        message.result === null ? null : JSON.stringify(message.result),
+        message.createdAt,
+        message.updatedAt,
+      );
+      this.db.prepare(`
+        UPDATE assistant_conversations SET updated_at = ? WHERE id = ? AND workspace_id = ?
+      `).run(now, conversation.id, conversation.workspaceId);
+    })();
+    return this.getAssistantMessage(message.id, message.workspaceId)!;
+  }
+
+  getAssistantMessage(id: string, workspaceId?: string): AssistantMessage | null {
+    const row = this.db.prepare(`
+      SELECT * FROM assistant_messages
+      WHERE id = ? AND (? IS NULL OR workspace_id = ?)
+    `).get(id, workspaceId ?? null, workspaceId ?? null) as Record<string, unknown> | undefined;
+    return row ? rowToAssistantMessage(row) : null;
+  }
+
+  listAssistantMessages(
+    conversationId: string,
+    workspaceId: string,
+    limit = 100,
+  ): AssistantMessage[] {
+    if (!this.getAssistantConversation(conversationId, workspaceId)) return [];
+    const bounded = Math.min(Math.max(Math.trunc(limit), 1), 500);
+    const rows = this.db.prepare(`
+      SELECT * FROM (
+        SELECT rowid AS message_order, * FROM assistant_messages
+        WHERE conversation_id = ? AND workspace_id = ?
+        ORDER BY rowid DESC LIMIT ?
+      ) ORDER BY message_order
+    `).all(conversationId, workspaceId, bounded) as Record<string, unknown>[];
+    return rows.map(rowToAssistantMessage);
   }
 
   createResearchRun(input: ResearchRunCreate): ResearchRun {

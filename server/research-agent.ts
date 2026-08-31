@@ -8,6 +8,9 @@ import {
   researchAgentResultSchema,
   researchHardConstraintFilter,
   researchRequestSchema,
+  researchWorkspaceManifestSchema,
+  type AssistantConversation,
+  type AssistantMessage,
   type ResearchAgentResult,
   type ResearchRequest,
   type ResearchRequestInput,
@@ -56,6 +59,10 @@ export type ResearchRunRepository = Pick<CatalogRepository,
   | "listFieldDefinitions"
   | "inferWorkspaceSchema"
   | "getWorkspaceFacets"
+  | "createAssistantConversation"
+  | "getAssistantConversation"
+  | "listAssistantMessages"
+  | "saveAssistantMessage"
 > & {
   createResearchRun(input: ResearchRunCreateInput): ResearchRun;
   getResearchRun(id: string, workspaceId?: string): ResearchRun | null;
@@ -154,6 +161,7 @@ export function researchAgentInstruction(run: ResearchRun): string {
     "Before importing or annotating, inspect the workspace's committed fields and observed facets. Reuse an existing category, enum value, unit, or attribute when it is semantically equivalent; preserve genuinely source-specific facts without inventing a near-duplicate taxonomy. Examples in this prompt describe possibilities, never a closed list of domains or strategies.",
     "Hard constraints are eligibility rules and may never be silently relaxed. Soft constraints are ranked preferences: optimize them together, explain meaningful compromises, and explore alternatives when the first retrieval signal is too narrow. A local visual ranking such as CLIP is a retrieval hint, not a verdict or a frozen candidate universe.",
     "Work progressively. Start with enough workspace context to choose a strategy, inspect representative evidence, and expand only when it can change the answer. Avoid reading the entire workspace when bounded queries or samples suffice. Stop once the result is useful or the resource budget is exhausted; preserve partial useful work.",
+    "The manifest may contain earlier user and assistant messages from this workspace conversation. Treat them as conversational context, preserve relevant constraints and references, and answer the newest request directly. Do not redo completed work unless the follow-up asks for it or fresh evidence is required.",
     "Return exactly the structured result required by the output schema. Every returned item, collection, and artifact id must exist in the active workspace. Evidence must say what actually supports the result. Metrics should reflect your completed tool work. If one missing user choice is consequential, use outcome=needs_input and ask it in message instead of guessing.",
     `User outcome:\n${run.request.prompt || "Use the attached and selected references to produce the most useful research result."}`,
     `Direct URLs supplied by the user:\n${JSON.stringify(run.request.urls)}`,
@@ -300,6 +308,34 @@ function resultStatus(result: ResearchAgentResult): ResearchRunStatus {
   return result.outcome;
 }
 
+function conversationTitle(prompt: string): string {
+  const compact = prompt.replace(/\s+/g, " ").trim();
+  return compact ? compact.slice(0, 96) : "Visual research";
+}
+
+function conversationContext(
+  conversation: AssistantConversation,
+  messages: AssistantMessage[],
+): ResearchWorkspaceManifest["conversation"] {
+  return {
+    id: conversation.id,
+    title: conversation.title,
+    messages: messages.slice(-24).map((message) => ({
+      role: message.role,
+      content: message.content.slice(0, 4_000),
+      itemIds: message.result?.itemIds.slice(0, 100) ?? [],
+      collectionIds: message.result?.collectionIds.slice(0, 24) ?? [],
+      artifactIds: message.result?.artifactIds.slice(0, 24) ?? [],
+    })),
+  };
+}
+
+function assistantStatus(status: ResearchRunStatus): AssistantMessage["status"] {
+  if (status === "succeeded") return "completed";
+  if (status === "queued" || status === "running") return "running";
+  return status;
+}
+
 function validateResearchResult(
   repository: ResearchRunRepository,
   run: ResearchRun,
@@ -366,8 +402,20 @@ export class ResearchAgentService {
   }
 
   start(input: ResearchRequestInput): ResearchRun {
-    const request = researchRequestSchema.parse(input);
-    const manifest = buildResearchManifest(request, this.repository);
+    const parsed = researchRequestSchema.parse(input);
+    const conversation = parsed.conversationId
+      ? this.repository.getAssistantConversation(parsed.conversationId, parsed.workspaceId)
+      : this.repository.createAssistantConversation({
+        workspaceId: parsed.workspaceId,
+        title: conversationTitle(parsed.prompt),
+      });
+    if (!conversation) throw new Error("Unknown or cross-workspace assistant conversation.");
+    const request = researchRequestSchema.parse({ ...parsed, conversationId: conversation.id });
+    const history = this.repository.listAssistantMessages(conversation.id, request.workspaceId, 24);
+    const manifest = researchWorkspaceManifestSchema.parse({
+      ...buildResearchManifest(request, this.repository),
+      conversation: conversationContext(conversation, history),
+    });
     const run = this.repository.createResearchRun({
       id: this.idFactory(),
       workspaceId: request.workspaceId,
@@ -376,6 +424,29 @@ export class ResearchAgentService {
       request,
       manifest,
       message: "Research queued",
+    });
+    this.repository.saveAssistantMessage({
+      conversationId: conversation.id,
+      workspaceId: run.workspaceId,
+      role: "user",
+      status: "sent",
+      content: request.prompt || "Use the attached context.",
+      researchRunId: run.id,
+      context: {
+        itemIds: request.itemIds,
+        collectionIds: request.collectionIds,
+        urls: request.urls,
+        images: request.images.map(({ name, mediaPath }) => ({ name, mediaPath })),
+        constraints: request.constraints,
+      },
+    });
+    this.repository.saveAssistantMessage({
+      conversationId: conversation.id,
+      workspaceId: run.workspaceId,
+      role: "assistant",
+      status: "running",
+      content: "Research queued",
+      researchRunId: run.id,
     });
     this.repository.appendResearchRunEvent({
       runId: run.id,
@@ -430,6 +501,14 @@ export class ResearchAgentService {
       finishedAt: this.now().toISOString(),
     }, workspaceId);
     if (updated) {
+      if (updated.request.conversationId) this.repository.saveAssistantMessage({
+        conversationId: updated.request.conversationId,
+        workspaceId,
+        role: "assistant",
+        status: "cancelled",
+        content: updated.message,
+        researchRunId: updated.id,
+      });
       this.repository.appendResearchRunEvent({ runId: id, type: "status", message: updated.message, data: { status: updated.status } }, workspaceId);
       this.emit(updated);
     }
@@ -450,6 +529,14 @@ export class ResearchAgentService {
       startedAt: null,
       finishedAt: null,
     }, workspaceId)!;
+    if (updated.request.conversationId) this.repository.saveAssistantMessage({
+      conversationId: updated.request.conversationId,
+      workspaceId,
+      role: "assistant",
+      status: "running",
+      content: updated.message,
+      researchRunId: updated.id,
+    });
     this.repository.appendResearchRunEvent({ runId: id, type: "status", message: updated.message, data: { status: updated.status } }, workspaceId);
     if (!this.queue.includes(id)) this.queue.push(id);
     this.emit(updated);
@@ -469,6 +556,14 @@ export class ResearchAgentService {
           finishedAt: this.now().toISOString(),
         }, workspace.id);
         if (!updated) continue;
+        if (updated.request.conversationId) this.repository.saveAssistantMessage({
+          conversationId: updated.request.conversationId,
+          workspaceId: workspace.id,
+          role: "assistant",
+          status: "interrupted",
+          content: updated.message,
+          researchRunId: updated.id,
+        });
         this.repository.appendResearchRunEvent({ runId: run.id, type: "status", message: updated.message, data: { status: updated.status } }, workspace.id);
         count += 1;
       }
@@ -514,6 +609,14 @@ export class ResearchAgentService {
           finishedAt: null,
         }, queued.workspaceId);
         if (!running) continue;
+        if (running.request.conversationId) this.repository.saveAssistantMessage({
+          conversationId: running.request.conversationId,
+          workspaceId: running.workspaceId,
+          role: "assistant",
+          status: "running",
+          content: running.message,
+          researchRunId: running.id,
+        });
         this.repository.appendResearchRunEvent({ runId: id, type: "status", message: running.message, data: { status: running.status } }, running.workspaceId);
         this.emit(running);
         const controller = new AbortController();
@@ -540,6 +643,15 @@ export class ResearchAgentService {
             finishedAt: this.now().toISOString(),
           }, running.workspaceId);
           if (finished) {
+            if (finished.request.conversationId) this.repository.saveAssistantMessage({
+              conversationId: finished.request.conversationId,
+              workspaceId: finished.workspaceId,
+              role: "assistant",
+              status: assistantStatus(finished.status),
+              content: validated.message,
+              researchRunId: finished.id,
+              result: validated,
+            });
             this.repository.appendResearchRunEvent({ runId: id, type: "result", message: validated.message, data: { outcome: validated.outcome, itemIds: validated.itemIds } }, running.workspaceId);
             this.emit(finished);
           }
@@ -554,6 +666,15 @@ export class ResearchAgentService {
             finishedAt: this.now().toISOString(),
           }, running.workspaceId);
           if (failed) {
+            if (failed.request.conversationId) this.repository.saveAssistantMessage({
+              conversationId: failed.request.conversationId,
+              workspaceId: failed.workspaceId,
+              role: "assistant",
+              status: "failed",
+              content: failed.message,
+              researchRunId: failed.id,
+              context: { error: message },
+            });
             this.repository.appendResearchRunEvent({ runId: id, type: "error", message: failed.message, data: { error: message } }, running.workspaceId);
             this.emit(failed);
           }

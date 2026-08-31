@@ -210,3 +210,62 @@ test("research HTTP API stores inputs locally and exposes the run through Activi
   const missing = await app.request(`/api/research/runs/research-api?workspaceId=${DEFAULT_CLOTHING_WORKSPACE_ID}`);
   assert.equal(missing.status, 404);
 });
+
+test("assistant conversations persist replies and feed prior context into follow-up runs", async (t) => {
+  const { database, repository } = repositoryFixture();
+  t.after(() => database.close());
+  let sequence = 0;
+  const histories: Array<Array<{ role: string; content: string }>> = [];
+  const service = new ResearchAgentService(repository, {
+    idFactory: () => `conversation-run-${++sequence}`,
+    runner: async ({ run }) => {
+      histories.push((run.manifest.conversation?.messages ?? []).map(({ role, content }) => ({ role, content })));
+      return result({
+        title: `Reply ${sequence}`,
+        message: sequence === 1 ? "The first answer." : "The contextual follow-up answer.",
+      });
+    },
+  });
+  const app = createApp(repository, undefined, undefined, { researchAgent: service });
+  const firstResponse = await app.request("/api/research/runs", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      workspaceId: DEFAULT_CLOTHING_WORKSPACE_ID,
+      prompt: "Start a reusable visual research conversation.",
+    }),
+  });
+  assert.equal(firstResponse.status, 202);
+  const firstPayload = await firstResponse.json() as { run: { id: string; request: { conversationId: string } } };
+  const conversationId = firstPayload.run.request.conversationId;
+  await service.waitFor(firstPayload.run.id, DEFAULT_CLOTHING_WORKSPACE_ID);
+
+  const secondResponse = await app.request("/api/research/runs", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      workspaceId: DEFAULT_CLOTHING_WORKSPACE_ID,
+      conversationId,
+      prompt: "Now refine that answer without starting over.",
+    }),
+  });
+  assert.equal(secondResponse.status, 202);
+  const secondPayload = await secondResponse.json() as { run: { id: string } };
+  await service.waitFor(secondPayload.run.id, DEFAULT_CLOTHING_WORKSPACE_ID);
+
+  assert.deepEqual(histories[0], []);
+  assert.deepEqual(histories[1]?.map(({ role }) => role), ["user", "assistant"]);
+  assert.equal(histories[1]?.[1]?.content, "The first answer.");
+
+  const threadResponse = await app.request(
+    `/api/assistant/conversations/${encodeURIComponent(conversationId)}?workspaceId=${DEFAULT_CLOTHING_WORKSPACE_ID}`,
+  );
+  assert.equal(threadResponse.status, 200);
+  const thread = await threadResponse.json() as {
+    conversation: { id: string };
+    messages: Array<{ role: string; content: string; researchRunId: string }>;
+  };
+  assert.equal(thread.conversation.id, conversationId);
+  assert.deepEqual(thread.messages.map(({ role }) => role), ["user", "assistant", "user", "assistant"]);
+  assert.equal(thread.messages.at(-1)?.content, "The contextual follow-up answer.");
+});

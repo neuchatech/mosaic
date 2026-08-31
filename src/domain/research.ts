@@ -79,6 +79,7 @@ const researchInputUrlSchema = z.string().url().max(2_000).refine((value) => {
 
 export const researchRequestObjectSchema = z.object({
   workspaceId: z.string().trim().min(1).max(128),
+  conversationId: z.string().trim().min(1).max(256).nullable().default(null),
   prompt: z.string().trim().max(80_000).default(""),
   itemIds: z.array(z.string().trim().min(1).max(256)).max(160).default([]),
   collectionIds: z.array(z.string().trim().min(1).max(256)).max(24).default([]),
@@ -204,6 +205,17 @@ export const researchWorkspaceManifestSchema = z.object({
     localEmbeddingArtifactAvailable: z.boolean().default(false),
     hybridEmbeddingsMayBeAvailable: z.boolean(),
   }),
+  conversation: z.object({
+    id: z.string().trim().min(1).max(256),
+    title: z.string().trim().min(1).max(160),
+    messages: z.array(z.object({
+      role: z.enum(["user", "assistant"]),
+      content: z.string().max(4_000),
+      itemIds: z.array(z.string().min(1).max(256)).max(100).default([]),
+      collectionIds: z.array(z.string().min(1).max(256)).max(24).default([]),
+      artifactIds: z.array(z.string().min(1).max(256)).max(24).default([]),
+    })).max(24),
+  }).nullable().default(null),
 });
 
 export const researchEvidenceSchema = z.object({
@@ -234,6 +246,40 @@ export const researchAgentResultSchema = z.object({
     imagesInspected: z.number().int().nonnegative(),
     acquiredItems: z.number().int().nonnegative(),
   }),
+});
+
+export const assistantConversationSchema = z.object({
+  id: z.string().trim().min(1).max(256),
+  workspaceId: z.string().trim().min(1).max(128),
+  title: z.string().trim().min(1).max(160),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const assistantMessageStatusSchema = z.enum([
+  "sent",
+  "running",
+  "completed",
+  "partial",
+  "needs_input",
+  "failed",
+  "blocked",
+  "cancelled",
+  "interrupted",
+]);
+
+export const assistantMessageSchema = z.object({
+  id: z.string().trim().min(1).max(256),
+  conversationId: z.string().trim().min(1).max(256),
+  workspaceId: z.string().trim().min(1).max(128),
+  role: z.enum(["user", "assistant"]),
+  status: assistantMessageStatusSchema,
+  content: z.string().max(20_000),
+  researchRunId: z.string().trim().min(1).max(256).nullable().default(null),
+  context: jsonObjectSchema.default({}),
+  result: researchAgentResultSchema.nullable().default(null),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
 });
 
 export const researchRunStatusSchema = z.enum([
@@ -292,6 +338,9 @@ export type ResearchRequestInput = z.input<typeof researchRequestSchema>;
 export type ResearchSourceCapability = z.infer<typeof researchSourceCapabilitySchema>;
 export type ResearchWorkspaceManifest = z.infer<typeof researchWorkspaceManifestSchema>;
 export type ResearchAgentResult = z.infer<typeof researchAgentResultSchema>;
+export type AssistantConversation = z.infer<typeof assistantConversationSchema>;
+export type AssistantMessageStatus = z.infer<typeof assistantMessageStatusSchema>;
+export type AssistantMessage = z.infer<typeof assistantMessageSchema>;
 export type ResearchRunStatus = z.infer<typeof researchRunStatusSchema>;
 export type ResearchRun = z.infer<typeof researchRunSchema>;
 export type ResearchRunEventType = z.infer<typeof researchRunEventTypeSchema>;
