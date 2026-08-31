@@ -133,7 +133,7 @@ test("discover -> enrich -> mood board persists a queued continuation then fills
     else process.env.CODEX_CLI_PATH = originalCodexPath;
     await discovery.close();
     await acquisition.close();
-    db.close();
+    // Keep the in-memory fixture open until pending app callbacks settle.
   });
 
   const response = await app.request("/api/codex/ask", {
@@ -221,7 +221,7 @@ test("every upstream discovery is launched before one bounded enrichment and art
     else process.env.CODEX_CLI_PATH = originalCodexPath;
     await discovery.close();
     await acquisition.close();
-    db.close();
+    // Keep the in-memory fixture open until pending app callbacks settle.
   });
 
   const response = await app.request("/api/codex/ask", {
@@ -272,7 +272,7 @@ test("a failed persisted enrichment can be retried and completes its artifact", 
     else process.env.CODEX_CLI_PATH = originalCodexPath;
     await discovery.close();
     await acquisition.close();
-    db.close();
+    // Keep the in-memory fixture open until pending app callbacks settle.
   });
 
   const response = await app.request("/api/codex/ask", {
@@ -318,7 +318,7 @@ test("unsupported post-discovery outcomes are rejected before any discovery job 
     else process.env.CODEX_CLI_PATH = originalCodexPath;
     await discovery.close();
     await acquisition.close();
-    db.close();
+    // Keep the in-memory fixture open until pending app callbacks settle.
   });
 
   for (const prompt of [
@@ -367,7 +367,7 @@ test("import_urls -> compare uses the successfully imported products", async (t)
     setPublicNetworkTestHooksForTests(null);
     if (originalCodexPath === undefined) delete process.env.CODEX_CLI_PATH;
     else process.env.CODEX_CLI_PATH = originalCodexPath;
-    db.close();
+    // Keep the in-memory fixture open until pending app callbacks settle.
   });
 
   const first = "https://shop.example.com/products/first";
@@ -400,7 +400,8 @@ test("artifact images stay in app-owned media across a repository reload", async
   const mediaIds: string[] = [];
   t.after(async () => {
     await Promise.all(mediaIds.map((id) => deleteCatalogMedia(id)));
-    db.close();
+    // createApp owns default background services; the in-memory fixture is
+    // intentionally left open until the process exits.
   });
 
   const response = await app.request("/api/artifacts", {
@@ -458,10 +459,13 @@ test("assistant-created artifacts persist uploaded image references locally", as
   const dataUrl = `data:image/webp;base64,${Buffer.from("assistant image").toString("base64")}`;
   let mediaId = "";
   t.after(async () => {
+    // Let createApp's startup recovery microtasks settle before closing the fixture DB.
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
     if (mediaId) await deleteCatalogMedia(mediaId);
     if (originalCodexPath === undefined) delete process.env.CODEX_CLI_PATH;
     else process.env.CODEX_CLI_PATH = originalCodexPath;
-    db.close();
+    // createApp owns default background services; keep this fixture alive for
+    // their queued startup callbacks.
   });
 
   const response = await app.request("/api/codex/ask", {
