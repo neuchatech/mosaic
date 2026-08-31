@@ -185,10 +185,13 @@ test("research HTTP API stores inputs locally and exposes the run through Activi
     body: JSON.stringify({
       workspaceId: DEFAULT_CLOTHING_WORKSPACE_ID,
       prompt: "Use this image as visual context without assuming its domain.",
-      images: [{ name: "reference.png", dataUrl: "data:image/png;base64,aGVsbG8=" }],
+      images: [{
+        name: "reference.png",
+        dataUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      }],
     }),
   });
-  assert.equal(response.status, 202);
+  assert.equal(response.status, 202, await response.clone().text());
   const payload = await response.json() as { run: { id: string; request: { images: Array<{ mediaPath: string }> } } };
   assert.equal(payload.run.id, "research-api");
   assert.match(payload.run.request.images[0]?.mediaPath ?? "", /^\/api\/media\/research-/);

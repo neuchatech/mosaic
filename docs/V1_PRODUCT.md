@@ -29,6 +29,10 @@ than bypassed.
 6. **Local-first and recoverable.** User media and generated artifacts remain
    local by default. Imports preserve user state. Every background run can be
    inspected and recovered without silently restarting network work.
+7. **Conversational continuity.** The compact assistant expands into a familiar
+   conversation with concise action updates, durable final answers, suggested
+   follow-ups, and a clear way to start or revisit a conversation. It summarizes
+   actions without exposing private chain-of-thought.
 
 The visual gold standard is `docs/design/mosaic-gold-standard.png`. It is a
 directional reference, not a pixel-perfect specification. Preserve its warm
@@ -107,6 +111,12 @@ status, timestamps, and provenance. V1 scaffolds this contract even when no
 remote image-generation provider is configured.
 
 ## Assistant contract
+
+Each assistant turn belongs to a persistent, workspace-scoped conversation and
+creates one durable research run. Prior user requests and concise assistant
+answers are supplied as context, while item, collection, artifact, and workspace
+ids are revalidated on every turn. The UI may show persisted action summaries,
+but never raw hidden reasoning.
 
 The assistant returns a bounded plan containing one or more typed steps instead
 of choosing exactly one wardrobe action. Supported primitives:

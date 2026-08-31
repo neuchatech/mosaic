@@ -8,7 +8,7 @@ can research.
 
 ## Product contract
 
-The assistant receives an outcome, an active workspace, optional item or
+The assistant receives the current conversation, an outcome, an active workspace, optional item or
 collection anchors, optional images and URLs, hard and soft constraints, and a
 resource budget. It may inspect the workspace, choose retrieval strategies,
 use installed source capabilities, acquire or enrich records, compare visual
@@ -33,7 +33,7 @@ long prohibition before every operation.
 
 ```mermaid
 flowchart LR
-  U["User outcome + context"] --> R["Persistent research run"]
+  U["Conversation turn + context"] --> R["Persistent research run"]
   R --> M["Workspace manifest"]
   M --> A["Codex Luna research agent"]
   A --> Q["Query / sample / similarity"]
@@ -44,9 +44,17 @@ flowchart LR
   V --> A
   S --> A
   C --> A
-  A --> O["Structured result + evidence"]
-  O --> B["Board, Activity, reusable context"]
+  A --> O["Concise answer + structured result"]
+  O --> T["Persistent conversation"]
+  T --> B["Board, Activity, reusable context"]
+  T --> U
 ```
+
+Conversations and their messages are stored locally and scoped to one workspace.
+Each user turn links to exactly one research run. During execution, the UI shows
+a compact action recap built from persisted tool and progress events—not hidden
+chain-of-thought. The final answer, result ids, warnings, and suggested follow-ups
+become the assistant message for that turn and are available to the next turn.
 
 Runs and compact events are stored locally. A server restart marks interrupted
 work explicitly; reading a run never resumes it. Resume and retry are explicit
@@ -114,6 +122,8 @@ filters, evidence, warnings, and suggested follow-ups. A run can also finish
 with `needs_input`, `partial`, `blocked`, or `failed`; partial useful work is
 retained rather than discarded.
 
-The UI treats this result as a state transition, not a chat transcript. Results
-can become the active board, a collection, a comparison, an artifact draft, or
-context for the next request.
+The UI treats the result as both a state transition and a durable conversational
+answer. Results can become the active board, a collection, a comparison, an
+artifact draft, or context for the next request. Conversation history supplies
+continuity; workspace and tool boundaries still validate every id and mutation
+instead of trusting older prose.

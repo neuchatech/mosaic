@@ -15,7 +15,7 @@ It works especially well for visually driven research—clothing, furniture, tel
 ## Highlights
 
 - Spatial and grid views with smooth pan, zoom, viewport culling, minimap, and local CLIP-based visual similarity.
-- One multimodal research agent for imports, source discovery, enrichment, filtering, comparison, visual retrieval, collections, and local Studio drafts.
+- One conversational multimodal research agent for imports, source discovery, enrichment, filtering, comparison, visual retrieval, collections, and local Studio drafts.
 - Dynamic workspace fields and facets instead of a fixed clothing-only schema.
 - Reusable collections, favorites, decisions with undo, saved views, comparisons, and local artifacts.
 - SQLite persistence with strict workspace isolation and durable background jobs.
@@ -58,7 +58,14 @@ For Chrome-assisted extraction, install and authorize a browser in the ChatGPT d
 
 ## Agentic research
 
-The assistant creates a durable, workspace-scoped research run. Luna sees the
+The assistant is a persistent conversation, not a one-shot command box. Every
+turn creates a durable, workspace-scoped research run while retaining the prior
+user requests, concise answers, selected items, collections, and artifacts as
+context. The expanded composer shows a compact action recap and the final
+answer; it never exposes private chain-of-thought. You can continue with a
+follow-up, revisit an earlier conversation, or start a clean one.
+
+For each turn, Luna sees the
 workspace's real fields, facets, selected items, collections, available source
 capabilities, hard constraints, soft preferences, and a resource budget. It can
 choose and revise its own combination of structured queries, visual retrieval,
@@ -66,7 +73,7 @@ representative samples, source imports, enrichment, inspection, collections,
 and annotations. CLIP is a fast retrieval signal, not a fixed candidate list or
 the final judge.
 
-Runs stream compact events into **Activity**, survive partial failures, and are
+Runs stream compact events into the conversation and **Activity**, survive partial failures, and are
 explicitly resumable after a restart. The app enforces workspace isolation,
 hard constraints, safe media access, and budgets at the tool boundary. See
 [Agentic research architecture](docs/AGENTIC_RESEARCH.md).
