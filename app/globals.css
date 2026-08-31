@@ -827,6 +827,40 @@ body:has(.compareDock) .toast { bottom: 61px; }
 .mosaicComposerIntro > span { color: var(--mosaic-coral-dark); font: 700 6px/1 var(--font-geist-mono); letter-spacing: .12em; text-transform: uppercase; }
 .mosaicComposerIntro h2 { margin: 0; font: 500 clamp(19px, 2.3vw, 28px)/1.05 Georgia, serif; letter-spacing: -.025em; }
 .mosaicComposerIntro p { max-width: 610px; margin: 0; color: #81786d; font-size: 8px; line-height: 1.45; }
+.mosaicConversation { min-width: 0; display: grid; gap: 7px; }
+.mosaicConversationHeader { display: flex; align-items: center; justify-content: space-between; gap: 7px; padding: 0 2px; }
+.mosaicConversationHeader label { min-width: 0; flex: 1; }
+.mosaicConversationHeader select {
+  width: min(360px, 100%); min-height: 30px; padding: 5px 28px 5px 10px; border: 0; border-radius: 999px;
+  background: #f1ece4; color: #655c51; font: 650 8px/1.2 Arial, sans-serif; cursor: pointer;
+}
+.mosaicConversationHeader button {
+  width: 30px; min-width: 30px; height: 30px; padding: 0; display: grid; place-items: center;
+  border: 0; border-radius: 50%; background: #f1ece4; color: #655c51; cursor: pointer;
+}
+.mosaicConversationHeader .mosaicIcon { width: 14px; height: 14px; }
+.mosaicConversationFeed {
+  min-height: 0; max-height: min(34vh, 300px); overflow: auto; display: grid; align-content: start; gap: 7px;
+  padding: 2px 5px 3px 2px; scrollbar-width: thin; overscroll-behavior: contain;
+}
+.mosaicChatMessage { max-width: min(82%, 620px); display: grid; gap: 4px; padding: 9px 11px; border-radius: 17px; font-size: 10px; line-height: 1.45; }
+.mosaicChatMessage > div { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mosaicChatMessage.user { justify-self: end; border-bottom-right-radius: 6px; background: #2c2823; color: #fffdf9; }
+.mosaicChatMessage.assistant { justify-self: start; border-bottom-left-radius: 6px; background: #f1ece4; color: #3f3932; }
+.mosaicChatMessage.status-failed, .mosaicChatMessage.status-blocked, .mosaicChatMessage.status-interrupted { background: #f8e4df; color: #7d3e34; }
+.mosaicChatMessage small { color: inherit; font-size: 7px; opacity: .67; }
+.mosaicChatFollowUps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.mosaicChatFollowUps button {
+  min-height: 25px; padding: 4px 9px; border: 0; border-radius: 999px; background: #fffaf4; color: #795148;
+  box-shadow: inset 0 0 0 1px #d9c9c1; cursor: pointer; font-size: 7px; text-align: left;
+}
+.mosaicChatProgress { max-width: min(88%, 660px); display: grid; gap: 6px; padding: 9px 11px; border-radius: 17px 17px 17px 6px; background: #f6e9e5; color: #5d4942; }
+.mosaicChatProgress header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mosaicChatProgress header span { display: flex; align-items: center; gap: 5px; font-size: 9px; font-weight: 700; }
+.mosaicChatProgress header .mosaicIcon { width: 13px; height: 13px; color: var(--mosaic-coral); }
+.mosaicChatProgress header button { min-height: 24px; padding: 3px 8px; border: 0; border-radius: 999px; background: #fff9f5; color: #7d453c; cursor: pointer; font-size: 7px; }
+.mosaicChatProgress > b { color: #8a665e; font-size: 7px; letter-spacing: .06em; text-transform: uppercase; }
+.mosaicChatProgress ol { display: grid; gap: 3px; margin: 0; padding-left: 16px; color: #70615b; font-size: 8px; line-height: 1.35; }
 .mosaicComposerInput {
   min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 6px;
   padding: 5px 5px 5px 10px; border: 1px solid #d6cdc1; border-radius: 9px; background: white;

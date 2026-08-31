@@ -1086,6 +1086,7 @@ type MosaicResearchRun = {
   model: string;
   request: {
     prompt: string;
+    conversationId: string | null;
     budget: { maxToolCalls: number };
   };
   result: MosaicResearchResult | null;
@@ -1095,6 +1096,26 @@ type MosaicResearchRun = {
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
+};
+type MosaicAssistantConversation = {
+  id: string;
+  workspaceId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+};
+type MosaicAssistantMessage = {
+  id: string;
+  conversationId: string;
+  workspaceId: string;
+  role: "user" | "assistant";
+  status: "sent" | "running" | "completed" | "partial" | "needs_input" | "failed" | "blocked" | "cancelled" | "interrupted";
+  content: string;
+  researchRunId: string | null;
+  context: Record<string, unknown>;
+  result: MosaicResearchResult | null;
+  createdAt: string;
+  updatedAt: string;
 };
 type MosaicResearchEvent = {
   runId: string;
@@ -1229,6 +1250,22 @@ const mosaicResearchUi: Record<MosaicLocale, {
   de: { preparing: "Der Agent bereitet die Recherche vor…", title: "KI-Recherche", stop: "Stoppen", resume: "Fortsetzen", queuedResume: "Recherche wird fortgesetzt…", unavailable: "Recherche nicht verfügbar", continues: "Die Recherche läuft unter Aktivität weiter", localError: "lokaler Fehler", updatesUnavailable: "Live-Aktualisierung nicht verfügbar", missingItems: "Die Recherche ist abgeschlossen, aber ihre Elemente sind nicht mehr in diesem Arbeitsbereich" },
   it: { preparing: "L’agente sta preparando la ricerca…", title: "Ricerca IA", stop: "Interrompi", resume: "Riprendi", queuedResume: "Ricerca rimessa in coda…", unavailable: "Ricerca non disponibile", continues: "La ricerca continua in Attività", localError: "errore locale", updatesUnavailable: "aggiornamenti in tempo reale non disponibili", missingItems: "La ricerca è terminata, ma i suoi elementi non sono più in questo spazio" },
   es: { preparing: "El agente está preparando la investigación…", title: "Investigación con IA", stop: "Detener", resume: "Reanudar", queuedResume: "Investigación puesta de nuevo en cola…", unavailable: "Investigación no disponible", continues: "La investigación continúa en Actividad", localError: "error local", updatesUnavailable: "actualizaciones en directo no disponibles", missingItems: "La investigación terminó, pero sus elementos ya no están en este espacio" },
+};
+
+const mosaicConversationUi: Record<MosaicLocale, {
+  conversation: string;
+  newConversation: string;
+  actionRecap: string;
+  working: string;
+  noConversation: string;
+  itemResults: string;
+  collectionResults: string;
+}> = {
+  en: { conversation: "Conversation", newConversation: "New conversation", actionRecap: "Action recap", working: "Working", noConversation: "Start a new exploration", itemResults: "items", collectionResults: "collections" },
+  fr: { conversation: "Conversation", newConversation: "Nouvelle conversation", actionRecap: "Résumé des actions", working: "En cours", noConversation: "Commencer une nouvelle exploration", itemResults: "éléments", collectionResults: "collections" },
+  de: { conversation: "Unterhaltung", newConversation: "Neue Unterhaltung", actionRecap: "Aktionsübersicht", working: "In Arbeit", noConversation: "Neue Erkundung starten", itemResults: "Elemente", collectionResults: "Sammlungen" },
+  it: { conversation: "Conversazione", newConversation: "Nuova conversazione", actionRecap: "Riepilogo azioni", working: "In corso", noConversation: "Inizia una nuova esplorazione", itemResults: "elementi", collectionResults: "collezioni" },
+  es: { conversation: "Conversación", newConversation: "Nueva conversación", actionRecap: "Resumen de acciones", working: "En curso", noConversation: "Inicia una nueva exploración", itemResults: "elementos", collectionResults: "colecciones" },
 };
 
 const mosaicResearchStatusLabels: Record<MosaicLocale, Record<MosaicResearchRun["status"], string>> = {
@@ -1806,6 +1843,9 @@ export default function Home() {
   const [assistantDropActive, setAssistantDropActive] = useState(false);
   const [activeResearchRun, setActiveResearchRun] = useState<MosaicResearchRun | null>(null);
   const [researchEvents, setResearchEvents] = useState<MosaicResearchEvent[]>([]);
+  const [assistantConversations, setAssistantConversations] = useState<MosaicAssistantConversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [assistantMessages, setAssistantMessages] = useState<MosaicAssistantMessage[]>([]);
   const [researchFreshnessBoundary] = useState(() => new Date(Date.now() - 48 * 60 * 60 * 1_000).toISOString());
   const [xAxis, setXAxis] = useState<AxisField>("pca");
   const [yAxis, setYAxis] = useState<AxisField>("pca");
@@ -1871,6 +1911,7 @@ export default function Home() {
 
   const t = useCallback((key: MosaicMessageKey) => mosaicTranslate(locale, key), [locale]);
   const researchText = mosaicResearchUi[locale];
+  const conversationText = mosaicConversationUi[locale];
 
   useEffect(() => {
     let stored: string | null = null;
@@ -1891,6 +1932,7 @@ export default function Home() {
   const atlasSceneRef = useRef<HTMLDivElement>(null);
   const atlasImageInputRef = useRef<HTMLInputElement>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
+  const assistantFeedRef = useRef<HTMLDivElement>(null);
   const personalImageInputRef = useRef<HTMLInputElement>(null);
   const loadMoreRef = useRef<HTMLButtonElement>(null);
   const atlasMinimapRef = useRef<HTMLCanvasElement>(null);
@@ -1938,6 +1980,7 @@ export default function Home() {
     setScope("catalogue"); setDrawer(null); setPreviewItem(null); setCompareIds(new Set()); setOutfitDraftIds(new Set()); setUndoStack([]);
     setAiPrompt(""); setAiStatus(""); setAiItems(null); setCatalogItems([]); setPromptImages([]); setPromptProductIds([]); setPromptCollectionIds([]);
     setAssistantBusy(false); setAssistantDropActive(false); setActiveResearchRun(null); setResearchEvents([]); setSavedViews([]); setViewName(""); setOutfitBoards([]); setOutfitName(""); setSelectedOutfitBoardId(null);
+    setAssistantConversations([]); setActiveConversationId(null); setAssistantMessages([]);
     setMosaicCollections([]); setCollectionName(""); setMosaicArtifacts([]); setArtifactName(""); setMosaicRuns([]); setSelectedIds(new Set()); setFocusedIndex(0);
     setRefreshJob(null); setRefreshRecovered(false); setDiscoveryPlan(null); setDiscoveryJobs([]); setDiscoveryRecovered(false); setDiscoveryBusy(false);
     setWorkspaceSchema(null); setCatalogStatus(workspaceId ? "loading…" : "no active workspace"); setSelectedCollectionId(null);
@@ -1998,6 +2041,55 @@ export default function Home() {
     setMosaicArtifacts(artifactsResult.value);
     setArtifactsApiAvailable(true);
     return artifactsResult.value;
+  }
+
+  async function reloadAssistantConversation(
+    conversationId: string,
+    operation = captureWorkspaceOperation(),
+  ) {
+    if (!conversationId || !isWorkspaceOperationCurrent(operation)) return;
+    const response = await fetch(
+      atlasWorkspaceApiUrl(`/assistant/conversations/${encodeURIComponent(conversationId)}?limit=200`, operation.workspaceId),
+      { signal: operation.signal },
+    );
+    if (!response.ok) throw new Error("conversation unavailable");
+    const payload = await response.json() as {
+      conversation: MosaicAssistantConversation;
+      messages: MosaicAssistantMessage[];
+    };
+    if (!isWorkspaceOperationCurrent(operation)) return;
+    setActiveConversationId(payload.conversation.id);
+    setAssistantMessages(payload.messages);
+    setAssistantConversations((current) => [
+      payload.conversation,
+      ...current.filter((candidate) => candidate.id !== payload.conversation.id),
+    ].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)));
+  }
+
+  function startNewAssistantConversation() {
+    setActiveConversationId(null);
+    setAssistantMessages([]);
+    setActiveResearchRun(null);
+    setResearchEvents([]);
+    setAiStatus("");
+    setAiItems(null);
+    setComposerExpanded(true);
+    requestAnimationFrame(() => composerInputRef.current?.focus());
+  }
+
+  async function selectAssistantConversation(conversationId: string) {
+    if (!conversationId) { startNewAssistantConversation(); return; }
+    const operation = captureWorkspaceOperation();
+    try {
+      await reloadAssistantConversation(conversationId, operation);
+      if (!isWorkspaceOperationCurrent(operation)) return;
+      setComposerExpanded(true);
+      requestAnimationFrame(() => assistantFeedRef.current?.scrollTo({ top: assistantFeedRef.current.scrollHeight }));
+    } catch (error) {
+      if (isWorkspaceOperationCurrent(operation) && !(error instanceof DOMException && error.name === "AbortError")) {
+        setToast(error instanceof Error ? error.message : "Conversation unavailable");
+      }
+    }
   }
 
   function updateMosaicResearchActivity(run: MosaicResearchRun, latestMessage?: string) {
@@ -2109,6 +2201,7 @@ export default function Home() {
     setAiStatus(resultMessage);
     updateMosaicResearchActivity(run, resultMessage);
     if (run.result) await applyMosaicResearchResult(run, operation);
+    if (run.request.conversationId) await reloadAssistantConversation(run.request.conversationId, operation).catch(() => undefined);
   }
 
   async function cancelMosaicResearch(id = activeResearchRun?.id) {
@@ -2126,6 +2219,7 @@ export default function Home() {
       setAssistantBusy(false);
       setAiStatus(payload.run.message);
       updateMosaicResearchActivity(payload.run);
+      if (payload.run.request.conversationId) await reloadAssistantConversation(payload.run.request.conversationId, operation).catch(() => undefined);
     } catch (error) {
       if (isWorkspaceOperationCurrent(operation) && !(error instanceof DOMException && error.name === "AbortError")) {
         setToast(error instanceof Error ? error.message : "Research could not be cancelled");
@@ -2154,9 +2248,9 @@ export default function Home() {
     }
   }
 
-  function prepareMosaicResearchFollowUp(followUp: string) {
-    const resultItemIds = activeResearchRun?.result?.itemIds ?? [];
-    const resultCollectionIds = activeResearchRun?.result?.collectionIds ?? [];
+  function prepareMosaicResearchFollowUp(followUp: string, result = activeResearchRun?.result) {
+    const resultItemIds = result?.itemIds ?? [];
+    const resultCollectionIds = result?.collectionIds ?? [];
     setPromptProductIds((current) => [...new Set([...current, ...resultItemIds])].slice(-24));
     setPromptCollectionIds((current) => [...new Set([...current, ...resultCollectionIds])].slice(-12));
     setAiPrompt(followUp);
@@ -2168,6 +2262,11 @@ export default function Home() {
     monitorMosaicResearchRef.current = monitorMosaicResearch;
     researchTextRef.current = researchText;
   });
+
+  useEffect(() => {
+    if (!composerExpanded) return;
+    requestAnimationFrame(() => assistantFeedRef.current?.scrollTo({ top: assistantFeedRef.current.scrollHeight, behavior: "smooth" }));
+  }, [assistantMessages, composerExpanded, researchEvents]);
 
   useEffect(() => {
     if (embeddingJob?.status !== "running") return;
@@ -2294,6 +2393,27 @@ export default function Home() {
         const payload = await response.json() as MosaicRun[] | { runs?: MosaicRun[] };
         if (!current()) return;
         setMosaicRuns(Array.isArray(payload) ? payload : payload.runs ?? []);
+      }),
+      fetch(scoped("/assistant/conversations?limit=30"), { signal: controller.signal }).then(async (response) => {
+        if (!response.ok) return;
+        const payload = await response.json() as { conversations?: MosaicAssistantConversation[] };
+        if (!current()) return;
+        const conversations = payload.conversations ?? [];
+        setAssistantConversations(conversations);
+        const latest = conversations[0];
+        if (!latest) return;
+        const threadResponse = await fetch(
+          scoped(`/assistant/conversations/${encodeURIComponent(latest.id)}?limit=200`),
+          { signal: controller.signal },
+        );
+        if (!threadResponse.ok) return;
+        const thread = await threadResponse.json() as {
+          conversation: MosaicAssistantConversation;
+          messages: MosaicAssistantMessage[];
+        };
+        if (!current()) return;
+        setActiveConversationId(thread.conversation.id);
+        setAssistantMessages(thread.messages);
       }),
       fetch(scoped("/research/runs?limit=50"), { signal: controller.signal }).then(async (response) => {
         if (!response.ok) return;
@@ -3366,6 +3486,7 @@ export default function Home() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           workspaceId: operation.workspaceId,
+          conversationId: activeConversationId,
           prompt: submittedPrompt,
           itemIds: attachedProductIds,
           collectionIds: attachedCollectionIds,
@@ -3387,6 +3508,10 @@ export default function Home() {
       if (!response.ok || !payload.run) throw new Error(payload.error ?? "research unavailable");
       if (!isWorkspaceOperationCurrent(operation)) return;
       startedRun = payload.run;
+      if (payload.run.request.conversationId) {
+        setActiveConversationId(payload.run.request.conversationId);
+        await reloadAssistantConversation(payload.run.request.conversationId, operation);
+      }
       setAiPrompt("");
       setPromptImages([]);
       setPromptProductIds([]);
@@ -3936,6 +4061,11 @@ export default function Home() {
   const assistantHasContext = Boolean(aiPrompt.trim() || promptImages.length || promptProductIds.length || promptCollectionIds.length);
   const assistantOpen = composerExpanded || (catalogStatus !== "loading…" && products.length === 0);
   const latestResearchEvent = researchEvents.at(-1);
+  const latestAssistantMessage = [...assistantMessages].reverse().find((message) => message.role === "assistant");
+  const assistantFollowUps = activeResearchRun?.result?.followUps ?? latestAssistantMessage?.result?.followUps ?? [];
+  const researchActionRecap = [...new Map(researchEvents
+    .filter((event) => event.message && !["status", "result"].includes(event.type))
+    .map((event) => [event.message, event])).values()].slice(-4);
   const activeResearchTotal = Math.max(1, activeResearchRun?.request.budget.maxToolCalls ?? 1);
   const activeResearchProgress = activeResearchRun
     ? MOSAIC_TERMINAL_RESEARCH_STATUSES.has(activeResearchRun.status) ? 1 : Math.min(.95, activeResearchRun.eventCount / activeResearchTotal)
@@ -3988,7 +4118,35 @@ export default function Home() {
               if (!event.currentTarget.contains(event.relatedTarget as Node | null) && !assistantHasContext && !assistantBusy) setComposerExpanded(false);
             }}
           >
-            {assistantOpen && <div className="mosaicComposerIntro"><span>{t("visualAssistant")}</span><h2>{t("whatExplore")}</h2><p>{t("assistantIntro")}</p></div>}
+            {assistantOpen && assistantMessages.length === 0 && !activeResearchRun && <div className="mosaicComposerIntro"><span>{t("visualAssistant")}</span><h2>{t("whatExplore")}</h2><p>{t("assistantIntro")}</p></div>}
+            {assistantOpen && (assistantMessages.length > 0 || assistantConversations.length > 0 || activeResearchRun) && <section className="mosaicConversation" aria-label={conversationText.conversation}>
+              <header className="mosaicConversationHeader">
+                <label>
+                  <span className="mosaicSrOnly">{conversationText.conversation}</span>
+                  <select value={activeConversationId ?? ""} onChange={(event) => void selectAssistantConversation(event.target.value)}>
+                    {!activeConversationId && <option value="">{conversationText.noConversation}</option>}
+                    {assistantConversations.map((conversation) => <option key={conversation.id} value={conversation.id}>{conversation.title}</option>)}
+                  </select>
+                </label>
+                <button type="button" onClick={startNewAssistantConversation} title={conversationText.newConversation} aria-label={conversationText.newConversation}><Plus className="mosaicIcon" aria-hidden="true" /></button>
+              </header>
+              <div className="mosaicConversationFeed" ref={assistantFeedRef} aria-live="polite">
+                {assistantMessages.map((message) => {
+                  if (message.role === "assistant" && message.status === "running" && message.researchRunId === activeResearchRun?.id) return null;
+                  const result = message.result;
+                  return <article className={`mosaicChatMessage ${message.role} status-${message.status}`} key={message.id}>
+                    <div>{message.content}</div>
+                    {result && (result.itemIds.length > 0 || result.collectionIds.length > 0) && <small>{result.itemIds.length > 0 ? `${result.itemIds.length} ${conversationText.itemResults}` : ""}{result.itemIds.length > 0 && result.collectionIds.length > 0 ? " · " : ""}{result.collectionIds.length > 0 ? `${result.collectionIds.length} ${conversationText.collectionResults}` : ""}</small>}
+                    {message.role === "assistant" && result?.followUps.length ? <nav className="mosaicChatFollowUps">{result.followUps.map((followUp) => <button type="button" key={followUp} onClick={() => prepareMosaicResearchFollowUp(followUp, result)}>{followUp}</button>)}</nav> : null}
+                  </article>;
+                })}
+                {activeResearchRun && assistantBusy && <article className="mosaicChatProgress">
+                  <header><span><LoaderCircle className="mosaicIcon mosaicSpinner" aria-hidden="true" /> {conversationText.working}</span><button type="button" onClick={() => void cancelMosaicResearch()}>{researchText.stop}</button></header>
+                  <b>{conversationText.actionRecap}</b>
+                  <ol>{researchActionRecap.length ? researchActionRecap.map((event) => <li key={event.sequence}>{event.message}</li>) : <li>{latestResearchEvent?.message || activeResearchRun.message}</li>}</ol>
+                </article>}
+              </div>
+            </section>}
             <div className="mosaicComposerInput">
               <Sparkles className="mosaicSpark" aria-hidden="true" />
               <textarea ref={composerInputRef} value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} onPaste={(event) => { const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/")); if (!images.length) return; event.preventDefault(); void addAtlasPromptImages(images); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); setComposerExpanded(false); void askAtlasAssistant(); } }} placeholder={t("askPlaceholder")} aria-label={t("askAssistant")} rows={assistantOpen ? 2 : 1} />
@@ -3996,14 +4154,14 @@ export default function Home() {
               <button className="mosaicAttach" type="button" onClick={() => atlasImageInputRef.current?.click()} aria-label={t("addImages")}><ImagePlus className="mosaicIcon" aria-hidden="true" /></button>
               <button type="submit" className="mosaicSend" disabled={assistantBusy || (!aiPrompt.trim() && !promptImages.length && !promptProductIds.length && !promptCollectionIds.length)} aria-busy={assistantBusy}>{assistantBusy ? <LoaderCircle className="mosaicIcon mosaicSpinner" aria-hidden="true" /> : <ArrowUp className="mosaicIcon" aria-hidden="true" />}<span className="mosaicSrOnly">{t("ask")}</span></button>
             </div>
-            {assistantOpen && onboardingVisible && <div className="mosaicOnboarding" role="note"><div><b>{t("tryRequest")}</b><span>{t("privacyIntro")}</span></div><div>{onboardingExamples.map((example) => <button type="button" key={example} onClick={() => { setAiPrompt(example); requestAnimationFrame(() => composerInputRef.current?.focus()); }}><Sparkles className="mosaicIcon" aria-hidden="true" /><span>{example}</span></button>)}</div><button type="button" className="mosaicOnboardingDismiss" onClick={() => { setOnboardingVisible(false); try { window.localStorage.setItem(MOSAIC_ONBOARDING_KEY, "1"); } catch { /* optional */ } }} aria-label={t("dismissExamples")}><X className="mosaicIcon" aria-hidden="true" /></button></div>}
-            {(promptImages.length > 0 || promptProducts.length > 0 || promptCollectionIds.length > 0 || aiStatus || activeResearchRun) && <div className="mosaicComposerContext">
+            {assistantOpen && assistantMessages.length === 0 && onboardingVisible && <div className="mosaicOnboarding" role="note"><div><b>{t("tryRequest")}</b><span>{t("privacyIntro")}</span></div><div>{onboardingExamples.map((example) => <button type="button" key={example} onClick={() => { setAiPrompt(example); requestAnimationFrame(() => composerInputRef.current?.focus()); }}><Sparkles className="mosaicIcon" aria-hidden="true" /><span>{example}</span></button>)}</div><button type="button" className="mosaicOnboardingDismiss" onClick={() => { setOnboardingVisible(false); try { window.localStorage.setItem(MOSAIC_ONBOARDING_KEY, "1"); } catch { /* optional */ } }} aria-label={t("dismissExamples")}><X className="mosaicIcon" aria-hidden="true" /></button></div>}
+            {(promptImages.length > 0 || promptProducts.length > 0 || promptCollectionIds.length > 0 || !assistantOpen && (aiStatus || activeResearchRun)) && <div className="mosaicComposerContext">
               {promptProducts.map((item) => <span className="promptProduct" key={item.id}>{item.image ? <img src={item.image} alt="" /> : <i>✦</i>}<b>{item.name}</b><button type="button" onClick={() => setPromptProductIds((current) => current.filter((id) => id !== item.id))} aria-label={`Retirer ${item.name}`}>×</button></span>)}
               {promptImages.map((image) => <span className="promptImage" key={image.id}><img src={image.dataUrl} alt="" /><button type="button" onClick={() => setPromptImages((current) => current.filter((item) => item.id !== image.id))} aria-label={`Retirer ${image.name}`}>×</button></span>)}
               {promptCollectionIds.map((id) => { const collection = mosaicCollections.find((item) => item.id === id); return collection ? <span className="mosaicContextChip" key={id}>▣ {collection.name}<button type="button" onClick={() => setPromptCollectionIds((current) => current.filter((item) => item !== id))}>×</button></span> : null; })}
               {promptImages.length > 0 && <span className="segmented analysisMode"><button type="button" className={visualMode === "sequential" ? "active" : ""} onClick={() => setVisualMode("sequential")}>1×1</button><button type="button" className={visualMode === "sheet" ? "active" : ""} onClick={() => setVisualMode("sheet")}>{t("board")}</button></span>}
-              {aiStatus && <span className={`aiStatus atlasAiStatus${activeResearchRun ? ` research-${activeResearchRun.status}` : ""}`}><b>{activeResearchRun ? "✦" : ""}</b>{aiStatus}{activeResearchRun && assistantBusy && <button type="button" onClick={() => void cancelMosaicResearch()}>{researchText.stop}</button>}{activeResearchCanResume && <button type="button" onClick={() => void resumeMosaicResearch()}>{researchText.resume}</button>}{!assistantBusy && (aiItems || activeResearchRun && MOSAIC_TERMINAL_RESEARCH_STATUSES.has(activeResearchRun.status)) && <button type="button" onClick={() => { setAiItems(null); setAiStatus(""); setActiveResearchRun(null); setResearchEvents([]); }}>×</button>}</span>}
-              {activeResearchRun?.result?.followUps.map((followUp) => <button type="button" className="mosaicResearchFollowUp" key={followUp} onClick={() => prepareMosaicResearchFollowUp(followUp)}>{followUp}</button>)}
+              {!assistantOpen && aiStatus && <span className={`aiStatus atlasAiStatus${activeResearchRun ? ` research-${activeResearchRun.status}` : ""}`}><b>{activeResearchRun ? "✦" : ""}</b>{aiStatus}{activeResearchRun && assistantBusy && <button type="button" onClick={() => void cancelMosaicResearch()}>{researchText.stop}</button>}{activeResearchCanResume && <button type="button" onClick={() => void resumeMosaicResearch()}>{researchText.resume}</button>}{!assistantBusy && (aiItems || activeResearchRun && MOSAIC_TERMINAL_RESEARCH_STATUSES.has(activeResearchRun.status)) && <button type="button" onClick={() => { setAiItems(null); setAiStatus(""); setActiveResearchRun(null); setResearchEvents([]); }}>×</button>}</span>}
+              {!assistantOpen && assistantFollowUps.map((followUp) => <button type="button" className="mosaicResearchFollowUp" key={followUp} onClick={() => prepareMosaicResearchFollowUp(followUp, activeResearchRun?.result ?? latestAssistantMessage?.result ?? undefined)}>{followUp}</button>)}
             </div>}
             {assistantOpen && <div className="mosaicComposerFooter"><span>{t("constraints")}: {showClothingFallback ? `${selectedSizes.length ? selectedSizes.join(" / ") : t("allSizes")} · ` : ""}{sourceFilter === "all" ? t("allSources") : sourceFilter.replace("source:", "")}{dynamicFilterCount ? ` · ${dynamicFilterCount}` : ""}</span><label>{t("thinking")} <select value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as "low" | "medium")}><option value="low">{t("fast")}</option><option value="medium">{t("thorough")}</option></select></label></div>}
           </form>
