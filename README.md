@@ -52,7 +52,7 @@ MosAIc's deterministic board, filters, imports, and local services work without 
 3. Start a new Codex task from the repository root.
 4. Run `/mcp` and confirm that the project-scoped `mosaic` server is connected.
 
-The repository includes `.codex/config.toml` and the project skill `.agents/skills/mosaic-research/SKILL.md`. The skill lets a foreground Codex task use MosAIc as a general visual research workspace, while the app's assistant runs the same scoped MCP tools in a durable background run.
+The repository includes `.codex/config.toml` and the project skill `.agents/skills/mosaic-research/SKILL.md`. A foreground Codex task uses explicit workspace tools (`list_workspaces`, schema, catalog, collections and imports); the app assistant launches a durable run with a stricter private tool set scoped to one workspace and budget. The skill detects which surface it is running in instead of assuming both expose identical tools.
 
 For Chrome-assisted extraction, install and authorize a browser in the ChatGPT desktop app, then start a fresh Work or Codex task and `@`-mention it. Browser access is explicit and never silently inherited by MosAIc's background agent: Codex CLI and IDE do not have the built-in browser. See [Chrome-assisted acquisition](docs/CHROME_ACQUISITION.md) and the official [Codex browser documentation](https://developers.openai.com/codex/app/browser).
 

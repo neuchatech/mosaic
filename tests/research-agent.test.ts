@@ -67,20 +67,45 @@ test("research runs are cancelled explicitly and are not auto-resumed", async (t
   const started = new Promise<void>((resolvePromise) => { runnerStarted = resolvePromise; });
   const service = new ResearchAgentService(repository, {
     idFactory: () => "research-cancel",
-    runner: async ({ signal }) => {
+    runner: async ({ signal, onEvent }) => {
       runnerStarted();
+      onEvent({
+        type: "progress",
+        message: "Started child work",
+        data: { childJobs: [{ kind: "discovery", id: "discover-one" }, { kind: "acquisition", id: "refresh-one" }] },
+      });
       await new Promise<void>((_resolvePromise, reject) => {
         signal.addEventListener("abort", () => reject(new DOMException("cancelled", "AbortError")), { once: true });
       });
       return result();
     },
   });
+  let cancelledChildren: Array<{ kind: string; id: string }> = [];
+  service.setCancellationHandler((_run, children) => { cancelledChildren = children; });
   const queued = service.start({ workspaceId: DEFAULT_CLOTHING_WORKSPACE_ID, prompt: "Keep exploring until cancelled." });
   await started;
   const cancelled = service.cancel(queued.id, queued.workspaceId);
   assert.equal(cancelled?.status, "cancelled");
+  assert.deepEqual(cancelledChildren, [
+    { kind: "discovery", id: "discover-one" },
+    { kind: "acquisition", id: "refresh-one" },
+  ]);
   assert.equal((await service.waitFor(queued.id, queued.workspaceId)).status, "cancelled");
   assert.throws(() => service.resume(queued.id, queued.workspaceId), /cannot resume/);
+});
+
+test("research rejects invented or out-of-scope final ids", async (t) => {
+  const { database, repository } = repositoryFixture();
+  t.after(() => database.close());
+  const service = new ResearchAgentService(repository, {
+    idFactory: () => "research-invalid-output",
+    runner: async () => result({ itemIds: ["invented-item"] }),
+  });
+  const queued = service.start({ workspaceId: DEFAULT_CLOTHING_WORKSPACE_ID, prompt: "Return a real selection." });
+  const finished = await service.waitFor(queued.id, queued.workspaceId);
+  assert.equal(finished.status, "failed");
+  assert.match(finished.error ?? "", /invalid item ids: invented-item/);
+  assert.equal(finished.result, null);
 });
 
 test("restart recovery marks active work interrupted and resumes only on request", async (t) => {

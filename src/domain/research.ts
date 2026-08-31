@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { filterSpecSchema } from "./catalog";
+import { filterClauseSchema, filterSpecSchema, type FilterSpec } from "./catalog";
 import {
   fieldDefinitionSchema,
   fieldFacetSchema,
@@ -95,6 +95,52 @@ export const researchRequestSchema = researchRequestObjectSchema.superRefine((re
     context.addIssue({ code: "custom", path: ["prompt"], message: "A prompt or at least one input is required." });
   }
 });
+
+export function researchHardConstraintFilter(
+  runId: string,
+  constraints: Array<z.infer<typeof researchConstraintSchema>>,
+): FilterSpec | undefined {
+  const clauses = constraints
+    .filter((constraint) => constraint.strength === "hard")
+    .map((constraint) => {
+      const parsed = filterClauseSchema.safeParse({
+        type: "clause",
+        field: constraint.field,
+        operator: constraint.operator,
+        value: constraint.value,
+      });
+      if (!parsed.success) {
+        throw new Error(`Hard constraint ${constraint.field} cannot be enforced: ${parsed.error.message}`);
+      }
+      return parsed.data;
+    });
+  if (clauses.length === 0) return undefined;
+  return filterSpecSchema.parse({
+    id: `research-hard:${runId}`,
+    name: "Research hard constraints",
+    description: "Automatically enforced by workspace-scoped research tools.",
+    where: { type: "group", conjunction: "and", children: clauses },
+    limit: 5_000,
+  });
+}
+
+export function mergeResearchHardConstraints(
+  requested: FilterSpec | undefined,
+  hard: FilterSpec | undefined,
+): FilterSpec | undefined {
+  if (!hard) return requested;
+  if (!requested) return hard;
+  return filterSpecSchema.parse({
+    ...requested,
+    id: `${requested.id}:research-hard`,
+    where: {
+      type: "group",
+      conjunction: "and",
+      children: [hard.where, requested.where],
+    },
+    limit: Math.min(requested.limit, hard.limit),
+  });
+}
 
 export const researchSourceCapabilitySchema = z.object({
   id: z.string().trim().min(1).max(120),

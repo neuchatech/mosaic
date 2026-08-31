@@ -4,7 +4,9 @@ import { mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  mergeResearchHardConstraints,
   researchAgentResultSchema,
+  researchHardConstraintFilter,
   researchRequestSchema,
   type ResearchAgentResult,
   type ResearchRequest,
@@ -15,6 +17,7 @@ import {
   type ResearchRunStatus,
   type ResearchWorkspaceManifest,
 } from "../src/domain/research";
+import { applyFilter } from "../src/domain/filter";
 import { codexExecutable } from "./codex-bridge";
 import { catalogMediaPath } from "./media";
 import { buildResearchManifest } from "./research-context";
@@ -47,7 +50,9 @@ export type ResearchRunRepository = Pick<CatalogRepository,
   | "listWorkspaces"
   | "getWorkspace"
   | "listProducts"
+  | "getProduct"
   | "getCollection"
+  | "getArtifact"
   | "listFieldDefinitions"
   | "inferWorkspaceSchema"
   | "getWorkspaceFacets"
@@ -85,6 +90,9 @@ export type ResearchAgentServiceOptions = {
   idFactory?: () => string;
   now?: () => Date;
 };
+
+export type ResearchChildJob = { kind: "discovery" | "acquisition"; id: string };
+export type ResearchCancellationHandler = (run: ResearchRun, childJobs: ResearchChildJob[]) => void;
 
 function compactEventValue(value: unknown, depth = 0): unknown {
   if (depth > 4) return "[depth-limited]";
@@ -292,6 +300,51 @@ function resultStatus(result: ResearchAgentResult): ResearchRunStatus {
   return result.outcome;
 }
 
+function validateResearchResult(
+  repository: ResearchRunRepository,
+  run: ResearchRun,
+  candidate: ResearchAgentResult,
+): ResearchAgentResult {
+  const hardFilter = researchHardConstraintFilter(run.id, run.request.constraints);
+  const invalidItems = candidate.itemIds.filter((id) => {
+    const product = repository.getProduct(id, run.workspaceId);
+    return !product || hardFilter && applyFilter([product], hardFilter).length === 0;
+  });
+  const invalidCollections = candidate.collectionIds.filter((id) => !repository.getCollection(id, run.workspaceId));
+  const invalidArtifacts = candidate.artifactIds.filter((id) => !repository.getArtifact(id, run.workspaceId));
+  if (invalidItems.length || invalidCollections.length || invalidArtifacts.length) {
+    throw new Error([
+      invalidItems.length ? `invalid item ids: ${invalidItems.join(", ")}` : "",
+      invalidCollections.length ? `invalid collection ids: ${invalidCollections.join(", ")}` : "",
+      invalidArtifacts.length ? `invalid artifact ids: ${invalidArtifacts.join(", ")}` : "",
+    ].filter(Boolean).join("; "));
+  }
+  return researchAgentResultSchema.parse({
+    ...candidate,
+    itemIds: [...new Set(candidate.itemIds)],
+    collectionIds: [...new Set(candidate.collectionIds)],
+    artifactIds: [...new Set(candidate.artifactIds)],
+    filters: candidate.filters.map(({ name, filter }) => ({
+      name,
+      filter: mergeResearchHardConstraints(filter, hardFilter) ?? filter,
+    })),
+  });
+}
+
+function childJobsFromEvents(events: ResearchRunEvent[]): ResearchChildJob[] {
+  const jobs = events.flatMap((event) => {
+    const raw = event.data.childJobs;
+    if (!Array.isArray(raw)) return [];
+    return raw.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const record = entry as Record<string, unknown>;
+      if ((record.kind !== "discovery" && record.kind !== "acquisition") || typeof record.id !== "string") return [];
+      return [{ kind: record.kind, id: record.id } satisfies ResearchChildJob];
+    });
+  });
+  return [...new Map(jobs.map((job) => [`${job.kind}:${job.id}`, job])).values()];
+}
+
 export class ResearchAgentService {
   private readonly runner: ResearchAgentRunner;
   private readonly idFactory: () => string;
@@ -301,6 +354,7 @@ export class ResearchAgentService {
   private readonly waiters = new Map<string, Array<(run: ResearchRun) => void>>();
   private active: { id: string; controller: AbortController } | null = null;
   private draining = false;
+  private cancellationHandler: ResearchCancellationHandler | null = null;
 
   constructor(
     private readonly repository: ResearchRunRepository,
@@ -347,6 +401,10 @@ export class ResearchAgentService {
     return this.repository.listResearchRunEvents(id, options, workspaceId);
   }
 
+  setCancellationHandler(handler: ResearchCancellationHandler | null): void {
+    this.cancellationHandler = handler;
+  }
+
   delete(id: string, workspaceId: string): ResearchRun | null {
     const run = this.repository.getResearchRun(id, workspaceId);
     if (!run) return null;
@@ -363,6 +421,8 @@ export class ResearchAgentService {
     const queuedIndex = this.queue.indexOf(id);
     if (queuedIndex >= 0) this.queue.splice(queuedIndex, 1);
     if (this.active?.id === id) this.active.controller.abort();
+    const childJobs = childJobsFromEvents(this.repository.listResearchRunEvents(id, { limit: 1_000 }, workspaceId));
+    try { this.cancellationHandler?.(run, childJobs); } catch { /* Run cancellation itself must still succeed. */ }
     const updated = this.repository.updateResearchRun(id, {
       status: "cancelled",
       message: "Research cancelled",
@@ -468,16 +528,19 @@ export class ResearchAgentService {
               this.repository.appendResearchRunEvent({ runId: id, type: event.type, message: event.message, data: event.data }, running.workspaceId);
             },
           });
-          const status = resultStatus(result);
+          const current = this.repository.getResearchRun(id, running.workspaceId);
+          if (!current || current.status !== "running") continue;
+          const validated = validateResearchResult(this.repository, running, result);
+          const status = resultStatus(validated);
           const finished = this.repository.updateResearchRun(id, {
             status,
-            result,
-            message: result.message,
+            result: validated,
+            message: validated.message,
             error: null,
             finishedAt: this.now().toISOString(),
           }, running.workspaceId);
           if (finished) {
-            this.repository.appendResearchRunEvent({ runId: id, type: "result", message: result.message, data: { outcome: result.outcome, itemIds: result.itemIds } }, running.workspaceId);
+            this.repository.appendResearchRunEvent({ runId: id, type: "result", message: validated.message, data: { outcome: validated.outcome, itemIds: validated.itemIds } }, running.workspaceId);
             this.emit(finished);
           }
         } catch (error) {

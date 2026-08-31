@@ -11,7 +11,6 @@ import { installedResearchSources } from "../server/research-context";
 import { findSimilarProducts } from "../server/similarity";
 import { rankWorkspaceByVisualReferences } from "../server/visual-selection";
 import {
-  filterClauseSchema,
   filterSpecSchema,
   productPatchSchema,
   productSchema,
@@ -22,7 +21,9 @@ import { applyFilter } from "../src/domain/filter";
 import { stableWorkspaceProductId } from "../src/domain/ids";
 import {
   DEFAULT_RESEARCH_BUDGET,
+  mergeResearchHardConstraints,
   researchBudgetSchema,
+  researchHardConstraintFilter,
   type ResearchBudget,
   type ResearchRun,
 } from "../src/domain/research";
@@ -214,51 +215,6 @@ function scopedProductOrThrow(repository: CatalogRepository, scope: ResearchScop
   const product = repository.getProduct(id, scope.workspaceId);
   if (!product) throw new Error(`Unknown item in this research workspace: ${id}`);
   return product;
-}
-
-function hardConstraintFilter(run: ResearchRun): FilterSpec | undefined {
-  const clauses = run.request.constraints
-    .filter((constraint) => constraint.strength === "hard")
-    .map((constraint) => {
-      const parsed = filterClauseSchema.safeParse({
-        type: "clause",
-        field: constraint.field,
-        operator: constraint.operator,
-        value: constraint.value,
-      });
-      if (!parsed.success) {
-        throw new Error(`Hard constraint ${constraint.field} cannot be enforced by the FilterSpec engine: ${parsed.error.message}`);
-      }
-      return parsed.data;
-    });
-  if (clauses.length === 0) return undefined;
-  return filterSpecSchema.parse({
-    id: `research-hard:${run.id}`,
-    name: "Research hard constraints",
-    description: "Automatically enforced by workspace-scoped research tools.",
-    where: { type: "group", conjunction: "and", children: clauses },
-    limit: 5_000,
-  });
-}
-
-function mergeWithHardConstraints(
-  requested: FilterSpec | undefined,
-  hard: FilterSpec | undefined,
-): FilterSpec | undefined {
-  if (!hard) return requested;
-  if (!requested) return hard;
-  return filterSpecSchema.parse({
-    ...requested,
-    id: `${requested.id}:research-hard`,
-    name: requested.name,
-    description: requested.description,
-    where: {
-      type: "group",
-      conjunction: "and",
-      children: [hard.where, requested.where],
-    },
-    limit: Math.min(requested.limit, hard.limit),
-  });
 }
 
 function eligibleProducts(products: Product[], hard: FilterSpec | undefined): Product[] {
@@ -584,7 +540,7 @@ export function registerResearchTools(
 ): void {
   const workspace = workspaceOrThrow(repository, scope.workspaceId);
   const run = persistedResearchRun(repository, scope);
-  const hardFilter = hardConstraintFilter(run);
+  const hardFilter = researchHardConstraintFilter(run.id, run.request.constraints);
   const contextAnchorIds = new Set([
     ...run.request.itemIds,
     ...run.manifest.selectedCollections.flatMap((collection) => collection.itemIds),
@@ -602,6 +558,16 @@ export function registerResearchTools(
     researchBudgetFromEnvironment(),
   ));
   const scopedResult = (value: unknown) => textResult({ data: value, budget: meter.snapshot() });
+  const recordChildJobs = (kind: "discovery" | "acquisition", ids: string[]) => {
+    const childJobs = [...new Set(ids)].filter(Boolean).map((id) => ({ kind, id }));
+    if (!childJobs.length) return;
+    repository.appendResearchRunEvent({
+      runId: run.id,
+      type: "progress",
+      message: `Started ${kind} work`,
+      data: { childJobs },
+    }, scope.workspaceId);
+  };
 
   server.registerTool("get_research_context", {
     title: "Get scoped research context",
@@ -671,7 +637,7 @@ export function registerResearchTools(
     const products = repository.listProducts({
       workspaceId: scope.workspaceId,
       search: query,
-      filter: mergeWithHardConstraints(filter as FilterSpec | undefined, hardFilter),
+      filter: mergeResearchHardConstraints(filter as FilterSpec | undefined, hardFilter),
       limit: requested,
     });
     const items = products.slice(offset, offset + limit);
@@ -701,7 +667,7 @@ export function registerResearchTools(
     const candidates = repository.listProducts({
       workspaceId: scope.workspaceId,
       search: query,
-      filter: mergeWithHardConstraints(filter as FilterSpec | undefined, hardFilter),
+      filter: mergeResearchHardConstraints(filter as FilterSpec | undefined, hardFilter),
       limit: 10_000,
     });
     const sample = sampleWorkspaceProducts({
@@ -742,14 +708,18 @@ export function registerResearchTools(
   }, async ({ itemIds, limit }) => {
     meter.consume();
     [...new Set(itemIds)].forEach((id) => researchProductOrThrow(id, true));
+    const candidateIds = eligibleProducts(
+      repository.listProducts({ workspaceId: scope.workspaceId, limit: 10_000 }),
+      hardFilter,
+    ).map((product) => product.id);
     const products = await findSimilarProducts({
       productIds: itemIds,
       limit,
       constraints: { workspaceId: scope.workspaceId },
+      candidateIds,
     }, repository);
-    const eligible = eligibleProducts(products, hardFilter).slice(0, limit);
-    meter.consumeWithoutTool({ itemsRead: eligible.length });
-    return scopedResult(eligible.map(conciseItem));
+    meter.consumeWithoutTool({ itemsRead: products.length });
+    return scopedResult(products.map(conciseItem));
   });
 
   server.registerTool("rank_workspace_by_visual_references", {
@@ -770,7 +740,7 @@ export function registerResearchTools(
     ];
     const anchors = [...new Set([...defaultContextIds, ...contextItemIds])].slice(0, 24);
     anchors.forEach((id) => researchProductOrThrow(id, true));
-    const effectiveFilter = mergeWithHardConstraints(filter as FilterSpec | undefined, hardFilter);
+    const effectiveFilter = mergeResearchHardConstraints(filter as FilterSpec | undefined, hardFilter);
     const candidates = repository.listProducts({
       workspaceId: scope.workspaceId,
       search: query,
@@ -927,7 +897,44 @@ export function registerResearchTools(
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async ({ filter }) => {
     meter.consume();
-    return scopedResult(repository.saveFilter(filter, scope.workspaceId));
+    return scopedResult(repository.saveFilter(
+      mergeResearchHardConstraints(filter, hardFilter) ?? filter,
+      scope.workspaceId,
+    ));
+  });
+
+  server.registerTool("create_workspace_artifact_draft", {
+    title: "Create a scoped artifact draft",
+    description: "Create a local report, comparison, image brief, try-on brief, or other reusable draft from known workspace items and collections. This records the requested artifact but does not claim that a remote generator ran.",
+    inputSchema: {
+      type: z.enum(["image", "report", "comparison", "try-on", "other"]).default("other"),
+      name: z.string().trim().min(1).max(160),
+      prompt: z.string().max(20_000).default(""),
+      itemIds: z.array(z.string().min(1)).max(160).default([]),
+      collectionIds: z.array(z.string().min(1)).max(24).default([]),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, async ({ type, name, prompt, itemIds, collectionIds }) => {
+    meter.consume({ collectionWrites: 1 });
+    const uniqueItemIds = [...new Set(itemIds)];
+    const uniqueCollectionIds = [...new Set(collectionIds)];
+    uniqueItemIds.forEach((id) => researchProductOrThrow(id, true));
+    uniqueCollectionIds.forEach((id) => {
+      if (!repository.getCollection(id, scope.workspaceId)) {
+        throw new Error(`Unknown collection in this research workspace: ${id}`);
+      }
+    });
+    return scopedResult(repository.createArtifact({
+      workspaceId: scope.workspaceId,
+      type,
+      name,
+      status: "draft",
+      prompt,
+      inputItemIds: uniqueItemIds,
+      inputCollectionIds: uniqueCollectionIds,
+      generator: null,
+      provenance: { source: "mosaic-research", researchRunId: run.id },
+    }));
   });
 
   server.registerTool("annotate_workspace_items", {
@@ -1080,6 +1087,10 @@ export function registerResearchTools(
         },
       },
     });
+    const jobs = payload && typeof payload === "object" && Array.isArray((payload as { jobs?: unknown[] }).jobs)
+      ? (payload as { jobs: Array<{ id?: unknown }> }).jobs
+      : [];
+    recordChildJobs("discovery", jobs.flatMap((job) => typeof job.id === "string" ? [job.id] : []));
     return scopedResult(compactJob(payload));
   });
 
@@ -1120,10 +1131,14 @@ export function registerResearchTools(
     meter.consume({ acquisitionJobs: 1 });
     const ids = [...new Set(itemIds)];
     ids.forEach((id) => researchProductOrThrow(id, true));
-    return scopedResult(compactJob(await localApiRequest("/api/acquisition/jobs", {
+    const payload = await localApiRequest("/api/acquisition/jobs", {
       method: "POST",
       body: { workspaceId: scope.workspaceId, productIds: ids },
-    })));
+    });
+    if (payload && typeof payload === "object" && typeof (payload as { id?: unknown }).id === "string") {
+      recordChildJobs("acquisition", [(payload as { id: string }).id]);
+    }
+    return scopedResult(compactJob(payload));
   });
 
   server.registerTool("get_item_refresh", {

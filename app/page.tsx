@@ -1075,6 +1075,7 @@ type MosaicResearchResult = {
   itemIds: string[];
   collectionIds: string[];
   artifactIds: string[];
+  filters: Array<{ name: string; filter: Record<string, unknown> }>;
   warnings: string[];
   followUps: string[];
 };
@@ -2005,7 +2006,8 @@ export default function Home() {
   }
 
   async function applyMosaicResearchResult(run: MosaicResearchRun, operation: MosaicWorkspaceOperation) {
-    const [catalogResult, collectionsResult, schemaResult, artifactsResult, runsResult] = await Promise.allSettled([
+    const resultFilter = run.result?.filters?.[0]?.filter;
+    const [catalogResult, collectionsResult, schemaResult, artifactsResult, runsResult, filteredResult] = await Promise.allSettled([
       fetch(atlasWorkspaceApiUrl("/products?limit=10000", operation.workspaceId), { signal: operation.signal }).then(async (response) => {
         if (!response.ok) throw new Error("catalog unavailable");
         return (await response.json() as AtlasApiProduct[]).map(atlasApiToItem);
@@ -2029,6 +2031,17 @@ export default function Home() {
         const payload = await response.json() as MosaicRun[] | { runs?: MosaicRun[] };
         return Array.isArray(payload) ? payload : payload.runs ?? [];
       }),
+      resultFilter
+        ? fetch(atlasWorkspaceApiUrl("/query", operation.workspaceId), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(resultFilter),
+          signal: operation.signal,
+        }).then(async (response) => {
+          if (!response.ok) throw new Error("research filter unavailable");
+          return (await response.json() as AtlasApiProduct[]).map(atlasApiToItem);
+        })
+        : Promise.resolve(null),
     ]);
     if (!isWorkspaceOperationCurrent(operation)) return;
     if (catalogResult.status === "fulfilled") {
@@ -2037,7 +2050,11 @@ export default function Home() {
       setCatalogStatus("catalog ready");
       setScope("catalogue");
       setSelectedCollectionId(null);
-      setAiItems(itemIds.size ? catalogResult.value.filter((item) => itemIds.has(item.id)) : null);
+      setAiItems(itemIds.size
+        ? catalogResult.value.filter((item) => itemIds.has(item.id))
+        : filteredResult.status === "fulfilled" && filteredResult.value !== null
+          ? filteredResult.value
+          : null);
       if (itemIds.size && !catalogResult.value.some((item) => itemIds.has(item.id))) {
         setToast(researchText.missingItems);
       }

@@ -11,9 +11,18 @@ assume a domain, source, schema, or fixed sequence from the examples.
 
 ## Establish the contract
 
-Use `get_research_context` first in a scoped research run. Read the actual
-workspace fields, facets, selected items, collections, source capabilities,
-hard constraints, soft preferences, and budget.
+First inspect which Mosaic tools this task actually exposes.
+
+- In an app-created scoped research run, use `get_research_context` first. It
+  contains the immutable run scope, selected context, constraints and budget.
+- In a foreground Codex/Chrome task, no run-scoped environment exists. Start
+  with `list_workspaces`, choose the user-requested workspace, then use
+  `get_workspace_ui_schema`, `catalog_stats`, `list_collections`, and the
+  other foreground tools with that explicit workspace id. Never call a scoped
+  tool that is not present or pretend that the foreground task inherited a run.
+
+Read the actual workspace fields, facets, selected items, collections, source
+capabilities, hard constraints, soft preferences, and budget when available.
 
 - Treat hard constraints as eligibility rules across every result-producing
   tool. Never relax them silently.
@@ -51,11 +60,13 @@ adapter. Deduplicate on canonical identity and let MosAIc normalize the record
 against the workspace schema.
 
 Interactive Chrome is a supervised handoff, not a capability inherited by a
-background `codex exec` process. In a ChatGPT desktop task where the user has
-explicitly connected a browser, inspect the rendered page and pass bounded
-observations through `import_browser_observations`. If that browser is not
-available in the current surface, use installed source tools or describe the
-handoff accurately instead of claiming it ran.
+background `codex exec` process. In a scoped run, persisted observations use
+`import_browser_observations`. In a foreground ChatGPT desktop task where the
+user explicitly connected a browser, inspect the rendered page and persist the
+same bounded factual records with the available `import_extracted_items` tool,
+passing the explicit workspace id. If that browser is not available in the
+current surface, use installed source tools or describe the handoff accurately
+instead of claiming it ran.
 
 ## Return a workspace result
 

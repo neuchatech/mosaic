@@ -185,6 +185,7 @@ test("research MCP exposes only scoped tools and preserves manifest constraints"
     "list_workspace_collections",
     "create_workspace_collection",
     "add_workspace_items_to_collection",
+    "create_workspace_artifact_draft",
     "annotate_workspace_items",
     "import_workspace_links",
     "start_source_discovery",
@@ -215,6 +216,21 @@ test("research MCP exposes only scoped tools and preserves manifest constraints"
   assert.deepEqual(context.manifest.constraints.map(({ field }) => field), [
     "price", "attributes.texture", "category",
   ]);
+
+  const artifactResult = await client.callTool({
+    name: "create_workspace_artifact_draft",
+    arguments: {
+      type: "comparison",
+      name: "Research comparison",
+      prompt: "Compare the eligible evidence.",
+      itemIds: ["a-one"],
+    },
+  });
+  assert.notEqual(artifactResult.isError, true, JSON.stringify(artifactResult.content));
+  const artifact = dataFrom(artifactResult) as { workspaceId: string; status: string; inputItemIds: string[] };
+  assert.equal(artifact.workspaceId, workspaceA);
+  assert.equal(artifact.status, "draft");
+  assert.deepEqual(artifact.inputItemIds, ["a-one"]);
 });
 
 test("query, sample, and similarity cannot return candidates outside hard dynamic constraints", async (t) => {

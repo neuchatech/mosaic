@@ -128,6 +128,8 @@ export type SimilarProductsInput = {
   productIds: string[];
   limit?: number;
   constraints?: VisualConstraintsInput;
+  /** Optional pre-filtered universe used by generic research. */
+  candidateIds?: string[];
 };
 
 export async function findSimilarProducts(input: SimilarProductsInput, repository: CatalogRepository): Promise<Product[]> {
@@ -142,11 +144,16 @@ export async function findSimilarProducts(input: SimilarProductsInput, repositor
   const workspaceId = input.constraints?.workspaceId;
   const anchors = anchorIds.map((id) => repository.getProduct(id, workspaceId)).filter(Boolean) as Product[];
   if (!anchors.length) return [];
-  const candidates = filterVisualCandidates(repository.listProducts({ workspaceId, limit: 10_000 }), {
-    includeSaved: false,
-    includeRejected: false,
-    ...(input.constraints ?? {}),
-  }).filter((product) => !anchorIds.includes(product.id));
+  const candidates = (input.candidateIds
+    ? [...new Set(input.candidateIds)]
+      .map((id) => repository.getProduct(id, workspaceId))
+      .filter(Boolean) as Product[]
+    : filterVisualCandidates(repository.listProducts({ workspaceId, limit: 10_000 }), {
+      includeSaved: false,
+      includeRejected: false,
+      ...(input.constraints ?? {}),
+    }))
+    .filter((product) => !anchorIds.includes(product.id));
   const scored = candidates.map((product) => {
     const vector = vectors.get(product.id);
     const visualScore = anchorVector && vector ? cosineSimilarity(anchorVector, vector) : null;

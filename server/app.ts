@@ -550,6 +550,25 @@ export function createApp(
       ? interactiveById.get(job.id) ?? job
       : job);
   };
+  research.setCancellationHandler((run, childJobs) => {
+    for (const child of childJobs) {
+      try {
+        if (child.kind === "discovery") {
+          const service = discoveryForJob(child.id);
+          const job = service.get(child.id);
+          if (job && (job.intent.workspaceId ?? DEFAULT_CLOTHING_WORKSPACE_ID) === run.workspaceId) {
+            service.cancel(child.id);
+          }
+        } else {
+          const job = acquisition.get(child.id);
+          if (job?.workspaceId === run.workspaceId) acquisition.cancel(child.id);
+        }
+      } catch {
+        // A completed or independently cancelled child must not prevent the
+        // parent research run from reaching its terminal cancelled state.
+      }
+    }
+  });
   const activeAssistantContinuations = new Set<string>();
   const terminalDiscoveryStatuses = new Set(["succeeded", "failed", "blocked", "cancelled"]);
   const terminalAcquisitionStatuses = new Set(["succeeded", "failed", "blocked", "cancelled"]);
