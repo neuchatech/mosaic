@@ -134,6 +134,23 @@ test("hybrid PCA accepts visual rows and metadata-only fallbacks without erasing
   assert.ok(projected.every((product) => Number.isFinite(product.x) && Number.isFinite(product.y)));
 });
 
+test("visual-only PCA keeps missing embeddings neutral instead of leaking metadata", () => {
+  const products = seedProducts.slice(0, 3);
+  const vectors = new Map([
+    [products[0]!.id, [1, 0, .2, .4]],
+    [products[1]!.id, [0, 1, .3, .1]],
+  ]);
+  const baseline = projectProductsWithVectors(products, { vectorsById: vectors, scale: false, missingVector: "zero" });
+  const metadataChanged = products.map((product, index) => index === 2
+    ? { ...product, category: "Unrelated category", colorFamily: "unrelated", price: 99_999 }
+    : product);
+  const projected = projectProductsWithVectors(metadataChanged, { vectorsById: vectors, scale: false, missingVector: "zero" });
+  assert.deepEqual(
+    projected.map(({ x, y }) => ({ x, y })),
+    baseline.map(({ x, y }) => ({ x, y })),
+  );
+});
+
 test("Codex filter conversion removes placeholder clauses from groups", () => {
   const neutral = {
     conjunction: "none" as const,

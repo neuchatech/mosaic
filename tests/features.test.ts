@@ -97,6 +97,25 @@ test("projection cache reuses coordinates while preserving newer product metadat
   assert.equal(second[0].y, initial[0].y);
 });
 
+test("catalog API accepts mixed, visual-only, and metadata-only projections", async () => {
+  const db = new Database(":memory:");
+  db.exec(readFileSync(resolve(process.cwd(), "server/schema.sql"), "utf8"));
+  const repository = new CatalogRepository(db);
+  repository.upsertProducts(seedProducts);
+  const app = createApp(repository);
+  try {
+    for (const projection of ["hybrid", "visual", "metadata"] as const) {
+      const response = await app.request(`/api/products?limit=100&projection=${projection}`);
+      assert.equal(response.status, 200);
+      const products = productSchema.array().parse(await response.json());
+      assert.equal(products.length, seedProducts.length);
+      assert.ok(products.every((product) => Number.isFinite(product.x) && Number.isFinite(product.y)));
+    }
+  } finally {
+    db.close();
+  }
+});
+
 test("Vision launches Codex with a read-only sandbox and approvals disabled", () => {
   const args = visualCodexArgs({ jobId: "job-test", referenceImages: ["/tmp/mood.jpg"], reasoningEffort: "medium" });
   assert.ok(!args.includes("--approve-for-me"));

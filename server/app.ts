@@ -33,7 +33,7 @@ import {
 } from "./acquisition";
 import { catalogMediaPath, catalogMediaType, deleteCatalogMedia, persistCatalogImages } from "./media";
 import { generateOutfits } from "./outfit-generator";
-import { projectCompactCached } from "./projection-cache";
+import { projectCompactCached, type ProjectionMode } from "./projection-cache";
 import { importPublicProductUrls, isPublicShopHostname } from "./public-product-import";
 import { CatalogRepository } from "./repository";
 import { createFilterWithCodex } from "./codex-bridge";
@@ -386,6 +386,10 @@ async function createArtifactWithLocalImages(
 function boundedLimit(value: string | undefined, fallback = 100, maximum = 1_000): number {
   const parsed = Number(value ?? fallback);
   return Number.isFinite(parsed) ? Math.min(maximum, Math.max(1, Math.trunc(parsed))) : fallback;
+}
+
+function requestedProjectionMode(value: string | undefined): ProjectionMode {
+  return value === "visual" || value === "metadata" ? value : "hybrid";
 }
 
 function collectionView(collection: ReturnType<CatalogRepository["createCollection"]>) {
@@ -926,7 +930,10 @@ export function createApp(
     const search = context.req.query("search");
     const workspaceId = context.req.query("workspaceId") ?? DEFAULT_CLOTHING_WORKSPACE_ID;
     const limit = Number(context.req.query("limit") ?? 1000);
-    return context.json(await attachImageAspectRatios(projectCompactCached(repository.listProducts({ workspaceId, search, limit }))));
+    return context.json(await attachImageAspectRatios(projectCompactCached(
+      repository.listProducts({ workspaceId, search, limit }),
+      requestedProjectionMode(context.req.query("projection")),
+    )));
   });
   app.post("/api/products/import", async (context) => {
     const body = await context.req.json();
@@ -965,7 +972,10 @@ export function createApp(
     const filter = filterSpecSchema.parse(await context.req.json());
     const workspaceId = context.req.query("workspaceId") ?? DEFAULT_CLOTHING_WORKSPACE_ID;
     const products = repository.listProducts({ workspaceId, filter, limit: filter.limit });
-    return context.json(await attachImageAspectRatios(projectCompactCached(products)));
+    return context.json(await attachImageAspectRatios(projectCompactCached(
+      products,
+      requestedProjectionMode(context.req.query("projection")),
+    )));
   });
   app.post("/api/references", async (context) => {
     const parsed = referenceItemSchema.safeParse(await context.req.json());

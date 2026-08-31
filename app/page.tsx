@@ -933,6 +933,7 @@ type AtlasSavedView = {
   yAxis: AxisField;
   mode: "space" | "grid";
   imageMode: AtlasImageMode;
+  similarityMode: AtlasSimilarityMode;
 };
 
 type AtlasOutfitBoard = {
@@ -1133,6 +1134,7 @@ type MosaicEmbeddingJob = {
   message?: string;
   summary?: { embedded: number; metadataOnly: number; cacheHits: number; errors: number };
 };
+type AtlasSimilarityMode = "hybrid" | "visual" | "metadata";
 type MosaicWorkspace = { id: string; name: string; profile?: string; description?: string };
 type MosaicWorkspaceOperation = { workspaceId: string; epoch: number; signal: AbortSignal };
 type MosaicArtifact = {
@@ -1204,6 +1206,11 @@ function atlasWorkspaceApiUrl(path: string, workspaceId: string) {
   return `${ATLAS_API}${path}${separator}workspaceId=${encodeURIComponent(workspaceId)}`;
 }
 
+function atlasProjectionApiPath(path: string, mode: AtlasSimilarityMode) {
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}projection=${encodeURIComponent(mode)}`;
+}
+
 function mosaicPromptUrls(prompt: string): string[] {
   const matches = prompt.match(/https?:\/\/[^\s<>"']+/gi) ?? [];
   return [...new Set(matches.map((value) => value.replace(/[),.;!?]+$/g, "")))]
@@ -1266,6 +1273,34 @@ const mosaicConversationUi: Record<MosaicLocale, {
   de: { conversation: "Unterhaltung", newConversation: "Neue Unterhaltung", actionRecap: "Aktionsübersicht", working: "In Arbeit", noConversation: "Neue Erkundung starten", itemResults: "Elemente", collectionResults: "Sammlungen" },
   it: { conversation: "Conversazione", newConversation: "Nuova conversazione", actionRecap: "Riepilogo azioni", working: "In corso", noConversation: "Inizia una nuova esplorazione", itemResults: "elementi", collectionResults: "collezioni" },
   es: { conversation: "Conversación", newConversation: "Nueva conversación", actionRecap: "Resumen de acciones", working: "En curso", noConversation: "Inicia una nueva exploración", itemResults: "elementos", collectionResults: "colecciones" },
+};
+
+const mosaicSimilarityUi: Record<MosaicLocale, Record<AtlasSimilarityMode, { label: string; title: string }>> = {
+  en: {
+    hybrid: { label: "Mixed", title: "Visual CLIP and metadata" },
+    visual: { label: "Visual", title: "CLIP images only" },
+    metadata: { label: "Data", title: "Catalog metadata only" },
+  },
+  fr: {
+    hybrid: { label: "Mixte", title: "CLIP visuel et métadonnées" },
+    visual: { label: "Visuel", title: "Images CLIP uniquement" },
+    metadata: { label: "Données", title: "Métadonnées du catalogue uniquement" },
+  },
+  de: {
+    hybrid: { label: "Gemischt", title: "Visuelles CLIP und Metadaten" },
+    visual: { label: "Visuell", title: "Nur CLIP-Bilder" },
+    metadata: { label: "Daten", title: "Nur Katalogmetadaten" },
+  },
+  it: {
+    hybrid: { label: "Misto", title: "CLIP visivo e metadati" },
+    visual: { label: "Visivo", title: "Solo immagini CLIP" },
+    metadata: { label: "Dati", title: "Solo metadati del catalogo" },
+  },
+  es: {
+    hybrid: { label: "Mixto", title: "CLIP visual y metadatos" },
+    visual: { label: "Visual", title: "Solo imágenes CLIP" },
+    metadata: { label: "Datos", title: "Solo metadatos del catálogo" },
+  },
 };
 
 const mosaicResearchStatusLabels: Record<MosaicLocale, Record<MosaicResearchRun["status"], string>> = {
@@ -1720,6 +1755,7 @@ function atlasNormalizeView(raw: Partial<AtlasSavedView> & { state?: Partial<Atl
     dynamicFacetSelections: value.dynamicFacetSelections && typeof value.dynamicFacetSelections === "object" ? value.dynamicFacetSelections : {},
     dynamicNumberFilters: value.dynamicNumberFilters && typeof value.dynamicNumberFilters === "object" ? value.dynamicNumberFilters : {},
     yAxis: value.yAxis ?? "pca", mode: value.mode ?? "space", imageMode: value.imageMode === "full" ? "full" : "cropped",
+    similarityMode: value.similarityMode === "visual" || value.similarityMode === "metadata" ? value.similarityMode : "hybrid",
   };
 }
 
@@ -1855,6 +1891,7 @@ export default function Home() {
   const [materialFilter, setMaterialFilter] = useState("all");
   const [selectedSizes, setSelectedSizes] = useState<string[]>([]);
   const [imageMode, setImageMode] = useState<AtlasImageMode>("cropped");
+  const [similarityMode, setSimilarityMode] = useState<AtlasSimilarityMode>("hybrid");
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [stockFilter, setStockFilter] = useState("all");
   const [attributeQuery, setAttributeQuery] = useState("");
@@ -1943,6 +1980,7 @@ export default function Home() {
   const previewCloseRef = useRef<HTMLButtonElement>(null);
   const previewReturnFocusRef = useRef<HTMLElement | null>(null);
   const atlasZoomRef = useRef(ATLAS_DEFAULT_ZOOM);
+  const similarityModeRef = useRef<AtlasSimilarityMode>("hybrid");
   const atlasZoomFrameRef = useRef<number | null>(null);
   const atlasScrollTimerRef = useRef<number | null>(null);
   const atlasInteractionTimerRef = useRef<number | null>(null);
@@ -2006,13 +2044,41 @@ export default function Home() {
   }
 
   async function reloadAtlasCatalog(operation = captureWorkspaceOperation()) {
-    const response = await fetch(atlasWorkspaceApiUrl("/products?limit=10000", operation.workspaceId), { signal: operation.signal });
+    const response = await fetch(atlasWorkspaceApiUrl(atlasProjectionApiPath("/products?limit=10000", similarityModeRef.current), operation.workspaceId), { signal: operation.signal });
     if (!response.ok) throw new Error("catalog unavailable");
     const items = await response.json() as AtlasApiProduct[];
     if (!isWorkspaceOperationCurrent(operation)) return;
     setCatalogItems(items.map(atlasApiToItem));
     setAiItems(null);
     setCatalogStatus("catalog ready");
+  }
+
+  async function reloadAtlasProjection(mode: AtlasSimilarityMode, operation = captureWorkspaceOperation()) {
+    const response = await fetch(atlasWorkspaceApiUrl(atlasProjectionApiPath("/products?limit=10000", mode), operation.workspaceId), { signal: operation.signal });
+    if (!response.ok) throw new Error("projection unavailable");
+    const items = (await response.json() as AtlasApiProduct[]).map(atlasApiToItem);
+    if (!isWorkspaceOperationCurrent(operation)) return;
+    setCatalogItems(items);
+    setAiItems((current) => {
+      if (!current) return null;
+      const selected = new Set(current.map((item) => item.id));
+      return items.filter((item) => selected.has(item.id));
+    });
+    setCatalogStatus("catalog ready");
+  }
+
+  async function changeAtlasSimilarityMode(mode: AtlasSimilarityMode) {
+    if (mode === similarityModeRef.current) return;
+    similarityModeRef.current = mode;
+    setSimilarityMode(mode);
+    const operation = captureWorkspaceOperation();
+    if (!operation.workspaceId) return;
+    try { await reloadAtlasProjection(mode, operation); }
+    catch (error) {
+      if (isWorkspaceOperationCurrent(operation) && !(error instanceof DOMException && error.name === "AbortError")) {
+        setToast("Similarity projection is unavailable");
+      }
+    }
   }
 
   async function retryAtlasCatalog() {
@@ -2100,7 +2166,7 @@ export default function Home() {
   async function applyMosaicResearchResult(run: MosaicResearchRun, operation: MosaicWorkspaceOperation) {
     const resultFilter = run.result?.filters?.[0]?.filter;
     const [catalogResult, collectionsResult, schemaResult, artifactsResult, runsResult, filteredResult] = await Promise.allSettled([
-      fetch(atlasWorkspaceApiUrl("/products?limit=10000", operation.workspaceId), { signal: operation.signal }).then(async (response) => {
+      fetch(atlasWorkspaceApiUrl(atlasProjectionApiPath("/products?limit=10000", similarityModeRef.current), operation.workspaceId), { signal: operation.signal }).then(async (response) => {
         if (!response.ok) throw new Error("catalog unavailable");
         return (await response.json() as AtlasApiProduct[]).map(atlasApiToItem);
       }),
@@ -2124,7 +2190,7 @@ export default function Home() {
         return Array.isArray(payload) ? payload : payload.runs ?? [];
       }),
       resultFilter
-        ? fetch(atlasWorkspaceApiUrl("/query", operation.workspaceId), {
+        ? fetch(atlasWorkspaceApiUrl(atlasProjectionApiPath("/query", similarityModeRef.current), operation.workspaceId), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(resultFilter),
@@ -2279,7 +2345,7 @@ export default function Home() {
         if (!isWorkspaceOperationCurrent(operation)) return;
         setEmbeddingJob(next);
         if (next.status === "succeeded") {
-          const catalogResponse = await fetch(atlasWorkspaceApiUrl("/products?limit=10000", operation.workspaceId), { signal: operation.signal });
+          const catalogResponse = await fetch(atlasWorkspaceApiUrl(atlasProjectionApiPath("/products?limit=10000", similarityModeRef.current), operation.workspaceId), { signal: operation.signal });
           if (catalogResponse.ok) {
             const items = await catalogResponse.json() as AtlasApiProduct[];
             if (!isWorkspaceOperationCurrent(operation)) return;
@@ -2356,7 +2422,7 @@ export default function Home() {
     try { window.localStorage.setItem(MOSAIC_ACTIVE_WORKSPACE_KEY, workspaceId); } catch { /* optional */ }
     const scoped = (path: string) => atlasWorkspaceApiUrl(path, workspaceId);
     void Promise.allSettled([
-      fetch(scoped("/products?limit=10000"), { signal: controller.signal }).then(async (response) => {
+      fetch(scoped(atlasProjectionApiPath("/products?limit=10000", similarityModeRef.current)), { signal: controller.signal }).then(async (response) => {
         if (!response.ok) throw new Error("catalog unavailable");
         const items = await response.json() as AtlasApiProduct[];
         if (!current()) return;
@@ -2494,16 +2560,18 @@ export default function Home() {
     let cancelled = false;
     let storedSizes: string[] | null = null;
     let storedImageMode: AtlasImageMode | null = null;
+    let storedSimilarityMode: AtlasSimilarityMode | null = null;
     try {
       const stored = window.localStorage.getItem(ATLAS_PREFERENCES_KEY);
       if (stored) {
-        const preferences = JSON.parse(stored) as { selectedSizes?: unknown; imageMode?: unknown };
+        const preferences = JSON.parse(stored) as { selectedSizes?: unknown; imageMode?: unknown; similarityMode?: unknown };
         if (Array.isArray(preferences.selectedSizes)) {
           storedSizes = [...new Set(preferences.selectedSizes
             .filter((size): size is string => typeof size === "string" && Boolean(size.trim()))
             .map(atlasNormalizedSize))].slice(0, 12);
         }
         if (preferences.imageMode === "cropped" || preferences.imageMode === "full") storedImageMode = preferences.imageMode;
+        if (preferences.similarityMode === "hybrid" || preferences.similarityMode === "visual" || preferences.similarityMode === "metadata") storedSimilarityMode = preferences.similarityMode;
       }
     } catch {
       // Preferences are optional; malformed local data must never block the catalog.
@@ -2512,6 +2580,12 @@ export default function Home() {
       if (cancelled) return;
       setSelectedSizes(storedSizes ?? []);
       if (storedImageMode) setImageMode(storedImageMode);
+      if (storedSimilarityMode) {
+        similarityModeRef.current = storedSimilarityMode;
+        setSimilarityMode(storedSimilarityMode);
+        const operation = captureWorkspaceOperation();
+        if (operation.workspaceId) void reloadAtlasProjection(storedSimilarityMode, operation).catch(() => undefined);
+      }
       setPreferencesReady(true);
     });
     return () => { cancelled = true; };
@@ -2519,9 +2593,9 @@ export default function Home() {
 
   useEffect(() => {
     if (!preferencesReady) return;
-    try { window.localStorage.setItem(ATLAS_PREFERENCES_KEY, JSON.stringify({ selectedSizes, imageMode })); }
+    try { window.localStorage.setItem(ATLAS_PREFERENCES_KEY, JSON.stringify({ selectedSizes, imageMode, similarityMode })); }
     catch { /* Private browsing or a full quota should not affect the board. */ }
-  }, [imageMode, preferencesReady, selectedSizes]);
+  }, [imageMode, preferencesReady, selectedSizes, similarityMode]);
 
   const visibleCatalog = aiItems ?? catalogItems;
   const activeOutfitIds = useMemo(() => {
@@ -3886,7 +3960,7 @@ export default function Home() {
       priceFilter: showClothingFallback ? priceFilter : "all", fitFilter: showClothingFallback ? fitFilter : "all",
       materialFilter: showClothingFallback ? materialFilter : "all", sizeFilters: showClothingFallback ? selectedSizes : [],
       stockFilter: showClothingFallback ? stockFilter : "all", attributeQuery, minPrice, maxPrice,
-      includeRejected, selectedCollectionId, dynamicFacetSelections, dynamicNumberFilters, xAxis, yAxis, mode, imageMode,
+      includeRejected, selectedCollectionId, dynamicFacetSelections, dynamicNumberFilters, xAxis, yAxis, mode, imageMode, similarityMode,
     });
   }
 
@@ -3914,7 +3988,7 @@ export default function Home() {
     setMaterialFilter(showClothingFallback ? view.materialFilter : "all"); setSelectedSizes(showClothingFallback ? view.sizeFilters : []); setStockFilter(showClothingFallback ? view.stockFilter : "all");
     setAttributeQuery(view.attributeQuery); setMinPrice(view.minPrice); setMaxPrice(view.maxPrice); setIncludeRejected(view.includeRejected);
     setSelectedCollectionId(view.selectedCollectionId ?? null); setDynamicFacetSelections(view.dynamicFacetSelections ?? {}); setDynamicNumberFilters(view.dynamicNumberFilters ?? {});
-    setXAxis(view.xAxis); setYAxis(view.yAxis); setMode(view.mode); setImageMode(view.imageMode); setDrawer(null); setToast(`Vue « ${view.name} » appliquée`);
+    setXAxis(view.xAxis); setYAxis(view.yAxis); setMode(view.mode); setImageMode(view.imageMode); void changeAtlasSimilarityMode(view.similarityMode); setDrawer(null); setToast(`Vue « ${view.name} » appliquée`);
   }
 
   async function deleteAtlasView(id: string) {
@@ -4182,6 +4256,12 @@ export default function Home() {
             <div className="mosaicViewControls" aria-label={t("view")}>
               <button type="button" onClick={() => setMode((current) => current === "space" ? "grid" : "space")} title={`${t("layout")}: ${mode === "space" ? t("space") : t("grid")}`} aria-label={`${t("layout")}: ${mode === "space" ? t("space") : t("grid")}`}>{mode === "space" ? <MapIcon className="mosaicIcon" aria-hidden="true" /> : <LayoutGrid className="mosaicIcon" aria-hidden="true" />}<span>{mode === "space" ? t("space") : t("grid")}</span></button>
               <button type="button" onClick={() => setImageMode((current) => current === "cropped" ? "full" : "cropped")} title={`${t("images")}: ${imageMode === "cropped" ? t("cropped") : t("full")}`} aria-label={`${t("images")}: ${imageMode === "cropped" ? t("cropped") : t("full")}`}>{imageMode === "cropped" ? <Crop className="mosaicIcon" aria-hidden="true" /> : <Expand className="mosaicIcon" aria-hidden="true" />}<span>{imageMode === "cropped" ? t("cropped") : t("full")}</span></button>
+              <label className="mosaicSimilarityPill" title={mosaicSimilarityUi[locale][similarityMode].title}>
+                <Layers3 className="mosaicIcon" aria-hidden="true" />
+                <select value={similarityMode} onChange={(event) => void changeAtlasSimilarityMode(event.target.value as AtlasSimilarityMode)} aria-label={`${t("similarity")}: ${mosaicSimilarityUi[locale][similarityMode].label}`}>
+                  {(Object.keys(mosaicSimilarityUi[locale]) as AtlasSimilarityMode[]).map((value) => <option value={value} key={value}>{mosaicSimilarityUi[locale][value].label}</option>)}
+                </select>
+              </label>
               <div className="mosaicZoomPill" aria-label={t("zoom")}>
                 <button type="button" disabled={mode !== "space" || zoom <= .25} onClick={() => changeAtlasZoom(atlasZoomRef.current - .5)} aria-label="Zoom out"><Minus className="mosaicIcon" aria-hidden="true" /></button>
                 <button type="button" disabled={mode !== "space"} onClick={resetAtlasView}>{Math.round(zoom * 100)}%</button>
@@ -4396,7 +4476,7 @@ export default function Home() {
               <div className="drawerBody">
                 <form className="inlineCreate" onSubmit={(event) => void saveAtlasView(event)}><input value={viewName} onChange={(event) => setViewName(event.target.value)} placeholder="Nom de cette vue" aria-label="Nom de la vue" /><button className="primaryButton">Sauvegarder</button></form>
                 <p className="drawerHint">La vue mémorise scope, filtres, rendu d’image, axes et mode{showClothingFallback ? ", ainsi que les tailles" : ""} — jamais ton prompt, ton zoom ou ta position.</p>
-                <div className="savedList">{savedViews.map((view) => <div className="savedRow" key={view.id}><button className="savedMain" onClick={() => applyAtlasView(view)}><strong>{view.name}</strong><span>{showClothingFallback ? atlasScopes.find((item) => item.id === view.scope)?.label : view.scope === "saved" ? "Gardés" : view.scope === "reference" ? "Références" : "Catalogue"} · {showClothingFallback ? `${view.activeFilter} · ` : ""}{view.mode === "space" ? "PCA" : "grille"} · {view.imageMode === "full" ? "images entières" : "recadrées"}{showClothingFallback && view.sizeFilters.length ? ` · ${view.sizeFilters.join(" ou ")}` : ""}</span></button><button className="iconDanger" onClick={() => void deleteAtlasView(view.id)} aria-label={`Supprimer ${view.name}`}>×</button></div>)}{savedViews.length === 0 && <div className="drawerEmpty"><strong>Aucune vue sauvegardée</strong><span>Compose un filtre précis, puis reviens ici pour le garder.</span></div>}</div>
+                <div className="savedList">{savedViews.map((view) => <div className="savedRow" key={view.id}><button className="savedMain" onClick={() => applyAtlasView(view)}><strong>{view.name}</strong><span>{showClothingFallback ? atlasScopes.find((item) => item.id === view.scope)?.label : view.scope === "saved" ? "Gardés" : view.scope === "reference" ? "Références" : "Catalogue"} · {showClothingFallback ? `${view.activeFilter} · ` : ""}{view.mode === "space" ? "PCA" : "grille"} · {mosaicSimilarityUi[locale][view.similarityMode].label} · {view.imageMode === "full" ? "images entières" : "recadrées"}{showClothingFallback && view.sizeFilters.length ? ` · ${view.sizeFilters.join(" ou ")}` : ""}</span></button><button className="iconDanger" onClick={() => void deleteAtlasView(view.id)} aria-label={`Supprimer ${view.name}`}>×</button></div>)}{savedViews.length === 0 && <div className="drawerEmpty"><strong>Aucune vue sauvegardée</strong><span>Compose un filtre précis, puis reviens ici pour le garder.</span></div>}</div>
                 <div className="drawerFooter"><button onClick={exportAtlasJson}>⇩ Exporter le scope en JSON</button></div>
               </div>
             )}
