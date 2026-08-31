@@ -23,6 +23,7 @@ export type AiProviderView = {
   detail: string;
   connected: boolean;
   managedBy: "environment" | "local" | "none";
+  imageWorkflow: "native" | "local-clip";
 };
 
 export type AiProviderCatalog = {
@@ -88,6 +89,7 @@ export function aiProviderCatalog(
       detail: "Codex CLI with the private MosAIc MCP",
       connected: codexIsAvailable(environment),
       managedBy: "environment",
+      imageWorkflow: "native",
     },
     {
       id: "local",
@@ -98,6 +100,7 @@ export function aiProviderCatalog(
       detail: "LM Studio, Ollama, vLLM, or another OpenAI-compatible server",
       connected: Boolean(envModel(environment, "local")),
       managedBy: envModel(environment, "local") ? "environment" : "none",
+      imageWorkflow: "local-clip",
     },
     {
       id: "openrouter",
@@ -108,6 +111,7 @@ export function aiProviderCatalog(
       detail: "OpenRouter model with MosAIc's local tools",
       connected: Boolean(environment.OPENROUTER_API_KEY?.trim() || openRouter.apiKey),
       managedBy: environment.OPENROUTER_API_KEY?.trim() ? "environment" : openRouter.apiKey ? "local" : "none",
+      imageWorkflow: "local-clip",
     },
   ];
   const requested = providers.find((provider) => provider.id === requestedDefault && provider.configured);
@@ -197,6 +201,18 @@ function toolResultText(value: unknown): string {
   return serialized.length > 30_000 ? `${serialized.slice(0, 30_000)}…` : serialized;
 }
 
+function validatedToolResult(value: unknown): ResearchAgentResult | null {
+  if (!value || typeof value !== "object") return null;
+  const structured = (value as { structuredContent?: unknown }).structuredContent;
+  if (!structured || typeof structured !== "object") return null;
+  const wrapped = (structured as { result?: unknown }).result;
+  if (!wrapped || typeof wrapped !== "object") return null;
+  const data = (wrapped as { data?: unknown }).data;
+  if (!data || typeof data !== "object" || (data as { valid?: unknown }).valid !== true) return null;
+  const candidate = (data as { validatedResult?: unknown }).validatedResult;
+  return candidate ? researchAgentResultSchema.parse(candidate) : null;
+}
+
 function assistantText(value: ChatCompletion["choices"] extends Array<infer T> | undefined
   ? T extends { message?: infer M } ? M : never : never): string {
   if (!value || typeof value !== "object") return "";
@@ -261,14 +277,17 @@ export async function runOpenAiCompatibleResearchAgent(
   const timeoutSignal = AbortSignal.timeout(input.run.request.budget.maxDurationMs);
   const requestSignal = AbortSignal.any([input.signal, timeoutSignal]);
   const toolClient = await (options.createToolClient ?? createScopedToolClient)(input.run);
-  const tools = (await toolClient.listTools()).tools.map((tool) => ({
+  const nativeImageTools = new Set(["inspect_workspace_item", "build_workspace_contact_sheet"]);
+  const tools = (await toolClient.listTools()).tools
+    .filter((tool) => !nativeImageTools.has(tool.name))
+    .map((tool) => ({
     type: "function",
     function: {
       name: tool.name,
       description: tool.description ?? "",
       parameters: tool.inputSchema ?? { type: "object", properties: {} },
     },
-  }));
+    }));
   const messages: ChatMessage[] = [
     { role: "system", content: options.instruction },
     {
@@ -331,6 +350,18 @@ export async function runOpenAiCompatibleResearchAgent(
           }
           messages.push({ role: "tool", tool_call_id: call.id, content: toolResultText(result) });
           input.onEvent({ type: "tool-result", message: `Completed ${call.function.name}`, data: { tool: call.function.name } });
+          if (call.function.name === "validate_research_result") {
+            const parsed = validatedToolResult(result);
+            if (parsed) {
+              return {
+                ...parsed,
+                metrics: {
+                  ...parsed.metrics,
+                  toolCalls: Math.min(input.run.request.budget.maxToolCalls, Math.max(parsed.metrics.toolCalls, toolCalls)),
+                },
+              };
+            }
+          }
         }
         continue;
       }

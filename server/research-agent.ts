@@ -422,6 +422,19 @@ function validateResearchResult(
   });
 }
 
+export function assertResearchImageWorkflow(
+  provider: ResolvedAiProvider,
+  request: ResearchRequest,
+  manifest: ResearchWorkspaceManifest,
+): void {
+  if (!request.images.length || provider.id === "codex") return;
+  if (!manifest.visualIndex.localEmbeddingArtifactAvailable) {
+    throw new Error(
+      `${provider.id === "openrouter" ? "OpenRouter" : "The local AI provider"} cannot inspect attached images in this MosAIc configuration, and the local CLIP index is unavailable. Build the local visual index or use Codex for this image request.`,
+    );
+  }
+}
+
 function childJobsFromEvents(events: ResearchRunEvent[]): ResearchChildJob[] {
   const jobs = events.flatMap((event) => {
     const raw = event.data.childJobs;
@@ -464,6 +477,8 @@ export class ResearchAgentService {
   start(input: ResearchRequestInput): ResearchRun {
     const parsed = researchRequestSchema.parse(input);
     const provider = resolveAiProvider(parsed.provider, parsed.model, this.environment, this.openRouter.credentials());
+    const manifestWithoutConversation = buildResearchManifest(parsed, this.repository);
+    assertResearchImageWorkflow(provider, parsed, manifestWithoutConversation);
     const conversation = parsed.conversationId
       ? this.repository.getAssistantConversation(parsed.conversationId, parsed.workspaceId)
       : this.repository.createAssistantConversation({
@@ -479,7 +494,7 @@ export class ResearchAgentService {
     });
     const history = this.repository.listAssistantMessages(conversation.id, request.workspaceId, 24);
     const manifest = researchWorkspaceManifestSchema.parse({
-      ...buildResearchManifest(request, this.repository),
+      ...manifestWithoutConversation,
       conversation: conversationContext(conversation, history),
     });
     const run = this.repository.createResearchRun({

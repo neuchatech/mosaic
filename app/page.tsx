@@ -2149,6 +2149,7 @@ export default function Home() {
   const atlasSceneRef = useRef<HTMLDivElement>(null);
   const atlasImageInputRef = useRef<HTMLInputElement>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
+  const composerFormRef = useRef<HTMLFormElement>(null);
   const assistantFeedRef = useRef<HTMLDivElement>(null);
   const personalImageInputRef = useRef<HTMLInputElement>(null);
   const loadMoreRef = useRef<HTMLButtonElement>(null);
@@ -2513,6 +2514,22 @@ export default function Home() {
     if (!composerExpanded) return;
     requestAnimationFrame(() => assistantFeedRef.current?.scrollTo({ top: assistantFeedRef.current.scrollHeight, behavior: "smooth" }));
   }, [assistantMessages, composerExpanded, researchEvents]);
+
+  useEffect(() => {
+    if (!composerExpanded) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!composerFormRef.current?.contains(event.target as Node)) setComposerExpanded(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setComposerExpanded(false);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [composerExpanded]);
 
   useEffect(() => {
     if (embeddingJob?.status !== "running") return;
@@ -4322,7 +4339,6 @@ export default function Home() {
   ].filter(Boolean).length + dynamicFilterCount;
   const filterBadgeCount = advancedFilterCount + (sourceFilter !== "all" ? 1 : 0)
     + (showClothingFallback ? selectedSizes.length + (activeFilter !== "Tout" ? 1 : 0) : 0);
-  const assistantHasContext = Boolean(aiPrompt.trim() || promptImages.length || promptProductIds.length || promptCollectionIds.length);
   const assistantOpen = composerExpanded || (catalogStatus !== "loading…" && products.length === 0);
   const latestResearchEvent = researchEvents.at(-1);
   const latestAssistantMessage = [...assistantMessages].reverse().find((message) => message.role === "assistant");
@@ -4371,6 +4387,7 @@ export default function Home() {
 
         <section className="boardPanel atlasBoardPanel mosaicBoardPanel">
           <form
+            ref={composerFormRef}
             className={`mosaicComposer${assistantOpen ? " expanded" : " compact"}${assistantDropActive ? " dropActive" : ""}`}
             onSubmit={(event) => { event.preventDefault(); setComposerExpanded(false); void askAtlasAssistant(); }}
             onDragEnter={(event) => { event.preventDefault(); setAssistantDropActive(true); }}
@@ -4378,9 +4395,6 @@ export default function Home() {
             onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setAssistantDropActive(false); }}
             onDrop={(event) => void dropOnAtlasAssistant(event)}
             onFocus={() => setComposerExpanded(true)}
-            onBlur={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget as Node | null) && !assistantHasContext && !assistantBusy) setComposerExpanded(false);
-            }}
           >
             {assistantOpen && assistantMessages.length === 0 && !activeResearchRun && <div className="mosaicComposerIntro"><span>{t("visualAssistant")}</span><h2>{t("whatExplore")}</h2><p>{t("assistantIntro")}</p></div>}
             {assistantOpen && (assistantMessages.length > 0 || assistantConversations.length > 0 || activeResearchRun) && <section className="mosaicConversation" aria-label={conversationText.conversation}>

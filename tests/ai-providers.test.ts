@@ -10,6 +10,7 @@ import {
 } from "../server/ai-providers";
 import type { ResearchAgentResult, ResearchRun } from "../src/domain/research";
 import { ResearchAgentService } from "../server/research-agent";
+import { assertResearchImageWorkflow } from "../server/research-agent";
 import { CatalogRepository } from "../server/repository";
 import { DEFAULT_CLOTHING_WORKSPACE_ID } from "../src/domain/workspace";
 
@@ -64,10 +65,59 @@ test("provider catalog resolves Codex, local OpenAI-compatible, and OpenRouter w
     baseUrl: "http://localhost:1234/v1",
     apiKey: undefined,
   });
+  assert.equal(catalog.providers.find((provider) => provider.id === "codex")?.imageWorkflow, "native");
+  assert.equal(catalog.providers.find((provider) => provider.id === "openrouter")?.imageWorkflow, "local-clip");
   assert.throws(() => resolveAiProvider("local", null, {
     ...environment,
     MOSAIC_LOCAL_AI_BASE_URL: "http://192.168.1.9:1234/v1",
   }), /loopback/);
+});
+
+test("OpenAI-compatible providers expose CLIP retrieval but not raw image-returning tools", async () => {
+  const requests: Array<Record<string, unknown>> = [];
+  const requestFetch: typeof fetch = async (_input, init) => {
+    requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result()) } }] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const toolClient: ResearchToolClient = {
+    async listTools() {
+      return { tools: [
+        { name: "rank_workspace_by_visual_references" },
+        { name: "inspect_workspace_item" },
+        { name: "build_workspace_contact_sheet" },
+      ] };
+    },
+    async callTool() { throw new Error("not called"); },
+    async close() {},
+  };
+  await runOpenAiCompatibleResearchAgent({
+    run: run(), signal: new AbortController().signal, onEvent: () => undefined,
+  }, {
+    provider: { id: "openrouter", model: "tool-model", baseUrl: "https://openrouter.ai/api/v1", apiKey: "test" },
+    instruction: "Research this workspace.", fetch: requestFetch, createToolClient: async () => toolClient,
+  });
+  const tools = requests[0]?.tools as Array<{ function: { name: string } }>;
+  assert.deepEqual(tools.map((tool) => tool.function.name), ["rank_workspace_by_visual_references"]);
+});
+
+test("image requests fail clearly when neither native images nor local CLIP are available", () => {
+  const requestWithImage = {
+    ...run().request,
+    images: [{ name: "reference.jpg", mediaPath: "/api/media/reference/1.jpg", mimeType: "image/jpeg" }],
+  } as ResearchRun["request"];
+  assert.throws(() => assertResearchImageWorkflow(
+    { id: "openrouter", model: "text-model", baseUrl: "https://openrouter.ai/api/v1" },
+    requestWithImage,
+    { visualIndex: { imagesAvailable: 1, coordinatesAvailable: 0, localEmbeddingArtifactAvailable: false, hybridEmbeddingsMayBeAvailable: false } } as unknown as ResearchRun["manifest"],
+  ), /local CLIP index is unavailable/);
+  assert.doesNotThrow(() => assertResearchImageWorkflow(
+    { id: "openrouter", model: "text-model", baseUrl: "https://openrouter.ai/api/v1" },
+    requestWithImage,
+    { visualIndex: { imagesAvailable: 1, coordinatesAvailable: 0, localEmbeddingArtifactAvailable: true, hybridEmbeddingsMayBeAvailable: true } } as unknown as ResearchRun["manifest"],
+  ));
 });
 
 test("OpenAI-compatible agent executes scoped MCP tools and returns validated JSON", async () => {
@@ -120,6 +170,46 @@ test("OpenAI-compatible agent executes scoped MCP tools and returns validated JS
   const secondMessages = requests[1]?.messages as Array<{ role: string; tool_call_id?: string }>;
   assert.equal(secondMessages.at(-1)?.role, "tool");
   assert.equal(secondMessages.at(-1)?.tool_call_id, "call-one");
+});
+
+test("OpenAI-compatible agent returns immediately after MCP validates the result", async () => {
+  const requests: Array<Record<string, unknown>> = [];
+  const proposed = result();
+  const requestFetch: typeof fetch = async (_input, init) => {
+    requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return new Response(JSON.stringify({
+      choices: [{ message: {
+        content: null,
+        tool_calls: [{
+          id: "validate-one",
+          type: "function",
+          function: { name: "validate_research_result", arguments: JSON.stringify({ resultJson: JSON.stringify(proposed) }) },
+        }],
+      } }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const toolClient: ResearchToolClient = {
+    async listTools() {
+      return { tools: [{ name: "validate_research_result", inputSchema: { type: "object" } }] };
+    },
+    async callTool() {
+      return { structuredContent: { result: { data: { valid: true, validatedResult: proposed } } } };
+    },
+    async close() {},
+  };
+  const output = await runOpenAiCompatibleResearchAgent({
+    run: run(),
+    signal: new AbortController().signal,
+    onEvent: () => undefined,
+  }, {
+    provider: { id: "local", model: "local-model", baseUrl: "http://127.0.0.1:1234/v1" },
+    instruction: "Research this workspace.",
+    fetch: requestFetch,
+    createToolClient: async () => toolClient,
+  });
+  assert.equal(output.outcome, "completed");
+  assert.equal(output.metrics.toolCalls, 1);
+  assert.equal(requests.length, 1);
 });
 
 test("automatic provider is resolved once and persisted with the research run", async (t) => {

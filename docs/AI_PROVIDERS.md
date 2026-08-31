@@ -112,6 +112,10 @@ An OpenAI-compatible provider must support:
 - assistant `tool_calls` and `tool` result messages;
 - enough context for the workspace manifest and relevant tool results.
 
-Vision input is still available to non-Codex models through MosAIc's local
-image inspection, contact-sheet, and CLIP tools. Reference images do not need
-to be sent directly to the remote inference endpoint.
+Codex can receive explicitly attached reference images through its native image
+input. Local API and OpenRouter runs use MosAIc's local CLIP retrieval for
+attached images; MosAIc does not silently forward their raw pixels to those
+endpoints. If no local CLIP index is available, an image request is rejected
+immediately with a recovery message instead of running as if vision were
+available. Raw image inspection and contact-sheet tools are therefore omitted
+from the OpenAI-compatible tool list for now.

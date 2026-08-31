@@ -683,6 +683,7 @@ export function registerResearchTools(
     }
     return scopedResult({
       valid: errors.length === 0,
+      validatedResult: errors.length === 0 ? parsed : null,
       attempt: resultValidationAttempts,
       remainingAttempts: Math.max(0, 3 - resultValidationAttempts),
       errors: [...new Set(errors)].slice(0, 40),
