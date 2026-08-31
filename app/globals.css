@@ -849,6 +849,17 @@ body:has(.compareDock) .toast { bottom: 61px; }
 .mosaicChatMessage.assistant { justify-self: start; border-bottom-left-radius: 6px; background: #f1ece4; color: #3f3932; }
 .mosaicChatMessage.status-failed, .mosaicChatMessage.status-blocked, .mosaicChatMessage.status-interrupted { background: #f8e4df; color: #7d3e34; }
 .mosaicChatMessage small { color: inherit; font-size: 7px; opacity: .67; }
+.mosaicChatReasoning { margin-top: 2px; border-radius: 12px; background: rgba(255, 253, 249, .62); }
+.mosaicChatReasoning summary {
+  min-height: 27px; display: flex; align-items: center; gap: 6px; padding: 5px 8px;
+  color: #7c6b61; cursor: pointer; list-style: none; font-size: 7px; font-weight: 700;
+}
+.mosaicChatReasoning summary::-webkit-details-marker { display: none; }
+.mosaicChatReasoning summary span { flex: 1; }
+.mosaicChatReasoning summary small { min-width: 17px; text-align: center; }
+.mosaicChatReasoning summary .mosaicIcon { width: 11px; height: 11px; transition: transform .16s ease; }
+.mosaicChatReasoning[open] summary .mosaicIcon { transform: rotate(180deg); }
+.mosaicChatReasoning ol { display: grid; gap: 3px; margin: 0; padding: 0 10px 8px 24px; color: #766a61; font-size: 7px; line-height: 1.4; }
 .mosaicChatFollowUps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
 .mosaicChatFollowUps button {
   min-height: 25px; padding: 4px 9px; border: 0; border-radius: 999px; background: #fffaf4; color: #795148;

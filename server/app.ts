@@ -525,10 +525,20 @@ export function createApp(
   let interactiveDiscovery: DiscoveryService | null = null;
   const interactiveDiscoveryJobs = new Set<string>();
   let assistantDiscoveryListener: ((job: DiscoveryJobSnapshot) => void) | null = null;
+  const indexedDiscoveryJobs = new Set<string>();
+  const refreshVisualIndexAfterDiscovery = (job: DiscoveryJobSnapshot) => {
+    if (!terminalDiscoveryStatuses.has(job.status) || job.discovered < 1 || indexedDiscoveryJobs.has(job.id)) return;
+    indexedDiscoveryJobs.add(job.id);
+    startEmbeddingJob(repository);
+  };
+  discovery.subscribe(refreshVisualIndexAfterDiscovery);
   const getInteractiveDiscovery = () => {
     if (!interactiveDiscovery) {
       interactiveDiscovery = createDiscoveryService(repository, acquisition, { headed: true });
-      interactiveDiscovery.subscribe((job) => assistantDiscoveryListener?.(job));
+      interactiveDiscovery.subscribe((job) => {
+        refreshVisualIndexAfterDiscovery(job);
+        assistantDiscoveryListener?.(job);
+      });
     }
     return interactiveDiscovery;
   };

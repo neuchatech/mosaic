@@ -47,13 +47,17 @@ function persistedJobView(): EmbeddingJobView {
 }
 
 let current: EmbeddingJobView = persistedJobView();
+let rerunRequested = false;
 
 export function getEmbeddingJob(): EmbeddingJobView {
   return { ...current, summary: current.summary ? { ...current.summary } : undefined };
 }
 
 export function startEmbeddingJob(repository: CatalogRepository): EmbeddingJobView {
-  if (current.status === "running") return getEmbeddingJob();
+  if (current.status === "running") {
+    rerunRequested = true;
+    return getEmbeddingJob();
+  }
   const products = repository.listProducts({ limit: 10_000 });
   current = {
     status: "running",
@@ -109,6 +113,11 @@ export function startEmbeddingJob(repository: CatalogRepository): EmbeddingJobVi
         finishedAt: new Date().toISOString(),
         message: error instanceof Error ? error.message : "CLIP indexing failed",
       };
+    } finally {
+      if (rerunRequested) {
+        rerunRequested = false;
+        queueMicrotask(() => startEmbeddingJob(repository));
+      }
     }
   })();
   return getEmbeddingJob();

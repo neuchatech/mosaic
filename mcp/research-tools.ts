@@ -534,6 +534,32 @@ function compactJob(value: unknown): unknown {
   return Object.fromEntries(keys.filter((key) => record[key] !== undefined).map((key) => [key, record[key]]));
 }
 
+function compactDiscoveryJob(
+  value: unknown,
+  repository: CatalogRepository,
+  workspaceId: string,
+): unknown {
+  if (Array.isArray(value)) return value.map((entry) => compactDiscoveryJob(entry, repository, workspaceId));
+  if (!value || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  if (Array.isArray(record.jobs)) {
+    return { jobs: record.jobs.map((job) => compactDiscoveryJob(job, repository, workspaceId)) };
+  }
+  const compact = compactJob(record) as Record<string, unknown>;
+  if (!Array.isArray(record.results) || typeof record.source !== "string") return compact;
+  const products = repository.listProducts({ workspaceId, limit: 10_000 });
+  const bySourceId = new Map(products.map((product) => [`${product.source}:${product.sourceId}`, product.id]));
+  const byUrl = new Map(products.map((product) => [`${product.source}:${product.url}`, product.id]));
+  const itemIds = record.results.flatMap((result) => {
+    if (!result || typeof result !== "object") return [];
+    const raw = result as Record<string, unknown>;
+    const id = typeof raw.sourceId === "string" ? bySourceId.get(`${record.source}:${raw.sourceId}`) : undefined;
+    const fallback = typeof raw.url === "string" ? byUrl.get(`${record.source}:${raw.url}`) : undefined;
+    return id ?? fallback ? [id ?? fallback!] : [];
+  });
+  return { ...compact, itemIds: [...new Set(itemIds)] };
+}
+
 export function registerResearchTools(
   server: McpServer,
   repository: CatalogRepository,
@@ -1098,7 +1124,7 @@ export function registerResearchTools(
 
   server.registerTool("start_source_discovery", {
     title: "Start bounded source discovery",
-    description: "Start one bounded local discovery job through an installed source adapter. Use get_source_capabilities before choosing a source id.",
+    description: "Start one bounded local discovery job through an installed source adapter. Use get_source_capabilities before choosing a source id, then poll get_source_discovery. Terminal status includes imported itemIds that can be inspected and visually validated.",
     inputSchema: {
       sourceId: z.string().trim().min(1).max(100),
       query: z.string().trim().max(2_000).optional(),
@@ -1136,7 +1162,7 @@ export function registerResearchTools(
       ? (payload as { jobs: Array<{ id?: unknown }> }).jobs
       : [];
     recordChildJobs("discovery", jobs.flatMap((job) => typeof job.id === "string" ? [job.id] : []));
-    return scopedResult(compactJob(payload));
+    return scopedResult(compactDiscoveryJob(payload, repository, scope.workspaceId));
   });
 
   server.registerTool("get_source_discovery", {
@@ -1146,9 +1172,9 @@ export function registerResearchTools(
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async ({ jobId }) => {
     meter.consume();
-    return scopedResult(compactJob(await localApiRequest(
+    return scopedResult(compactDiscoveryJob(await localApiRequest(
       `/api/discovery/jobs/${encodeURIComponent(jobId)}?workspaceId=${encodeURIComponent(scope.workspaceId)}`,
-    )));
+    ), repository, scope.workspaceId));
   });
 
   server.registerTool("control_source_discovery", {
@@ -1161,10 +1187,10 @@ export function registerResearchTools(
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   }, async ({ jobId, action }) => {
     meter.consume();
-    return scopedResult(compactJob(await localApiRequest(
+    return scopedResult(compactDiscoveryJob(await localApiRequest(
       `/api/discovery/jobs/${encodeURIComponent(jobId)}/${action}?workspaceId=${encodeURIComponent(scope.workspaceId)}`,
       { method: "POST" },
-    )));
+    ), repository, scope.workspaceId));
   });
 
   server.registerTool("refresh_workspace_items", {

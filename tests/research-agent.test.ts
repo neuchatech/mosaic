@@ -58,6 +58,14 @@ test("research service persists lifecycle and compact tool progress", async (t) 
   const events = service.events(completed.id, completed.workspaceId);
   assert.deepEqual(events.map((event) => event.type), ["status", "status", "tool-call", "tool-result", "result"]);
   assert.equal(events[2]?.data.tool, "query_workspace_items");
+  const assistant = repository.listAssistantMessages(
+    completed.request.conversationId!,
+    completed.workspaceId,
+  ).find((message) => message.role === "assistant");
+  assert.deepEqual(assistant?.context.actionRecap, [
+    { type: "tool-call", message: "Using query_workspace_items", createdAt: events[2]!.createdAt },
+    { type: "tool-result", message: "Completed query_workspace_items", createdAt: events[3]!.createdAt },
+  ]);
 });
 
 test("research runs are cancelled explicitly and are not auto-resumed", async (t) => {
@@ -154,6 +162,8 @@ test("Codex research invocation exposes only scoped MCP in a read-only sandbox",
     const args = researchCodexArgs(run, "/tmp/research-result.json");
     assert.ok(args.includes("read-only"));
     assert.ok(!args.includes("--approve-for-me"));
+    assert.ok(args.includes("--strict-config"));
+    assert.ok(args.includes("mcp_servers.mosaic.default_tools_approval_mode=\"approve\""));
     assert.ok(args.some((value) => value.includes("MOSAIC_RESEARCH_RUN_ID")));
     assert.ok(args.some((value) => value.includes("MOSAIC_RESEARCH_WORKSPACE_ID")));
     const instruction = researchAgentInstruction(run);

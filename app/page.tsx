@@ -1118,6 +1118,7 @@ type MosaicAssistantMessage = {
   createdAt: string;
   updatedAt: string;
 };
+type MosaicAssistantAction = { type: string; message: string; createdAt?: string };
 type MosaicResearchEvent = {
   runId: string;
   sequence: number;
@@ -1858,6 +1859,21 @@ function mosaicSummaryText(summary: AtlasAssistantResponse["summary"]): string |
   const priceText = price && typeof price.min === "number" && typeof price.max === "number"
     ? ` · ${price.min}–${price.max} ${typeof price.currency === "string" ? price.currency : ""}` : "";
   return `${count}${priceText}`.trim();
+}
+
+function mosaicAssistantActionRecap(message: MosaicAssistantMessage): MosaicAssistantAction[] {
+  const raw = message.context.actionRecap;
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(-12).flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const record = entry as Record<string, unknown>;
+    if (typeof record.message !== "string" || !record.message.trim()) return [];
+    return [{
+      type: typeof record.type === "string" ? record.type : "progress",
+      message: record.message,
+      createdAt: typeof record.createdAt === "string" ? record.createdAt : undefined,
+    }];
+  });
 }
 
 export default function Home() {
@@ -3481,9 +3497,16 @@ export default function Home() {
       value: MosaicResearchConstraint["value"],
       reason: string,
     ) => constraints.push({ field, operator, ...(value === undefined ? {} : { value }), strength: "hard", weight: 1, reason });
+    const soft = (
+      field: string,
+      operator: MosaicResearchConstraint["operator"],
+      value: MosaicResearchConstraint["value"],
+      reason: string,
+      weight = .9,
+    ) => constraints.push({ field, operator, ...(value === undefined ? {} : { value }), strength: "soft", weight, reason });
     if (!includeRejected) hard("decision", "neq", "rejected", "Excluded by the active board filters");
-    if (scope === "saved") hard("decision", "eq", "saved", "Active Favorites scope");
-    else if (scope === "reference") hard("kind", "eq", "reference", "Active References scope");
+    if (scope === "saved") soft("decision", "eq", "saved", "Favorites are style context; newly acquired candidates may remain unseen", .95);
+    else if (scope === "reference") soft("kind", "eq", "reference", "References are visual context; purchasable candidates may come from shops", .95);
     if (sourceFilter === "shop" || sourceFilter === "reference" || sourceFilter === "owned") {
       hard("kind", "eq", sourceFilter, "Active source-kind filter");
     } else if (sourceFilter !== "all") {
@@ -4208,9 +4231,14 @@ export default function Home() {
                 {assistantMessages.map((message) => {
                   if (message.role === "assistant" && message.status === "running" && message.researchRunId === activeResearchRun?.id) return null;
                   const result = message.result;
+                  const actionRecap = message.role === "assistant" ? mosaicAssistantActionRecap(message) : [];
                   return <article className={`mosaicChatMessage ${message.role} status-${message.status}`} key={message.id}>
                     <div>{message.content}</div>
                     {result && (result.itemIds.length > 0 || result.collectionIds.length > 0) && <small>{result.itemIds.length > 0 ? `${result.itemIds.length} ${conversationText.itemResults}` : ""}{result.itemIds.length > 0 && result.collectionIds.length > 0 ? " · " : ""}{result.collectionIds.length > 0 ? `${result.collectionIds.length} ${conversationText.collectionResults}` : ""}</small>}
+                    {actionRecap.length > 0 && <details className="mosaicChatReasoning">
+                      <summary><span>{conversationText.actionRecap}</span><small>{actionRecap.length}</small><ChevronDown className="mosaicIcon" aria-hidden="true" /></summary>
+                      <ol>{actionRecap.map((action, index) => <li key={`${action.type}-${index}`}>{action.message}</li>)}</ol>
+                    </details>}
                     {message.role === "assistant" && result?.followUps.length ? <nav className="mosaicChatFollowUps">{result.followUps.map((followUp) => <button type="button" key={followUp} onClick={() => prepareMosaicResearchFollowUp(followUp, result)}>{followUp}</button>)}</nav> : null}
                   </article>;
                 })}
