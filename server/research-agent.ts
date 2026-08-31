@@ -142,7 +142,18 @@ function parseCodexProgress(line: string): ResearchAgentProgress | null {
   }
   if (record.type === "item.completed" && item && (item.type === "agent_message" || item.type === "message")) {
     const text = typeof item.text === "string" ? item.text : typeof item.content === "string" ? item.content : "";
-    if (text) return { type: "message", message: text.slice(0, 2_000) };
+    if (text) {
+      let message = text;
+      try {
+        const structured = JSON.parse(text) as { message?: unknown; title?: unknown };
+        if (typeof structured.message === "string" && structured.message.trim()) message = structured.message;
+        else if (typeof structured.title === "string" && structured.title.trim()) message = structured.title;
+      } catch {
+        // Normal conversational progress is plain text. Only compact a final
+        // structured result when Codex emits it on the JSONL progress stream.
+      }
+      return { type: "message", message: message.slice(0, 2_000) };
+    }
   }
   return null;
 }
@@ -162,7 +173,7 @@ export function researchAgentInstruction(run: ResearchRun): string {
     "Hard constraints are eligibility rules and may never be silently relaxed. Soft constraints are ranked preferences: optimize them together, explain meaningful compromises, and explore alternatives when the first retrieval signal is too narrow. A local visual ranking such as CLIP is a retrieval hint, not a verdict or a frozen candidate universe.",
     "Work progressively. Start with enough workspace context to choose a strategy, inspect representative evidence, and expand only when it can change the answer. Avoid reading the entire workspace when bounded queries or samples suffice. Stop once the result is useful or the resource budget is exhausted; preserve partial useful work.",
     "The manifest may contain earlier user and assistant messages from this workspace conversation. Treat them as conversational context, preserve relevant constraints and references, and answer the newest request directly. Do not redo completed work unless the follow-up asks for it or fresh evidence is required.",
-    "Return exactly the structured result required by the output schema. Every returned item, collection, and artifact id must exist in the active workspace. Evidence must say what actually supports the result. Metrics should reflect your completed tool work. If one missing user choice is consequential, use outcome=needs_input and ask it in message instead of guessing.",
+    "Return exactly the structured result required by the output schema. In filters, set sort=null when no explicit sort is useful. Every returned item, collection, and artifact id must exist in the active workspace. Evidence must say what actually supports the result. Metrics should reflect your completed tool work. If one missing user choice is consequential, use outcome=needs_input and ask it in message instead of guessing.",
     `User outcome:\n${run.request.prompt || "Use the attached and selected references to produce the most useful research result."}`,
     `Direct URLs supplied by the user:\n${JSON.stringify(run.request.urls)}`,
     `Hard constraints:\n${JSON.stringify(hard)}`,
@@ -250,7 +261,18 @@ export const runCodexResearchAgent: ResearchAgentRunner = async ({ run, signal, 
             : error?.message || `Codex exited with code ${code}.`;
           throw new Error(`${reason}${stderrOutput ? ` ${stderrOutput.slice(-3_000)}` : ""}`);
         }
-        const parsed = researchAgentResultSchema.parse(JSON.parse(await readFile(outputPath, "utf8")));
+        const wireResult = JSON.parse(await readFile(outputPath, "utf8")) as Record<string, unknown>;
+        if (Array.isArray(wireResult.filters)) {
+          wireResult.filters = wireResult.filters.map((entry) => {
+            if (!entry || typeof entry !== "object") return entry;
+            const record = entry as Record<string, unknown>;
+            if (!record.filter || typeof record.filter !== "object") return entry;
+            const filter = { ...record.filter as Record<string, unknown> };
+            if (filter.sort === null) delete filter.sort;
+            return { ...record, filter };
+          });
+        }
+        const parsed = researchAgentResultSchema.parse(wireResult);
         const result: ResearchAgentResult = {
           ...parsed,
           metrics: {

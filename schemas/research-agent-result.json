@@ -5,8 +5,8 @@
   "additionalProperties": false,
   "required": ["version", "outcome", "title", "message", "itemIds", "collectionIds", "artifactIds", "filters", "evidence", "warnings", "followUps", "metrics"],
   "properties": {
-    "version": { "const": 1 },
-    "outcome": { "enum": ["completed", "partial", "needs_input", "blocked"] },
+    "version": { "type": "integer", "const": 1 },
+    "outcome": { "type": "string", "enum": ["completed", "partial", "needs_input", "blocked"] },
     "title": { "type": "string", "minLength": 1, "maxLength": 160 },
     "message": { "type": "string", "minLength": 1, "maxLength": 4000 },
     "itemIds": { "type": "array", "maxItems": 500, "items": { "type": "string", "minLength": 1, "maxLength": 256 } },
@@ -24,20 +24,25 @@
           "filter": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["id", "name", "description", "where", "limit"],
+            "required": ["id", "name", "description", "where", "sort", "limit"],
             "properties": {
               "id": { "type": "string", "minLength": 1 },
               "name": { "type": "string", "minLength": 1 },
               "description": { "type": "string" },
               "where": { "$ref": "#/$defs/filterExpression" },
               "sort": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["field", "direction"],
-                "properties": {
-                  "field": { "type": "string", "minLength": 1 },
-                  "direction": { "enum": ["asc", "desc"] }
-                }
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["field", "direction"],
+                    "properties": {
+                      "field": { "type": "string", "minLength": 1 },
+                      "direction": { "type": "string", "enum": ["asc", "desc"] }
+                    }
+                  },
+                  { "type": "null" }
+                ]
               },
               "limit": { "type": "integer", "minimum": 1, "maximum": 5000 }
             }
@@ -53,10 +58,10 @@
         "additionalProperties": false,
         "required": ["kind", "id", "note", "url"],
         "properties": {
-          "kind": { "enum": ["item", "collection", "source", "image", "fact", "warning"] },
+          "kind": { "type": "string", "enum": ["item", "collection", "source", "image", "fact", "warning"] },
           "id": { "type": "string", "maxLength": 500 },
           "note": { "type": "string", "minLength": 1, "maxLength": 1000 },
-          "url": { "type": ["string", "null"], "format": "uri", "maxLength": 2000 }
+          "url": { "type": ["string", "null"], "maxLength": 2000 }
         }
       }
     },
@@ -76,17 +81,17 @@
   },
   "$defs": {
     "filterExpression": {
-      "oneOf": [
+      "anyOf": [
         {
           "type": "object",
           "additionalProperties": false,
           "required": ["type", "field", "operator", "value"],
           "properties": {
-            "type": { "const": "clause" },
+            "type": { "type": "string", "const": "clause" },
             "field": { "type": "string", "minLength": 1 },
-            "operator": { "enum": ["eq", "neq", "contains", "not_contains", "in", "not_in", "gte", "lte", "between", "exists", "missing"] },
+            "operator": { "type": "string", "enum": ["eq", "neq", "contains", "not_contains", "in", "not_in", "gte", "lte", "between", "exists", "missing"] },
             "value": {
-              "oneOf": [
+              "anyOf": [
                 { "type": "string" },
                 { "type": "number" },
                 { "type": "boolean" },
@@ -102,8 +107,8 @@
           "additionalProperties": false,
           "required": ["type", "conjunction", "children"],
           "properties": {
-            "type": { "const": "group" },
-            "conjunction": { "enum": ["and", "or"] },
+            "type": { "type": "string", "const": "group" },
+            "conjunction": { "type": "string", "enum": ["and", "or"] },
             "children": { "type": "array", "items": { "$ref": "#/$defs/filterExpression" } }
           }
         },
@@ -112,7 +117,7 @@
           "additionalProperties": false,
           "required": ["type", "child"],
           "properties": {
-            "type": { "const": "not" },
+            "type": { "type": "string", "const": "not" },
             "child": { "$ref": "#/$defs/filterExpression" }
           }
         }

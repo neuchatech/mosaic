@@ -161,6 +161,9 @@ test("Codex research invocation exposes only scoped MCP in a read-only sandbox",
     assert.match(instruction, /choose, revise, and stop your own research strategy/i);
     assert.match(instruction, /CLIP is a retrieval hint, not a verdict/i);
     assert.doesNotMatch(instruction, /clothing discovery|television workflow/i);
+    const outputSchema = readFileSync(new URL("../schemas/research-agent-result.json", import.meta.url), "utf8");
+    assert.doesNotMatch(outputSchema, /"oneOf"/);
+    assert.match(outputSchema, /"required": \["id", "name", "description", "where", "sort", "limit"\]/);
   } finally {
     database.close();
   }
