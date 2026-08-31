@@ -41,6 +41,7 @@ import {
   Shirt,
   SlidersHorizontal,
   Sparkles,
+  Settings2,
   Undo2,
   X,
 } from "lucide-react";
@@ -797,7 +798,7 @@ export function LegacyHome() {
 type AtlasDecision = "unseen" | "saved" | "rejected" | "owned";
 type AtlasKind = "shop" | "reference" | "owned";
 type AtlasScope = "catalogue" | "saved" | "owned" | "reference" | "outfits";
-type AtlasDrawer = "filters" | "view" | "compare" | "views" | "collections" | "activity" | "studio" | "add" | "outfits" | null;
+type AtlasDrawer = "filters" | "view" | "compare" | "views" | "collections" | "activity" | "studio" | "add" | "outfits" | "ai" | null;
 type AtlasImageMode = "cropped" | "full";
 
 type AtlasItem = {
@@ -1148,7 +1149,17 @@ type MosaicAiProviderCatalog = {
     local: boolean;
     model: string | null;
     detail: string;
+    connected: boolean;
+    managedBy: "environment" | "local" | "none";
   }>;
+};
+type MosaicOpenRouterModel = {
+  id: string;
+  name: string;
+  contextLength: number | null;
+  promptPrice: string | null;
+  completionPrice: string | null;
+  supportedParameters: string[];
 };
 type MosaicWorkspace = { id: string; name: string; profile?: string; description?: string };
 type MosaicWorkspaceOperation = { workspaceId: string; epoch: number; signal: AbortSignal };
@@ -1905,6 +1916,9 @@ export default function Home() {
   const [reasoningEffort, setReasoningEffort] = useState<"low" | "medium">("low");
   const [aiProvider, setAiProvider] = useState<MosaicAiProviderId>("auto");
   const [aiProviders, setAiProviders] = useState<MosaicAiProviderCatalog | null>(null);
+  const [openRouterModels, setOpenRouterModels] = useState<MosaicOpenRouterModel[]>([]);
+  const [openRouterBusy, setOpenRouterBusy] = useState(false);
+  const [openRouterError, setOpenRouterError] = useState("");
   const [promptImages, setPromptImages] = useState<AtlasPromptImage[]>([]);
   const [promptProductIds, setPromptProductIds] = useState<string[]>([]);
   const [promptCollectionIds, setPromptCollectionIds] = useState<string[]>([]);
@@ -2026,6 +2040,107 @@ export default function Home() {
     setAiProvider(provider);
     try { window.localStorage.setItem(MOSAIC_AI_PROVIDER_KEY, provider); } catch { /* optional */ }
   }, []);
+
+  const refreshAiProviderCatalog = useCallback(async () => {
+    const response = await fetch(`${ATLAS_API}/ai/providers`);
+    if (!response.ok) throw new Error("provider catalog unavailable");
+    const catalog = await response.json() as MosaicAiProviderCatalog;
+    setAiProviders(catalog);
+    setAiProvider((current) => {
+      if (current === "auto" || catalog.providers.some((provider) => provider.id === current && provider.configured)) return current;
+      return catalog.defaultProvider;
+    });
+    return catalog;
+  }, []);
+
+  const loadOpenRouterModels = useCallback(async () => {
+    setOpenRouterBusy(true);
+    setOpenRouterError("");
+    try {
+      const response = await fetch(`${ATLAS_API}/ai/openrouter/models`);
+      const payload = await response.json() as { models?: MosaicOpenRouterModel[]; error?: string };
+      if (!response.ok) throw new Error(payload.error || "OpenRouter models unavailable");
+      setOpenRouterModels(payload.models ?? []);
+    } catch (error) {
+      setOpenRouterError(error instanceof Error ? error.message : "OpenRouter models unavailable");
+    } finally {
+      setOpenRouterBusy(false);
+    }
+  }, []);
+
+  const openAiProviderSettings = useCallback(() => {
+    setDrawer("ai");
+    const openRouter = aiProviders?.providers.find((provider) => provider.id === "openrouter");
+    if (openRouter?.connected) void loadOpenRouterModels();
+  }, [aiProviders, loadOpenRouterModels]);
+
+  const connectOpenRouter = useCallback(async () => {
+    setOpenRouterBusy(true);
+    setOpenRouterError("");
+    try {
+      const response = await fetch(`${ATLAS_API}/ai/openrouter/connect`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ callbackUrl: `${window.location.origin}/auth/openrouter` }),
+      });
+      const payload = await response.json() as { authorizationUrl?: string; error?: string };
+      if (!response.ok || !payload.authorizationUrl) throw new Error(payload.error || "OpenRouter connection could not start");
+      const popup = window.open(payload.authorizationUrl, "mosaic-openrouter", "popup,width=620,height=760");
+      if (!popup) window.location.assign(payload.authorizationUrl);
+      else setOpenRouterBusy(false);
+    } catch (error) {
+      setOpenRouterError(error instanceof Error ? error.message : "OpenRouter connection could not start");
+      setOpenRouterBusy(false);
+    }
+  }, []);
+
+  const selectOpenRouterModel = useCallback(async (model: string) => {
+    setOpenRouterBusy(true);
+    setOpenRouterError("");
+    try {
+      const response = await fetch(`${ATLAS_API}/ai/openrouter/settings`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model }),
+      });
+      const payload = await response.json() as { providers?: MosaicAiProviderCatalog; error?: string };
+      if (!response.ok || !payload.providers) throw new Error(payload.error || "OpenRouter model could not be saved");
+      setAiProviders(payload.providers);
+      changeAiProvider("openrouter");
+    } catch (error) {
+      setOpenRouterError(error instanceof Error ? error.message : "OpenRouter model could not be saved");
+    } finally {
+      setOpenRouterBusy(false);
+    }
+  }, [changeAiProvider]);
+
+  const disconnectOpenRouter = useCallback(async () => {
+    setOpenRouterBusy(true);
+    setOpenRouterError("");
+    try {
+      const response = await fetch(`${ATLAS_API}/ai/openrouter/connection`, { method: "DELETE" });
+      const payload = await response.json() as { providers?: MosaicAiProviderCatalog; error?: string };
+      if (!response.ok || !payload.providers) throw new Error(payload.error || "OpenRouter could not disconnect");
+      setAiProviders(payload.providers);
+      setOpenRouterModels([]);
+      changeAiProvider(payload.providers.defaultProvider);
+    } catch (error) {
+      setOpenRouterError(error instanceof Error ? error.message : "OpenRouter could not disconnect");
+    } finally {
+      setOpenRouterBusy(false);
+    }
+  }, [changeAiProvider]);
+
+  useEffect(() => {
+    const connected = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || event.data?.type !== "mosaic:openrouter-connected") return;
+      void refreshAiProviderCatalog().then(() => loadOpenRouterModels()).catch((error) => {
+        setOpenRouterError(error instanceof Error ? error.message : "OpenRouter connection could not be refreshed");
+      }).finally(() => setOpenRouterBusy(false));
+    };
+    window.addEventListener("message", connected);
+    return () => window.removeEventListener("message", connected);
+  }, [loadOpenRouterModels, refreshAiProviderCatalog]);
 
   const atlasElementRef = useRef<HTMLDivElement>(null);
   const atlasCanvasRef = useRef<HTMLDivElement>(null);
@@ -4319,8 +4434,9 @@ export default function Home() {
               <span>{t("constraints")}: {showClothingFallback ? `${selectedSizes.length ? selectedSizes.join(" / ") : t("allSizes")} · ` : ""}{sourceFilter === "all" ? t("allSources") : sourceFilter.replace("source:", "")}{dynamicFilterCount ? ` · ${dynamicFilterCount}` : ""}</span>
               <label>{t("aiProvider")} <select value={aiProvider} onChange={(event) => changeAiProvider(event.target.value as MosaicAiProviderId)}>
                 <option value="auto">{t("automatic")}{aiProviders ? ` · ${aiProviders.providers.find((provider) => provider.id === aiProviders.defaultProvider)?.label ?? aiProviders.defaultProvider}` : ""}</option>
-                {(aiProviders?.providers ?? [{ id: "codex", label: "Codex", configured: true, local: true, model: null, detail: "" }]).map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.configured}>{provider.label}{provider.model ? ` · ${provider.model}` : ""}{provider.configured ? "" : ` · ${t("notConfigured")}`}</option>)}
+                {(aiProviders?.providers ?? [{ id: "codex", label: "Codex", configured: true, local: true, model: null, detail: "", connected: true, managedBy: "environment" as const }]).map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.configured}>{provider.label}{provider.model ? ` · ${provider.model}` : ""}{provider.configured ? "" : ` · ${t("notConfigured")}`}</option>)}
               </select></label>
+              <button type="button" className="mosaicAiSettingsButton" onClick={openAiProviderSettings} title={t("aiSettings")} aria-label={t("aiSettings")}><Settings2 className="mosaicIcon" aria-hidden="true" /></button>
               <label>{t("thinking")} <select value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as "low" | "medium")}><option value="low">{t("fast")}</option><option value="medium">{t("thorough")}</option></select></label>
             </div>}
           </form>
@@ -4467,7 +4583,27 @@ export default function Home() {
       {drawer && (
         <div className="drawerBackdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) setDrawer(null); }}>
           <aside ref={drawerRef} tabIndex={-1} className={`drawer drawer-${drawer}`} role="dialog" aria-modal="true" aria-labelledby="drawer-title">
-            <header><div><span className="eyebrow">MosAIc</span><h2 id="drawer-title">{drawer === "filters" ? t("filters") : drawer === "view" ? t("view") : drawer === "compare" ? t("compare") : drawer === "views" ? t("savedViews") : drawer === "collections" ? t("collections") : drawer === "activity" ? t("activity") : drawer === "studio" ? t("studio") : drawer === "add" ? t("addToCatalog") : showClothingFallback ? t("outfits") : t("details")}</h2></div><button ref={drawerCloseRef} className="drawerClose" onClick={() => setDrawer(null)} aria-label={t("closePreview")}><X className="mosaicIcon" aria-hidden="true" /></button></header>
+            <header><div><span className="eyebrow">MosAIc</span><h2 id="drawer-title">{drawer === "filters" ? t("filters") : drawer === "view" ? t("view") : drawer === "compare" ? t("compare") : drawer === "views" ? t("savedViews") : drawer === "collections" ? t("collections") : drawer === "activity" ? t("activity") : drawer === "studio" ? t("studio") : drawer === "add" ? t("addToCatalog") : drawer === "ai" ? t("aiSettings") : showClothingFallback ? t("outfits") : t("details")}</h2></div><button ref={drawerCloseRef} className="drawerClose" onClick={() => setDrawer(null)} aria-label={t("closePreview")}><X className="mosaicIcon" aria-hidden="true" /></button></header>
+
+            {drawer === "ai" && (() => {
+              const openRouter = aiProviders?.providers.find((provider) => provider.id === "openrouter");
+              const selectedModel = openRouter?.model ?? "";
+              return <div className="drawerBody mosaicAiSettings">
+                <p className="drawerHint">{t("aiSettingsIntro")}</p>
+                {(aiProviders?.providers ?? []).map((provider) => <article className="mosaicProviderCard" key={provider.id}>
+                  <span className={`mosaicProviderStatus ${provider.connected ? "connected" : ""}`} aria-hidden="true" />
+                  <div><strong>{provider.label}</strong><small>{provider.detail}</small>{provider.model && <code>{provider.model}</code>}</div>
+                  <b>{provider.configured ? t("ready") : provider.connected ? t("chooseModel") : t("notConfigured")}</b>
+                </article>)}
+                <section className="mosaicOpenRouterSettings">
+                  <header><div><span>OpenRouter</span><small>{openRouter?.managedBy === "environment" ? t("managedByEnvironment") : t("localCredential")}</small></div>{openRouter?.connected && openRouter.managedBy !== "environment" ? <button type="button" disabled={openRouterBusy} onClick={() => void disconnectOpenRouter()}>{t("disconnect")}</button> : null}</header>
+                  {!openRouter?.connected ? <button type="button" className="primaryButton mosaicConnectOpenRouter" disabled={openRouterBusy} onClick={() => void connectOpenRouter()}>{openRouterBusy ? t("connecting") : t("connectOpenRouter")}</button> : <label><span>{t("toolModel")}</span><select value={selectedModel} disabled={openRouterBusy || openRouter.managedBy === "environment"} onChange={(event) => void selectOpenRouterModel(event.target.value)}><option value="">{openRouterBusy ? t("loading") : t("chooseModel")}</option>{openRouterModels.map((model) => <option value={model.id} key={model.id}>{model.name} · {model.id}</option>)}</select></label>}
+                  {openRouter?.connected && !openRouterModels.length && !openRouterBusy && <button type="button" onClick={() => void loadOpenRouterModels()}>{t("loadModels")}</button>}
+                  {openRouterError && <p className="mosaicProviderError" role="alert">{openRouterError}</p>}
+                  <small>{t("openRouterPrivacy")}</small>
+                </section>
+              </div>;
+            })()}
 
             {drawer === "filters" && (
               <div className="drawerBody mosaicFiltersDrawer">

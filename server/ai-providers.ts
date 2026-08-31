@@ -21,6 +21,8 @@ export type AiProviderView = {
   local: boolean;
   model: string | null;
   detail: string;
+  connected: boolean;
+  managedBy: "environment" | "local" | "none";
 };
 
 export type AiProviderCatalog = {
@@ -37,6 +39,7 @@ export type ResolvedAiProvider = {
 };
 
 type ProviderEnvironment = Record<string, string | undefined>;
+export type AiProviderCredentials = { apiKey: string | null; model: string | null };
 
 const LOCAL_DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -56,10 +59,10 @@ function normalizedBaseUrl(value: string, provider: AiProviderId): string {
   return parsed.toString().replace(/\/$/, "");
 }
 
-function envModel(environment: ProviderEnvironment, provider: AiProviderId): string | null {
+function envModel(environment: ProviderEnvironment, provider: AiProviderId, credentials?: AiProviderCredentials): string | null {
   if (provider === "codex") return environment.MOSAIC_CODEX_MODEL?.trim() || "gpt-5.6-luna";
   if (provider === "local") return environment.MOSAIC_LOCAL_AI_MODEL?.trim() || null;
-  return environment.MOSAIC_OPENROUTER_MODEL?.trim() || null;
+  return environment.MOSAIC_OPENROUTER_MODEL?.trim() || credentials?.model || null;
 }
 
 function codexIsAvailable(environment: ProviderEnvironment): boolean {
@@ -70,7 +73,10 @@ function codexIsAvailable(environment: ProviderEnvironment): boolean {
     .some((directory) => directory && existsSync(resolve(directory, executable)));
 }
 
-export function aiProviderCatalog(environment: ProviderEnvironment = process.env): AiProviderCatalog {
+export function aiProviderCatalog(
+  environment: ProviderEnvironment = process.env,
+  openRouter: AiProviderCredentials = { apiKey: null, model: null },
+): AiProviderCatalog {
   const requestedDefault = environment.MOSAIC_AI_PROVIDER?.trim().toLowerCase();
   const providers: AiProviderView[] = [
     {
@@ -80,6 +86,8 @@ export function aiProviderCatalog(environment: ProviderEnvironment = process.env
       local: true,
       model: envModel(environment, "codex"),
       detail: "Codex CLI with the private MosAIc MCP",
+      connected: codexIsAvailable(environment),
+      managedBy: "environment",
     },
     {
       id: "local",
@@ -88,14 +96,18 @@ export function aiProviderCatalog(environment: ProviderEnvironment = process.env
       local: true,
       model: envModel(environment, "local"),
       detail: "LM Studio, Ollama, vLLM, or another OpenAI-compatible server",
+      connected: Boolean(envModel(environment, "local")),
+      managedBy: envModel(environment, "local") ? "environment" : "none",
     },
     {
       id: "openrouter",
       label: "OpenRouter",
-      configured: Boolean(environment.OPENROUTER_API_KEY?.trim() && envModel(environment, "openrouter")),
+      configured: Boolean((environment.OPENROUTER_API_KEY?.trim() || openRouter.apiKey) && envModel(environment, "openrouter", openRouter)),
       local: false,
-      model: envModel(environment, "openrouter"),
+      model: envModel(environment, "openrouter", openRouter),
       detail: "OpenRouter model with MosAIc's local tools",
+      connected: Boolean(environment.OPENROUTER_API_KEY?.trim() || openRouter.apiKey),
+      managedBy: environment.OPENROUTER_API_KEY?.trim() ? "environment" : openRouter.apiKey ? "local" : "none",
     },
   ];
   const requested = providers.find((provider) => provider.id === requestedDefault && provider.configured);
@@ -107,8 +119,9 @@ export function resolveAiProvider(
   requested: ResearchAiProvider,
   modelOverride: string | null,
   environment: ProviderEnvironment = process.env,
+  openRouter: AiProviderCredentials = { apiKey: null, model: null },
 ): ResolvedAiProvider {
-  const catalog = aiProviderCatalog(environment);
+  const catalog = aiProviderCatalog(environment, openRouter);
   const id = requested === "auto" ? catalog.defaultProvider : requested;
   const view = catalog.providers.find((provider) => provider.id === id);
   if (!view?.configured) throw new Error(`${view?.label ?? id} is not configured.`);
@@ -127,7 +140,7 @@ export function resolveAiProvider(
     id,
     model,
     baseUrl: normalizedBaseUrl(environment.MOSAIC_OPENROUTER_BASE_URL?.trim() || OPENROUTER_BASE_URL, id),
-    apiKey: environment.OPENROUTER_API_KEY!.trim(),
+    apiKey: environment.OPENROUTER_API_KEY?.trim() || openRouter.apiKey || undefined,
     headers: {
       ...(environment.MOSAIC_OPENROUTER_SITE_URL?.trim()
         ? { "HTTP-Referer": environment.MOSAIC_OPENROUTER_SITE_URL.trim() }

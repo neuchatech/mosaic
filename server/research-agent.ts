@@ -33,6 +33,7 @@ import {
   type AiProviderCatalog,
   type ResolvedAiProvider,
 } from "./ai-providers";
+import { OpenRouterConnectionService, type OpenRouterModel } from "./openrouter-auth";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const researchSchemaPath = resolve(projectRoot, "schemas/research-agent-result.json");
@@ -106,6 +107,7 @@ export type ResearchAgentServiceOptions = {
   environment?: Record<string, string | undefined>;
   idFactory?: () => string;
   now?: () => Date;
+  openRouter?: OpenRouterConnectionService;
 };
 
 export type ResearchChildJob = { kind: "discovery" | "acquisition"; id: string };
@@ -445,12 +447,14 @@ export class ResearchAgentService {
   private active: { id: string; controller: AbortController } | null = null;
   private draining = false;
   private cancellationHandler: ResearchCancellationHandler | null = null;
+  private readonly openRouter: OpenRouterConnectionService;
 
   constructor(
     private readonly repository: ResearchRunRepository,
     options: ResearchAgentServiceOptions = {},
   ) {
     this.environment = options.environment ?? process.env;
+    this.openRouter = options.openRouter ?? new OpenRouterConnectionService({ environment: this.environment });
     this.runnerForRun = options.runnerForRun
       ?? (options.runner ? () => options.runner! : (run) => this.defaultRunner(run));
     this.idFactory = options.idFactory ?? (() => crypto.randomUUID());
@@ -459,7 +463,7 @@ export class ResearchAgentService {
 
   start(input: ResearchRequestInput): ResearchRun {
     const parsed = researchRequestSchema.parse(input);
-    const provider = resolveAiProvider(parsed.provider, parsed.model, this.environment);
+    const provider = resolveAiProvider(parsed.provider, parsed.model, this.environment, this.openRouter.credentials());
     const conversation = parsed.conversationId
       ? this.repository.getAssistantConversation(parsed.conversationId, parsed.workspaceId)
       : this.repository.createAssistantConversation({
@@ -523,7 +527,30 @@ export class ResearchAgentService {
   }
 
   providers(): AiProviderCatalog {
-    return aiProviderCatalog(this.environment);
+    return aiProviderCatalog(this.environment, this.openRouter.credentials());
+  }
+
+  beginOpenRouterConnection(callbackUrl: string): { authorizationUrl: string; expiresAt: string } {
+    return this.openRouter.begin(callbackUrl);
+  }
+
+  async completeOpenRouterConnection(input: { state: string; code: string }): Promise<AiProviderCatalog> {
+    await this.openRouter.complete(input);
+    return this.providers();
+  }
+
+  async openRouterModels(): Promise<OpenRouterModel[]> {
+    return this.openRouter.models();
+  }
+
+  async selectOpenRouterModel(model: string): Promise<AiProviderCatalog> {
+    await this.openRouter.selectModel(model);
+    return this.providers();
+  }
+
+  async disconnectOpenRouter(): Promise<AiProviderCatalog> {
+    await this.openRouter.disconnect();
+    return this.providers();
   }
 
   private defaultRunner(run: ResearchRun): ResearchAgentRunner {
@@ -535,6 +562,7 @@ export class ResearchAgentService {
       requestedProvider as ResearchAiProvider,
       run.model,
       this.environment,
+      this.openRouter.credentials(),
     );
     if (provider.id === "codex") return runCodexResearchAgent;
     return (input) => runOpenAiCompatibleResearchAgent(input, {

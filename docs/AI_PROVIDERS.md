@@ -48,8 +48,19 @@ output up to three times before failing truthfully.
 
 ## OpenRouter
 
-Create an [OpenRouter](https://openrouter.ai/docs/guides/features/tool-calling) key, choose a model that supports tool calling, and keep
-the credentials in the local environment:
+The simplest setup is inside MosAIc:
+
+1. Open the assistant and select **AI settings**.
+2. Select **Connect OpenRouter** and authorize the local app.
+3. Choose one of the models that advertises tool calling.
+
+MosAIc uses OpenRouter's PKCE S256 flow. The resulting user-controlled key is
+stored only by the local API in `data/secrets/openrouter.json` with owner-only
+file permissions. The key is never returned to the browser or committed to
+Git. Localhost callbacks are supported on any port.
+
+For managed installations, environment variables remain available and take
+priority over the UI-managed connection:
 
 ```bash
 MOSAIC_AI_PROVIDER=openrouter
@@ -67,6 +78,10 @@ MOSAIC_OPENROUTER_APP_NAME=Neuchatech MosAIc
 OpenRouter receives the model prompt and bounded tool results, but it never
 receives database credentials or unrestricted filesystem access. MCP tools are
 executed locally and remain scoped to the active workspace.
+
+The model picker loads `GET /api/v1/models?supported_parameters=tools` from
+OpenRouter and excludes models that do not advertise function calling. Model
+availability, pricing, and provider behavior can still change upstream.
 
 ## Runtime flow
 
