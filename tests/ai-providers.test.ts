@@ -44,6 +44,7 @@ function run(): ResearchRun {
 test("provider catalog resolves Codex, local OpenAI-compatible, and OpenRouter without exposing keys", () => {
   const environment = {
     MOSAIC_AI_PROVIDER: "local",
+    CODEX_CLI_PATH: "/usr/bin/true",
     MOSAIC_LOCAL_AI_MODEL: "qwen-local",
     MOSAIC_LOCAL_AI_BASE_URL: "http://localhost:1234/v1/",
     OPENROUTER_API_KEY: "secret-key",

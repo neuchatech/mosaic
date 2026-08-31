@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -9,6 +10,7 @@ import {
   type ResearchRun,
   type ResearchRunEvent,
 } from "../src/domain/research";
+import { codexExecutable } from "./codex-bridge";
 
 export type AiProviderId = Exclude<ResearchAiProvider, "auto">;
 
@@ -60,13 +62,21 @@ function envModel(environment: ProviderEnvironment, provider: AiProviderId): str
   return environment.MOSAIC_OPENROUTER_MODEL?.trim() || null;
 }
 
+function codexIsAvailable(environment: ProviderEnvironment): boolean {
+  if (environment.MOSAIC_CODEX_ENABLED === "0") return false;
+  const executable = environment.CODEX_CLI_PATH?.trim() || codexExecutable();
+  if (executable.includes("/")) return existsSync(executable);
+  return (environment.PATH ?? process.env.PATH ?? "").split(":")
+    .some((directory) => directory && existsSync(resolve(directory, executable)));
+}
+
 export function aiProviderCatalog(environment: ProviderEnvironment = process.env): AiProviderCatalog {
   const requestedDefault = environment.MOSAIC_AI_PROVIDER?.trim().toLowerCase();
   const providers: AiProviderView[] = [
     {
       id: "codex",
       label: "Codex",
-      configured: environment.MOSAIC_CODEX_ENABLED !== "0",
+      configured: codexIsAvailable(environment),
       local: true,
       model: envModel(environment, "codex"),
       detail: "Codex CLI with the private MosAIc MCP",
@@ -89,8 +99,7 @@ export function aiProviderCatalog(environment: ProviderEnvironment = process.env
     },
   ];
   const requested = providers.find((provider) => provider.id === requestedDefault && provider.configured);
-  const fallback = requested ?? providers.find((provider) => provider.configured);
-  if (!fallback) throw new Error("No AI provider is configured.");
+  const fallback = requested ?? providers.find((provider) => provider.configured) ?? providers[0]!;
   return { defaultProvider: fallback.id, providers };
 }
 
