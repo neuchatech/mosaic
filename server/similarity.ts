@@ -16,17 +16,112 @@ function normalizedMean(vectors: number[][]): number[] | null {
   return norm > 0 ? mean.map((value) => value / norm) : null;
 }
 
-function cosine(left: number[], right: number[]): number {
-  if (left.length !== right.length) return -1;
+export function cosineSimilarity(left: number[], right: number[]): number | null {
+  if (!left.length || left.length !== right.length) return null;
   let dot = 0;
   let leftNorm = 0;
   let rightNorm = 0;
   for (let index = 0; index < left.length; index += 1) {
+    if (!Number.isFinite(left[index]) || !Number.isFinite(right[index])) return null;
     dot += left[index]! * right[index]!;
     leftNorm += left[index]! ** 2;
     rightNorm += right[index]! ** 2;
   }
-  return leftNorm > 0 && rightNorm > 0 ? dot / Math.sqrt(leftNorm * rightNorm) : -1;
+  return leftNorm > 0 && rightNorm > 0 ? dot / Math.sqrt(leftNorm * rightNorm) : null;
+}
+
+export type VisualRetrievalRankingMode =
+  | "clip-image"
+  | "clip-anchor"
+  | "hybrid-anchor"
+  | "pca-coordinate"
+  | "catalog-order";
+
+export type RankedSimilarityProduct = {
+  product: Product;
+  /** Comparable within one retrieval response, normalized to the 0..1 range. */
+  score: number;
+  mode: VisualRetrievalRankingMode;
+  /** One normalized cosine score per compatible reference vector. */
+  referenceScores: number[];
+};
+
+function normalizedCosineScore(left: number[], right: number[]): number | null {
+  const similarity = cosineSimilarity(left, right);
+  return similarity === null ? null : Math.min(1, Math.max(0, (similarity + 1) / 2));
+}
+
+function coordinateSimilarity(product: Product, anchors: Product[]): number | null {
+  if (!anchors.length) return null;
+  const distance = Math.min(...anchors.map((anchor) => Math.hypot(product.x - anchor.x, product.y - anchor.y)));
+  return Math.max(0, 1 - distance / Math.SQRT2);
+}
+
+/**
+ * Rank an already scoped candidate universe against compatible reference vectors.
+ * Items missing the primary vector signal are retained behind explicitly labelled
+ * PCA/catalog fallbacks instead of being silently discarded.
+ */
+export function rankProductsByReferenceVectors(input: {
+  candidates: Product[];
+  candidateVectors: Map<string, number[]>;
+  referenceVectors: number[][];
+  anchors?: Product[];
+  vectorMode: Extract<VisualRetrievalRankingMode, "clip-image" | "clip-anchor" | "hybrid-anchor">;
+  limit: number;
+}): RankedSimilarityProduct[] {
+  const anchors = input.anchors ?? [];
+  const requestedLimit = Number.isFinite(input.limit) ? Math.trunc(input.limit) : 30;
+  const limit = Math.min(100, Math.max(1, requestedLimit));
+  const references = input.referenceVectors.filter((vector) => vector.length > 0 && vector.every(Number.isFinite));
+  const scored = input.candidates.map((product, index) => {
+    const vector = input.candidateVectors.get(product.id);
+    const referenceScores = vector
+      ? references.flatMap((reference) => {
+          const score = normalizedCosineScore(reference, vector);
+          return score === null ? [] : [score];
+        })
+      : [];
+    if (referenceScores.length) {
+      return {
+        product,
+        score: Math.max(...referenceScores),
+        mode: input.vectorMode as VisualRetrievalRankingMode,
+        referenceScores,
+        index,
+        tier: 0,
+      };
+    }
+    const fallbackScore = coordinateSimilarity(product, anchors);
+    if (fallbackScore !== null) {
+      return {
+        product,
+        score: fallbackScore,
+        mode: "pca-coordinate" as const,
+        referenceScores: [],
+        index,
+        tier: 1,
+      };
+    }
+    return {
+      product,
+      score: 0,
+      mode: "catalog-order" as const,
+      referenceScores: [],
+      index,
+      tier: 2,
+    };
+  });
+  return scored
+    .sort((left, right) => left.tier - right.tier || right.score - left.score || left.index - right.index
+      || left.product.id.localeCompare(right.product.id))
+    .slice(0, limit)
+    .map((entry) => ({
+      product: entry.product,
+      score: entry.score,
+      mode: entry.mode,
+      referenceScores: entry.referenceScores,
+    }));
 }
 
 export type SimilarProductsInput = {
@@ -54,7 +149,7 @@ export async function findSimilarProducts(input: SimilarProductsInput, repositor
   }).filter((product) => !anchorIds.includes(product.id));
   const scored = candidates.map((product) => {
     const vector = vectors.get(product.id);
-    const visualScore = anchorVector && vector ? cosine(anchorVector, vector) : null;
+    const visualScore = anchorVector && vector ? cosineSimilarity(anchorVector, vector) : null;
     const coordinateScore = Math.max(0, 1 - Math.min(...anchors.map((anchor) => Math.hypot(product.x - anchor.x, product.y - anchor.y))) / Math.SQRT2);
     const similarity = visualScore === null ? coordinateScore : visualScore;
     return {

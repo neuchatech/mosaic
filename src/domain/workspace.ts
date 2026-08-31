@@ -242,15 +242,20 @@ export const runKindSchema = z.enum([
   "embedding",
   "visual-scoring",
   "generation",
+  "research",
+  "agent",
 ]);
 
 export const runStatusSchema = z.enum([
   "queued",
   "running",
   "succeeded",
+  "partial",
+  "needs_input",
   "failed",
   "blocked",
   "cancelled",
+  "interrupted",
 ]);
 
 /** Normalized Activity representation; specialized job tables remain valid. */

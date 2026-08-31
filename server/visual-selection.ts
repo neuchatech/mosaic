@@ -4,25 +4,41 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import sharpFactory from "sharp";
-import type { Product } from "../src/domain/catalog";
+import { filterSpecSchema, type FilterSpec, type Product } from "../src/domain/catalog";
+import { applyFilter } from "../src/domain/filter";
 import { DEFAULT_CLOTHING_WORKSPACE_ID } from "../src/domain/workspace";
 import {
   DEFAULT_CLIP_MODEL,
+  VisualEmbeddingCache,
   createTransformersClipEncoder,
+  hybridVectorsByItem,
   meanNormalizedVectors,
   readVisualEmbeddingArtifact,
   visualVectorsByItem,
+  type VisualEmbeddingRun,
+  type VisualImageEncoder,
+  type VisualModelSpec,
 } from "../src/embeddings";
 import { codexExecutable } from "./codex-bridge";
 import { projectCompactCached } from "./projection-cache";
 import { CatalogRepository, type VisualJobRecord } from "./repository";
+import {
+  cosineSimilarity,
+  rankProductsByReferenceVectors,
+  type RankedSimilarityProduct,
+  type VisualRetrievalRankingMode,
+} from "./similarity";
 import { filterVisualCandidates, visualConstraintsSchema, type VisualConstraints } from "./visual-constraints";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const visualEmbeddingArtifactPath = resolve(projectRoot, "data/image-cache/visual-embeddings.json");
+const visualEmbeddingCacheRoot = resolve(projectRoot, "data/image-cache");
 const VISUAL_CANDIDATE_POOL_LIMIT = 50;
 const VISUAL_INSPECTION_LIMIT = 24;
 const VISUAL_AGENT_TIMEOUT_MS = 110_000;
+const MAX_RETRIEVAL_REFERENCES = 12;
+const MAX_RETRIEVAL_CONTEXT_ITEMS = 160;
+const MAX_RETRIEVAL_ELIGIBLE_ITEMS = 10_000;
 type SharpReferencePipeline = {
   metadata(): Promise<{ width?: number; height?: number }>;
   extract(region: { left: number; top: number; width: number; height: number }): SharpReferencePipeline;
@@ -360,6 +376,309 @@ async function preselectVisualCandidates(
     ? referenceVectors
     : [meanNormalizedVectors(referenceVectors)];
   return rankVisualCandidates(candidates, vectors, rankedReferences, limit);
+}
+
+export type VisualRetrievalRepository = Pick<
+  CatalogRepository,
+  "getWorkspace" | "getProduct" | "listProducts"
+>;
+
+export type RankWorkspaceByVisualReferencesInput = {
+  workspaceId: string;
+  /** App-owned `/api/media/:id/:file` paths only; remote and filesystem paths are rejected. */
+  referenceImagePaths?: string[];
+  /** Existing items used as visual/PCA anchors and excluded from the result set. */
+  contextItemIds?: string[];
+  /** Optional exact candidate allowlist. It is never expanded by the service. */
+  eligibleProductIds?: string[];
+  /** Hard predicate (and optional ordering); its own limit does not shrink the retrieval universe. */
+  filter?: FilterSpec;
+  limit?: number;
+};
+
+export type VisualReferenceRetrievalMetadata = {
+  primaryMode: VisualRetrievalRankingMode;
+  fallbackMode: VisualRetrievalRankingMode | null;
+  candidateCount: number;
+  indexedCandidateCount: number;
+  returnedCount: number;
+  referenceImageCount: number;
+  encodedReferenceImageCount: number;
+  contextItemCount: number;
+  contextVectorCount: number;
+  artifactAvailable: boolean;
+  modelAvailable: boolean;
+  embeddingCacheHits: number;
+  warnings: string[];
+};
+
+export type VisualReferenceRetrievalResult = {
+  ranked: RankedSimilarityProduct[];
+  metadata: VisualReferenceRetrievalMetadata;
+};
+
+type ReferenceEmbeddingBatch = {
+  vectors: number[][];
+  cacheHits: number;
+  modelAvailable: boolean;
+  warnings: string[];
+};
+
+export type VisualReferenceRetrievalDependencies = {
+  readEmbeddingArtifact?: () => Promise<VisualEmbeddingRun | null>;
+  embedReferenceImages?: (
+    referenceImagePaths: string[],
+    model: VisualModelSpec,
+  ) => Promise<ReferenceEmbeddingBatch>;
+};
+
+type AppOwnedMediaReference = { mediaPath: string; itemId: string };
+
+function appOwnedMediaReference(mediaPath: string): AppOwnedMediaReference {
+  const match = /^\/api\/media\/([^/?#]+)\/([1-6]\.(?:jpg|png|webp))$/.exec(mediaPath.trim());
+  if (!match) throw new Error("Visual references must use app-owned /api/media paths.");
+  let itemId: string;
+  try {
+    itemId = decodeURIComponent(match[1]!);
+  } catch {
+    throw new Error("Invalid app-owned visual reference path.");
+  }
+  if (!/^[A-Za-z0-9._-]+$/.test(itemId)) throw new Error("Invalid app-owned visual reference path.");
+  return { mediaPath: mediaPath.trim(), itemId };
+}
+
+function distinctBounded(values: string[] | undefined, maximum: number, label: string): string[] {
+  const distinct = [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))];
+  if (distinct.length > maximum) throw new Error(`${label} accepts at most ${maximum} entries.`);
+  return distinct;
+}
+
+async function embedAppOwnedReferenceImages(
+  referenceImagePaths: string[],
+  model: VisualModelSpec,
+): Promise<ReferenceEmbeddingBatch> {
+  const cache = new VisualEmbeddingCache({ rootDir: visualEmbeddingCacheRoot });
+  const vectors: number[][] = [];
+  const warnings: string[] = [];
+  let cacheHits = 0;
+  let modelAvailable = false;
+  let encoder: VisualImageEncoder | null = null;
+  let encoderUnavailable = false;
+  try {
+    for (const [index, mediaPath] of referenceImagePaths.entries()) {
+      const reference = appOwnedMediaReference(mediaPath);
+      try {
+        const image = await cache.getImage(reference.mediaPath, {
+          context: { itemId: reference.itemId, kind: "reference" },
+        });
+        let vector = await cache.getEmbedding(model, image.contentHash);
+        if (vector) {
+          cacheHits += 1;
+          modelAvailable = true;
+        } else if (!encoderUnavailable) {
+          if (!encoder) {
+            try {
+              encoder = await createTransformersClipEncoder({
+                model,
+                modelCacheDir: resolve(visualEmbeddingCacheRoot, "transformers"),
+                allowModelDownload: false,
+              });
+              modelAvailable = true;
+            } catch {
+              encoderUnavailable = true;
+              warnings.push("The local CLIP model is unavailable; no model download was attempted.");
+            }
+          }
+          if (encoder) {
+            vector = await encoder.encodeImage(image.path);
+            try {
+              await cache.putEmbedding(model, image.contentHash, vector);
+            } catch {
+              warnings.push(`Reference image ${index + 1} was encoded but its cache entry could not be saved.`);
+            }
+          }
+        }
+        if (vector?.length) vectors.push(vector);
+      } catch {
+        warnings.push(`Reference image ${index + 1} could not be read or encoded from app-owned media.`);
+      }
+    }
+  } finally {
+    try {
+      await encoder?.close?.();
+    } catch {
+      // Closing a local encoder must not invalidate already computed vectors.
+    }
+  }
+  return { vectors, cacheHits, modelAvailable, warnings };
+}
+
+function compatibleCandidateCount(
+  candidates: Product[],
+  candidateVectors: Map<string, number[]>,
+  referenceVectors: number[][],
+): number {
+  return candidates.filter((product) => {
+    const candidate = candidateVectors.get(product.id);
+    return Boolean(candidate && referenceVectors.some((reference) => cosineSimilarity(reference, candidate) !== null));
+  }).length;
+}
+
+/**
+ * Retrieve a bounded, workspace-scoped visual shortlist without creating an
+ * agent job. CLIP is local/cache-only; PCA coordinates and stable catalog order
+ * remain explicit fallbacks for incomplete or unavailable embeddings.
+ */
+export async function rankWorkspaceByVisualReferences(
+  input: RankWorkspaceByVisualReferencesInput,
+  repository: VisualRetrievalRepository,
+  dependencies: VisualReferenceRetrievalDependencies = {},
+): Promise<VisualReferenceRetrievalResult> {
+  const workspaceId = input.workspaceId.trim();
+  if (!workspaceId || !repository.getWorkspace(workspaceId)) {
+    throw new Error(`Unknown visual retrieval workspace: ${workspaceId || "(empty)"}`);
+  }
+  const referenceImagePaths = distinctBounded(
+    input.referenceImagePaths,
+    MAX_RETRIEVAL_REFERENCES,
+    "Visual reference retrieval",
+  );
+  // Validate the complete batch before reading a cache or invoking a model.
+  referenceImagePaths.forEach(appOwnedMediaReference);
+  const contextItemIds = distinctBounded(
+    input.contextItemIds,
+    MAX_RETRIEVAL_CONTEXT_ITEMS,
+    "Visual context retrieval",
+  );
+  if (!referenceImagePaths.length && !contextItemIds.length) {
+    throw new Error("Visual retrieval requires at least one app-owned image or workspace context item.");
+  }
+  const anchors = contextItemIds.map((id) => {
+    const product = repository.getProduct(id, workspaceId);
+    if (!product) throw new Error(`Unknown visual context item in workspace ${workspaceId}: ${id}`);
+    return product;
+  });
+
+  const hasExactAllowlist = input.eligibleProductIds !== undefined;
+  const eligibleProductIds = distinctBounded(
+    input.eligibleProductIds,
+    MAX_RETRIEVAL_ELIGIBLE_ITEMS,
+    "Visual candidate allowlist",
+  );
+  let candidates = hasExactAllowlist
+    ? eligibleProductIds.map((id) => {
+        const product = repository.getProduct(id, workspaceId);
+        if (!product) throw new Error(`Unknown eligible visual item in workspace ${workspaceId}: ${id}`);
+        return product;
+      })
+    : repository.listProducts({ workspaceId, limit: 10_000 });
+  const foreignCandidate = candidates.find((product) => (product.workspaceId ?? DEFAULT_CLOTHING_WORKSPACE_ID) !== workspaceId);
+  if (foreignCandidate) throw new Error(`Visual candidate escaped workspace scope: ${foreignCandidate.id}`);
+  if (input.filter) {
+    const filter = filterSpecSchema.parse(input.filter);
+    candidates = applyFilter(candidates, { ...filter, limit: 10_000 });
+  }
+  const anchorIds = new Set(contextItemIds);
+  candidates = candidates.filter((product) => !anchorIds.has(product.id));
+
+  const warnings: string[] = [];
+  let artifact: VisualEmbeddingRun | null = null;
+  try {
+    artifact = await (dependencies.readEmbeddingArtifact ?? (() => readVisualEmbeddingArtifact(visualEmbeddingArtifactPath)))();
+  } catch {
+    warnings.push("The local visual embedding artifact could not be read.");
+  }
+  if (!artifact) warnings.push("No local visual embedding artifact is available; using projection fallback.");
+
+  const visualVectors = artifact ? visualVectorsByItem(artifact) : new Map<string, number[]>();
+  const hybridVectors = artifact ? hybridVectorsByItem(artifact) : new Map<string, number[]>();
+  const anchorVisualVectors = anchors.flatMap((product) => {
+    const vector = visualVectors.get(product.id);
+    return vector ? [vector] : [];
+  });
+  const anchorHybridVectors = anchors.flatMap((product) => {
+    const vector = hybridVectors.get(product.id);
+    return vector ? [vector] : [];
+  });
+  let imageVectors: number[][] = [];
+  let embeddingCacheHits = 0;
+  let modelAvailable = artifact?.summary.modelAvailable ?? false;
+  if (artifact && referenceImagePaths.length && candidates.length) {
+    try {
+      const embedded = await (dependencies.embedReferenceImages ?? embedAppOwnedReferenceImages)(
+        referenceImagePaths,
+        artifact.model,
+      );
+      imageVectors = embedded.vectors.filter((vector) => vector.length > 0 && vector.every(Number.isFinite));
+      embeddingCacheHits = embedded.cacheHits;
+      modelAvailable = embedded.modelAvailable || imageVectors.length > 0;
+      warnings.push(...embedded.warnings);
+    } catch {
+      modelAvailable = false;
+      warnings.push("App-owned reference images could not be embedded with the local CLIP model.");
+    }
+  }
+
+  const imageReferences = [...imageVectors, ...anchorVisualVectors];
+  const imageCoverage = imageVectors.length
+    ? compatibleCandidateCount(candidates, visualVectors, imageReferences)
+    : 0;
+  const anchorVisualCoverage = compatibleCandidateCount(candidates, visualVectors, anchorVisualVectors);
+  const anchorHybridCoverage = compatibleCandidateCount(candidates, hybridVectors, anchorHybridVectors);
+  let primaryMode: VisualRetrievalRankingMode;
+  let vectorMode: Extract<VisualRetrievalRankingMode, "clip-image" | "clip-anchor" | "hybrid-anchor"> = "clip-anchor";
+  let candidateVectors = new Map<string, number[]>();
+  let referenceVectors: number[][] = [];
+  let indexedCandidateCount = 0;
+  if (imageCoverage > 0) {
+    primaryMode = vectorMode = "clip-image";
+    candidateVectors = visualVectors;
+    referenceVectors = imageReferences;
+    indexedCandidateCount = imageCoverage;
+  } else if (anchorVisualCoverage > 0) {
+    primaryMode = vectorMode = "clip-anchor";
+    candidateVectors = visualVectors;
+    referenceVectors = anchorVisualVectors;
+    indexedCandidateCount = anchorVisualCoverage;
+  } else if (anchorHybridCoverage > 0) {
+    primaryMode = vectorMode = "hybrid-anchor";
+    candidateVectors = hybridVectors;
+    referenceVectors = anchorHybridVectors;
+    indexedCandidateCount = anchorHybridCoverage;
+  } else {
+    primaryMode = anchors.length ? "pca-coordinate" : "catalog-order";
+  }
+  if (referenceImagePaths.length && !imageVectors.length) {
+    warnings.push("No compatible image-reference embedding was available; the ranking used anchors or projection data.");
+  }
+
+  const ranked = rankProductsByReferenceVectors({
+    candidates,
+    candidateVectors,
+    referenceVectors,
+    anchors,
+    vectorMode,
+    limit: input.limit ?? 30,
+  });
+  const fallbackMode = ranked.find((entry) => entry.mode !== primaryMode)?.mode ?? null;
+  return {
+    ranked,
+    metadata: {
+      primaryMode,
+      fallbackMode,
+      candidateCount: candidates.length,
+      indexedCandidateCount,
+      returnedCount: ranked.length,
+      referenceImageCount: referenceImagePaths.length,
+      encodedReferenceImageCount: imageVectors.length,
+      contextItemCount: anchors.length,
+      contextVectorCount: primaryMode === "hybrid-anchor" ? anchorHybridVectors.length : anchorVisualVectors.length,
+      artifactAvailable: Boolean(artifact),
+      modelAvailable,
+      embeddingCacheHits,
+      warnings: [...new Set(warnings)],
+    },
+  };
 }
 
 export type VisualPromptImage = { name?: string; dataUrl: string };

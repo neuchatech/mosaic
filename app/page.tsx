@@ -1060,6 +1060,49 @@ type MosaicRun = {
   updatedAt?: string;
   error?: string;
 };
+type MosaicResearchConstraint = {
+  field: string;
+  operator: "eq" | "neq" | "in" | "not_in" | "contains" | "not_contains" | "gte" | "lte" | "between" | "exists" | "missing";
+  value?: string | number | boolean | null | string[] | number[];
+  strength: "hard" | "soft";
+  weight?: number;
+  reason?: string;
+};
+type MosaicResearchResult = {
+  outcome: "completed" | "partial" | "needs_input" | "blocked";
+  title: string;
+  message: string;
+  itemIds: string[];
+  collectionIds: string[];
+  artifactIds: string[];
+  warnings: string[];
+  followUps: string[];
+};
+type MosaicResearchRun = {
+  id: string;
+  workspaceId: string;
+  status: "queued" | "running" | "succeeded" | "partial" | "needs_input" | "failed" | "blocked" | "cancelled" | "interrupted";
+  model: string;
+  request: {
+    prompt: string;
+    budget: { maxToolCalls: number };
+  };
+  result: MosaicResearchResult | null;
+  message: string;
+  error: string | null;
+  eventCount: number;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+};
+type MosaicResearchEvent = {
+  runId: string;
+  sequence: number;
+  type: "status" | "tool-call" | "tool-result" | "progress" | "message" | "result" | "error";
+  message: string;
+  data: Record<string, unknown>;
+  createdAt: string;
+};
 type MosaicEmbeddingJob = {
   status: "idle" | "running" | "succeeded" | "failed";
   processed: number;
@@ -1126,12 +1169,74 @@ const MOSAIC_ARTIFACTS_FALLBACK_KEY = "mosaic:artifacts:fallback:v1";
 const MOSAIC_LOCALE_KEY = "mosaic:locale:v1";
 const ATLAS_TERMINAL_DISCOVERY_STATUSES = new Set<AtlasDiscoveryStatus>(["succeeded", "failed", "blocked", "cancelled"]);
 const ATLAS_DISCOVERY_SOURCE_LABELS: Record<string, string> = { "zalando-ch": "Zalando CH", "aboutyou-ch": "About You CH", aliexpress: "AliExpress" };
+const MOSAIC_TERMINAL_RESEARCH_STATUSES = new Set<MosaicResearchRun["status"]>([
+  "succeeded", "partial", "needs_input", "failed", "blocked", "cancelled", "interrupted",
+]);
+const MOSAIC_RESUMABLE_RESEARCH_STATUSES = new Set<MosaicResearchRun["status"]>([
+  "failed", "blocked", "interrupted",
+]);
 
 function atlasWorkspaceApiUrl(path: string, workspaceId: string) {
   if (!workspaceId) return `${ATLAS_API}${path}`;
   const separator = path.includes("?") ? "&" : "?";
   return `${ATLAS_API}${path}${separator}workspaceId=${encodeURIComponent(workspaceId)}`;
 }
+
+function mosaicPromptUrls(prompt: string): string[] {
+  const matches = prompt.match(/https?:\/\/[^\s<>"']+/gi) ?? [];
+  return [...new Set(matches.map((value) => value.replace(/[),.;!?]+$/g, "")))]
+    .filter((value) => {
+      try { return new URL(value).protocol === "https:"; }
+      catch { return false; }
+    })
+    .slice(0, 24);
+}
+
+function mosaicResearchAsRun(run: MosaicResearchRun, latestMessage?: string): MosaicRun {
+  const terminal = MOSAIC_TERMINAL_RESEARCH_STATUSES.has(run.status);
+  const total = Math.max(1, run.request.budget.maxToolCalls);
+  return {
+    id: run.id,
+    kind: "research",
+    status: run.status,
+    title: latestMessage || run.result?.title || run.request.prompt.slice(0, 120) || "AI research",
+    message: latestMessage || run.message,
+    progress: terminal ? 1 : Math.min(.95, run.eventCount / total),
+    completed: Math.min(run.eventCount, total),
+    total,
+    source: run.model,
+    createdAt: run.createdAt,
+    updatedAt: run.updatedAt,
+    error: run.error ?? undefined,
+  };
+}
+
+const mosaicResearchUi: Record<MosaicLocale, {
+  preparing: string;
+  title: string;
+  stop: string;
+  resume: string;
+  queuedResume: string;
+  unavailable: string;
+  continues: string;
+  localError: string;
+  updatesUnavailable: string;
+  missingItems: string;
+}> = {
+  en: { preparing: "The agent is preparing its research…", title: "AI research", stop: "Stop", resume: "Resume", queuedResume: "Research queued to resume…", unavailable: "Research unavailable", continues: "Research continues in Activity", localError: "local error", updatesUnavailable: "live updates unavailable", missingItems: "The research completed, but its items are no longer in this workspace" },
+  fr: { preparing: "L’agent prépare sa recherche…", title: "Recherche IA", stop: "Arrêter", resume: "Reprendre", queuedResume: "Recherche remise en file…", unavailable: "Recherche indisponible", continues: "La recherche continue dans Activité", localError: "erreur locale", updatesUnavailable: "suivi en direct indisponible", missingItems: "La recherche est terminée, mais ses éléments ne sont plus dans cet espace" },
+  de: { preparing: "Der Agent bereitet die Recherche vor…", title: "KI-Recherche", stop: "Stoppen", resume: "Fortsetzen", queuedResume: "Recherche wird fortgesetzt…", unavailable: "Recherche nicht verfügbar", continues: "Die Recherche läuft unter Aktivität weiter", localError: "lokaler Fehler", updatesUnavailable: "Live-Aktualisierung nicht verfügbar", missingItems: "Die Recherche ist abgeschlossen, aber ihre Elemente sind nicht mehr in diesem Arbeitsbereich" },
+  it: { preparing: "L’agente sta preparando la ricerca…", title: "Ricerca IA", stop: "Interrompi", resume: "Riprendi", queuedResume: "Ricerca rimessa in coda…", unavailable: "Ricerca non disponibile", continues: "La ricerca continua in Attività", localError: "errore locale", updatesUnavailable: "aggiornamenti in tempo reale non disponibili", missingItems: "La ricerca è terminata, ma i suoi elementi non sono più in questo spazio" },
+  es: { preparing: "El agente está preparando la investigación…", title: "Investigación con IA", stop: "Detener", resume: "Reanudar", queuedResume: "Investigación puesta de nuevo en cola…", unavailable: "Investigación no disponible", continues: "La investigación continúa en Actividad", localError: "error local", updatesUnavailable: "actualizaciones en directo no disponibles", missingItems: "La investigación terminó, pero sus elementos ya no están en este espacio" },
+};
+
+const mosaicResearchStatusLabels: Record<MosaicLocale, Record<MosaicResearchRun["status"], string>> = {
+  en: { queued: "queued", running: "running", succeeded: "complete", partial: "partial", needs_input: "needs input", failed: "failed", blocked: "blocked", cancelled: "cancelled", interrupted: "interrupted" },
+  fr: { queued: "en attente", running: "en cours", succeeded: "terminée", partial: "partielle", needs_input: "précision requise", failed: "échouée", blocked: "bloquée", cancelled: "annulée", interrupted: "interrompue" },
+  de: { queued: "wartet", running: "läuft", succeeded: "abgeschlossen", partial: "teilweise", needs_input: "Eingabe nötig", failed: "fehlgeschlagen", blocked: "blockiert", cancelled: "abgebrochen", interrupted: "unterbrochen" },
+  it: { queued: "in coda", running: "in corso", succeeded: "completata", partial: "parziale", needs_input: "serve un input", failed: "non riuscita", blocked: "bloccata", cancelled: "annullata", interrupted: "interrotta" },
+  es: { queued: "en cola", running: "en curso", succeeded: "completada", partial: "parcial", needs_input: "requiere datos", failed: "fallida", blocked: "bloqueada", cancelled: "cancelada", interrupted: "interrumpida" },
+};
 
 const atlasSeedItems: AtlasItem[] = [];
 
@@ -1698,6 +1803,9 @@ export default function Home() {
   const [promptCollectionIds, setPromptCollectionIds] = useState<string[]>([]);
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantDropActive, setAssistantDropActive] = useState(false);
+  const [activeResearchRun, setActiveResearchRun] = useState<MosaicResearchRun | null>(null);
+  const [researchEvents, setResearchEvents] = useState<MosaicResearchEvent[]>([]);
+  const [researchFreshnessBoundary] = useState(() => new Date(Date.now() - 48 * 60 * 60 * 1_000).toISOString());
   const [xAxis, setXAxis] = useState<AxisField>("pca");
   const [yAxis, setYAxis] = useState<AxisField>("pca");
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -1761,6 +1869,7 @@ export default function Home() {
   const [onboardingVisible, setOnboardingVisible] = useState(false);
 
   const t = useCallback((key: MosaicMessageKey) => mosaicTranslate(locale, key), [locale]);
+  const researchText = mosaicResearchUi[locale];
 
   useEffect(() => {
     let stored: string | null = null;
@@ -1805,6 +1914,9 @@ export default function Home() {
   const atlasHoverTimerRef = useRef<number | null>(null);
   const atlasHoverCardRef = useRef<HTMLElement | null>(null);
   const discoveryMonitorRef = useRef(0);
+  const researchMonitorRef = useRef(0);
+  const monitorMosaicResearchRef = useRef<(run: MosaicResearchRun, operation: MosaicWorkspaceOperation) => Promise<void>>(async () => undefined);
+  const researchTextRef = useRef(researchText);
   const activeWorkspaceIdRef = useRef("");
   const workspaceEpochRef = useRef(0);
   const workspaceAbortRef = useRef(new AbortController());
@@ -1824,7 +1936,7 @@ export default function Home() {
   const resetMosaicWorkspaceState = useCallback((workspaceId: string) => {
     setScope("catalogue"); setDrawer(null); setPreviewItem(null); setCompareIds(new Set()); setOutfitDraftIds(new Set()); setUndoStack([]);
     setAiPrompt(""); setAiStatus(""); setAiItems(null); setCatalogItems([]); setPromptImages([]); setPromptProductIds([]); setPromptCollectionIds([]);
-    setAssistantBusy(false); setAssistantDropActive(false); setSavedViews([]); setViewName(""); setOutfitBoards([]); setOutfitName(""); setSelectedOutfitBoardId(null);
+    setAssistantBusy(false); setAssistantDropActive(false); setActiveResearchRun(null); setResearchEvents([]); setSavedViews([]); setViewName(""); setOutfitBoards([]); setOutfitName(""); setSelectedOutfitBoardId(null);
     setMosaicCollections([]); setCollectionName(""); setMosaicArtifacts([]); setArtifactName(""); setMosaicRuns([]); setSelectedIds(new Set()); setFocusedIndex(0);
     setRefreshJob(null); setRefreshRecovered(false); setDiscoveryPlan(null); setDiscoveryJobs([]); setDiscoveryRecovered(false); setDiscoveryBusy(false);
     setWorkspaceSchema(null); setCatalogStatus(workspaceId ? "loading…" : "no active workspace"); setSelectedCollectionId(null);
@@ -1832,6 +1944,7 @@ export default function Home() {
     setStockFilter("all"); setAttributeQuery(""); setMinPrice(""); setMaxPrice(""); setIncludeRejected(false); setDynamicFacetSelections({}); setDynamicNumberFilters({});
     setPersonalKind("owned"); setPersonalImages([]); setPersonalBusy(false); setArtifactBusy(false); setWorkspaceBusy(false); setCollectionsApiAvailable(false); setArtifactsApiAvailable(false);
     setComposerExpanded(false); setXAxis("pca"); setYAxis("pca"); setRenderWindow({ signature: "", limit: ATLAS_PAGE_SIZE }); setToast("");
+    researchMonitorRef.current += 1;
     atlasLayoutCache.clear();
     previewReturnFocusRef.current = null; drawerReturnFocusRef.current = null;
     const atlas = atlasElementRef.current;
@@ -1885,6 +1998,159 @@ export default function Home() {
     setArtifactsApiAvailable(true);
     return artifactsResult.value;
   }
+
+  function updateMosaicResearchActivity(run: MosaicResearchRun, latestMessage?: string) {
+    const activity = mosaicResearchAsRun(run, latestMessage);
+    setMosaicRuns((current) => [activity, ...current.filter((candidate) => candidate.id !== run.id)]);
+  }
+
+  async function applyMosaicResearchResult(run: MosaicResearchRun, operation: MosaicWorkspaceOperation) {
+    const [catalogResult, collectionsResult, schemaResult, artifactsResult, runsResult] = await Promise.allSettled([
+      fetch(atlasWorkspaceApiUrl("/products?limit=10000", operation.workspaceId), { signal: operation.signal }).then(async (response) => {
+        if (!response.ok) throw new Error("catalog unavailable");
+        return (await response.json() as AtlasApiProduct[]).map(atlasApiToItem);
+      }),
+      fetch(atlasWorkspaceApiUrl("/collections?limit=100", operation.workspaceId), { signal: operation.signal }).then(async (response) => {
+        if (!response.ok) throw new Error("collections unavailable");
+        const payload = await response.json() as MosaicCollection[] | { collections?: MosaicCollection[] };
+        return (Array.isArray(payload) ? payload : payload.collections ?? []).map(mosaicNormalizeCollection);
+      }),
+      fetch(atlasWorkspaceApiUrl("/workspaces/current/ui-schema", operation.workspaceId), { signal: operation.signal }).then(async (response) => {
+        if (!response.ok) throw new Error("schema unavailable");
+        return mosaicNormalizeWorkspaceSchema(await response.json() as Partial<MosaicWorkspaceSchema>);
+      }),
+      fetch(atlasWorkspaceApiUrl("/artifacts?limit=50", operation.workspaceId), { signal: operation.signal }).then(async (response) => {
+        if (!response.ok) throw new Error("artifacts unavailable");
+        const payload = await response.json() as MosaicArtifact[] | { artifacts?: MosaicArtifact[] };
+        return (Array.isArray(payload) ? payload : payload.artifacts ?? []).map(mosaicNormalizeArtifact);
+      }),
+      fetch(atlasWorkspaceApiUrl("/runs?limit=50", operation.workspaceId), { signal: operation.signal }).then(async (response) => {
+        if (!response.ok) throw new Error("runs unavailable");
+        const payload = await response.json() as MosaicRun[] | { runs?: MosaicRun[] };
+        return Array.isArray(payload) ? payload : payload.runs ?? [];
+      }),
+    ]);
+    if (!isWorkspaceOperationCurrent(operation)) return;
+    if (catalogResult.status === "fulfilled") {
+      const itemIds = new Set(run.result?.itemIds ?? []);
+      setCatalogItems(catalogResult.value);
+      setCatalogStatus("catalog ready");
+      setScope("catalogue");
+      setSelectedCollectionId(null);
+      setAiItems(itemIds.size ? catalogResult.value.filter((item) => itemIds.has(item.id)) : null);
+      if (itemIds.size && !catalogResult.value.some((item) => itemIds.has(item.id))) {
+        setToast(researchText.missingItems);
+      }
+    }
+    if (collectionsResult.status === "fulfilled") {
+      setMosaicCollections(collectionsResult.value);
+      setCollectionsApiAvailable(true);
+    }
+    if (schemaResult.status === "fulfilled") setWorkspaceSchema(schemaResult.value);
+    if (artifactsResult.status === "fulfilled") {
+      setMosaicArtifacts(artifactsResult.value);
+      setArtifactsApiAvailable(true);
+    }
+    if (runsResult.status === "fulfilled") setMosaicRuns(runsResult.value);
+  }
+
+  async function monitorMosaicResearch(initialRun: MosaicResearchRun, operation: MosaicWorkspaceOperation) {
+    if (!isWorkspaceOperationCurrent(operation)) return;
+    const monitorId = researchMonitorRef.current + 1;
+    researchMonitorRef.current = monitorId;
+    let run = initialRun;
+    let events: MosaicResearchEvent[] = [];
+    setActiveResearchRun(run);
+    setResearchEvents([]);
+    setAssistantBusy(!MOSAIC_TERMINAL_RESEARCH_STATUSES.has(run.status));
+    updateMosaicResearchActivity(run);
+    while (!MOSAIC_TERMINAL_RESEARCH_STATUSES.has(run.status)) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+      if (researchMonitorRef.current !== monitorId || !isWorkspaceOperationCurrent(operation)) return;
+      const lastSequence = events.at(-1)?.sequence ?? 0;
+      const path = `/research/runs/${encodeURIComponent(run.id)}?events=1&afterSequence=${lastSequence}`;
+      const response = await fetch(atlasWorkspaceApiUrl(path, operation.workspaceId), { signal: operation.signal });
+      const payload = await response.json() as { run?: MosaicResearchRun; events?: MosaicResearchEvent[]; error?: string };
+      if (!response.ok || !payload.run) throw new Error(payload.error ?? "research run unavailable");
+      if (researchMonitorRef.current !== monitorId || !isWorkspaceOperationCurrent(operation)) return;
+      run = payload.run;
+      if (payload.events?.length) {
+        const bySequence = new Map(events.map((event) => [event.sequence, event]));
+        for (const event of payload.events) bySequence.set(event.sequence, event);
+        events = [...bySequence.values()].sort((left, right) => left.sequence - right.sequence).slice(-80);
+        setResearchEvents(events);
+      }
+      const latestMessage = events.at(-1)?.message || run.message;
+      setActiveResearchRun(run);
+      setAiStatus(latestMessage);
+      updateMosaicResearchActivity(run, latestMessage);
+    }
+    if (researchMonitorRef.current !== monitorId || !isWorkspaceOperationCurrent(operation)) return;
+    setAssistantBusy(false);
+    setActiveResearchRun(run);
+    const resultMessage = run.result?.message || run.error || run.message;
+    setAiStatus(resultMessage);
+    updateMosaicResearchActivity(run, resultMessage);
+    if (run.result) await applyMosaicResearchResult(run, operation);
+  }
+
+  async function cancelMosaicResearch(id = activeResearchRun?.id) {
+    if (!id) return;
+    const operation = captureWorkspaceOperation();
+    try {
+      const response = await fetch(atlasWorkspaceApiUrl(`/research/runs/${encodeURIComponent(id)}/cancel`, operation.workspaceId), {
+        method: "POST", signal: operation.signal,
+      });
+      const payload = await response.json() as { run?: MosaicResearchRun; error?: string };
+      if (!response.ok || !payload.run) throw new Error(payload.error ?? "research could not be cancelled");
+      if (!isWorkspaceOperationCurrent(operation)) return;
+      researchMonitorRef.current += 1;
+      setActiveResearchRun(payload.run);
+      setAssistantBusy(false);
+      setAiStatus(payload.run.message);
+      updateMosaicResearchActivity(payload.run);
+    } catch (error) {
+      if (isWorkspaceOperationCurrent(operation) && !(error instanceof DOMException && error.name === "AbortError")) {
+        setToast(error instanceof Error ? error.message : "Research could not be cancelled");
+      }
+    }
+  }
+
+  async function resumeMosaicResearch(id = activeResearchRun?.id) {
+    if (!id || assistantBusy) return;
+    const operation = captureWorkspaceOperation();
+    setAssistantBusy(true);
+    setAiStatus(researchText.queuedResume);
+    try {
+      const response = await fetch(atlasWorkspaceApiUrl(`/research/runs/${encodeURIComponent(id)}/resume`, operation.workspaceId), {
+        method: "POST", signal: operation.signal,
+      });
+      const payload = await response.json() as { run?: MosaicResearchRun; error?: string };
+      if (!response.ok || !payload.run) throw new Error(payload.error ?? "research could not resume");
+      if (!isWorkspaceOperationCurrent(operation)) return;
+      await monitorMosaicResearch(payload.run, operation);
+    } catch (error) {
+      if (isWorkspaceOperationCurrent(operation) && !(error instanceof DOMException && error.name === "AbortError")) {
+        setAssistantBusy(false);
+        setAiStatus(`${researchText.unavailable} — ${error instanceof Error ? error.message : researchText.localError}`);
+      }
+    }
+  }
+
+  function prepareMosaicResearchFollowUp(followUp: string) {
+    const resultItemIds = activeResearchRun?.result?.itemIds ?? [];
+    const resultCollectionIds = activeResearchRun?.result?.collectionIds ?? [];
+    setPromptProductIds((current) => [...new Set([...current, ...resultItemIds])].slice(-24));
+    setPromptCollectionIds((current) => [...new Set([...current, ...resultCollectionIds])].slice(-12));
+    setAiPrompt(followUp);
+    setComposerExpanded(true);
+    requestAnimationFrame(() => composerInputRef.current?.focus());
+  }
+
+  useEffect(() => {
+    monitorMosaicResearchRef.current = monitorMosaicResearch;
+    researchTextRef.current = researchText;
+  });
 
   useEffect(() => {
     if (embeddingJob?.status !== "running") return;
@@ -2011,6 +2277,25 @@ export default function Home() {
         const payload = await response.json() as MosaicRun[] | { runs?: MosaicRun[] };
         if (!current()) return;
         setMosaicRuns(Array.isArray(payload) ? payload : payload.runs ?? []);
+      }),
+      fetch(scoped("/research/runs?limit=50"), { signal: controller.signal }).then(async (response) => {
+        if (!response.ok) return;
+        const payload = await response.json() as { runs?: MosaicResearchRun[] };
+        if (!current()) return;
+        const recoverable = (payload.runs ?? []).find((run) => (
+          ["queued", "running", "needs_input"].includes(run.status) || MOSAIC_RESUMABLE_RESEARCH_STATUSES.has(run.status)
+        ));
+        if (!recoverable) return;
+        setActiveResearchRun(recoverable);
+        setAiStatus(recoverable.result?.message || recoverable.error || recoverable.message);
+        updateMosaicResearchActivity(recoverable);
+        if (["queued", "running"].includes(recoverable.status)) void monitorMosaicResearchRef.current(recoverable, operation).catch((error) => {
+          if (current() && !(error instanceof DOMException && error.name === "AbortError")) {
+            setAssistantBusy(false);
+            const text = researchTextRef.current;
+            setAiStatus(`${text.continues} — ${error instanceof Error ? error.message : text.updatesUnavailable}`);
+          }
+        });
       }),
       fetch(scoped("/artifacts?limit=50"), { signal: controller.signal }).then(async (response) => {
         if (!response.ok) return;
@@ -2977,7 +3262,133 @@ export default function Home() {
     setAiStatus(`${job.message} · score > ${job.threshold.toFixed(2)}`);
   }
 
+  function activeMosaicResearchConstraints(freshnessBoundary: string): MosaicResearchConstraint[] {
+    const constraints: MosaicResearchConstraint[] = [];
+    const hard = (
+      field: string,
+      operator: MosaicResearchConstraint["operator"],
+      value: MosaicResearchConstraint["value"],
+      reason: string,
+    ) => constraints.push({ field, operator, ...(value === undefined ? {} : { value }), strength: "hard", weight: 1, reason });
+    if (!includeRejected) hard("decision", "neq", "rejected", "Excluded by the active board filters");
+    if (scope === "saved") hard("decision", "eq", "saved", "Active Favorites scope");
+    else if (scope === "reference") hard("kind", "eq", "reference", "Active References scope");
+    if (sourceFilter === "shop" || sourceFilter === "reference" || sourceFilter === "owned") {
+      hard("kind", "eq", sourceFilter, "Active source-kind filter");
+    } else if (sourceFilter !== "all") {
+      const requestedSource = sourceFilter.startsWith("source:") ? sourceFilter.slice(7) : sourceFilter;
+      const normalized = requestedSource.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
+      const source = [...new Set(catalogItems.map((item) => item.source).filter(Boolean))].find((candidate) => {
+        const candidateNormalized = candidate.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
+        return candidateNormalized === normalized || candidateNormalized.startsWith(normalized) || normalized.startsWith(candidateNormalized);
+      }) ?? requestedSource;
+      hard("source", "eq", source, "Active source filter");
+    }
+    if (activeFilter !== "Tout") hard("category", "eq", activeFilter, "Active category filter");
+    if (selectedSizes.length) hard("sizes", "in", selectedSizes, "Active variant filter");
+    if (fitFilter !== "all") hard("fit", "eq", fitFilter, "Active fit filter");
+    if (materialFilter !== "all") hard("searchText", "contains", materialFilter, "Active material filter");
+
+    const presetRange = priceFilter === "under50" ? { max: 49.99 }
+      : priceFilter === "50to100" ? { min: 50, max: 100 }
+        : priceFilter === "100to180" ? { min: 100, max: 180 }
+          : priceFilter === "over180" ? { min: 180.01 } : {};
+    const requestedMin = minPrice && Number.isFinite(Number(minPrice)) ? Number(minPrice) : undefined;
+    const requestedMax = maxPrice && Number.isFinite(Number(maxPrice)) ? Number(maxPrice) : undefined;
+    const effectiveMin = requestedMin === undefined ? presetRange.min : Math.max(requestedMin, presetRange.min ?? Number.NEGATIVE_INFINITY);
+    const effectiveMax = requestedMax === undefined ? presetRange.max : Math.min(requestedMax, presetRange.max ?? Number.POSITIVE_INFINITY);
+    if (effectiveMin !== undefined && Number.isFinite(effectiveMin)) hard("price", "gte", effectiveMin, "Active minimum price");
+    if (effectiveMax !== undefined && Number.isFinite(effectiveMax)) hard("price", "lte", effectiveMax, "Active maximum price");
+
+    if (stockFilter === "available") {
+      hard("available", "eq", true, "Active availability filter");
+      hard("stockStatus", "eq", "in_stock", "Active availability filter");
+    } else if (stockFilter === "fresh" || stockFilter === "stale") {
+      hard("stockCheckedAt", stockFilter === "fresh" ? "gte" : "lte", freshnessBoundary, "Active freshness filter");
+    }
+    for (const term of attributeQuery.trim().split(/\s+/).filter(Boolean)) {
+      hard("searchText", "contains", term, "Active attribute search");
+    }
+    for (const [field, selected] of Object.entries(dynamicFacetSelections)) {
+      if (!selected.length) continue;
+      const fieldType = workspaceSchema?.fields.find((definition) => definition.key === field)?.type;
+      if (fieldType === "text" || fieldType === "date") {
+        for (const value of selected) hard(field, "contains", value, "Active workspace field filter");
+      } else hard(field, "in", selected, "Active workspace facet");
+    }
+    for (const [field, range] of Object.entries(dynamicNumberFilters)) {
+      const lower = range.min === "" ? undefined : Number(range.min);
+      const upper = range.max === "" ? undefined : Number(range.max);
+      if (lower !== undefined && Number.isFinite(lower)) hard(field, "gte", lower, "Active workspace range");
+      if (upper !== undefined && Number.isFinite(upper)) hard(field, "lte", upper, "Active workspace range");
+    }
+    return constraints.slice(0, 80);
+  }
+
   async function askAtlasAssistant() {
+    if ((!aiPrompt.trim() && !promptImages.length && !promptProductIds.length && !promptCollectionIds.length) || assistantBusy) return;
+    const submittedPrompt = aiPrompt.trim();
+    const attachedProductIds = [...new Set([...promptProductIds, ...selectedIds])].slice(-160);
+    const attachedCollectionIds = [...new Set([
+      ...promptCollectionIds,
+      ...(selectedCollectionId ? [selectedCollectionId] : []),
+    ])].slice(-24);
+    const operation = captureWorkspaceOperation();
+    const budget = reasoningEffort === "low"
+      ? { maxDurationMs: 120_000, maxToolCalls: 32, maxItemsRead: 400, maxImageInspections: 18, maxAcquisitionJobs: 3, maxAcquiredItems: 120, maxCollectionWrites: 3 }
+      : { maxDurationMs: 180_000, maxToolCalls: 48, maxItemsRead: 600, maxImageInspections: 30, maxAcquisitionJobs: 4, maxAcquiredItems: 160, maxCollectionWrites: 4 };
+    setAssistantBusy(true);
+    setActiveResearchRun(null);
+    setResearchEvents([]);
+    setComposerExpanded(false);
+    setAiStatus(researchText.preparing);
+    let startedRun: MosaicResearchRun | null = null;
+    try {
+      const response = await fetch(`${ATLAS_API}/research/runs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          workspaceId: operation.workspaceId,
+          prompt: submittedPrompt,
+          itemIds: attachedProductIds,
+          collectionIds: attachedCollectionIds,
+          images: promptImages.map(({ name, dataUrl }) => ({ name, dataUrl })),
+          urls: mosaicPromptUrls(submittedPrompt),
+          constraints: activeMosaicResearchConstraints(researchFreshnessBoundary),
+          budget,
+          reasoningEffort,
+          locale,
+        }),
+        signal: operation.signal,
+      });
+      if (response.status === 404 || response.status === 501) {
+        setAssistantBusy(false);
+        await askAtlasAssistantLegacy();
+        return;
+      }
+      const payload = await response.json() as { run?: MosaicResearchRun; error?: string; issues?: unknown };
+      if (!response.ok || !payload.run) throw new Error(payload.error ?? "research unavailable");
+      if (!isWorkspaceOperationCurrent(operation)) return;
+      startedRun = payload.run;
+      setAiPrompt("");
+      setPromptImages([]);
+      setPromptProductIds([]);
+      setPromptCollectionIds([]);
+      setSelectedIds(new Set());
+      composerInputRef.current?.blur();
+      await monitorMosaicResearch(payload.run, operation);
+    } catch (error) {
+      if (isWorkspaceOperationCurrent(operation) && !(error instanceof DOMException && error.name === "AbortError")) {
+        setAssistantBusy(false);
+        setAiStatus(startedRun
+          ? `${researchText.continues} — ${error instanceof Error ? error.message : researchText.updatesUnavailable}`
+          : `${researchText.unavailable} — ${error instanceof Error ? error.message : researchText.localError}`);
+        void reloadMosaicArtifactsAndRuns(operation).catch(() => undefined);
+      }
+    }
+  }
+
+  async function askAtlasAssistantLegacy() {
     if ((!aiPrompt.trim() && !promptImages.length && !promptProductIds.length && !promptCollectionIds.length) || assistantBusy) return;
     const submittedPrompt = aiPrompt;
     const attachedProductIds = [...new Set([...promptProductIds, ...selectedIds])].slice(-40);
@@ -3499,7 +3910,7 @@ export default function Home() {
     + Object.values(dynamicNumberFilters).filter((range) => range.min || range.max).length;
   const onboardingExamples = [t("exampleFindSimilar"), t("exampleGroupBoard"), t("exampleCompareSelection")];
   const activityAttentionCount = (refreshJob && ["error", "blocked"].includes(refreshJob.status) ? 1 : 0)
-    + (discoveryHasFailures ? 1 : 0) + mosaicRuns.filter((run) => ["failed", "error", "blocked"].includes(run.status)).length;
+    + (discoveryHasFailures ? 1 : 0) + mosaicRuns.filter((run) => ["failed", "error", "blocked", "needs_input", "interrupted"].includes(run.status)).length;
   const advancedFilterCount = [Boolean(attributeQuery.trim()), Boolean(minPrice), Boolean(maxPrice), includeRejected,
     ...(showClothingFallback ? [priceFilter !== "all", fitFilter !== "all", materialFilter !== "all", stockFilter !== "all"] : []),
   ].filter(Boolean).length + dynamicFilterCount;
@@ -3507,6 +3918,12 @@ export default function Home() {
     + (showClothingFallback ? selectedSizes.length + (activeFilter !== "Tout" ? 1 : 0) : 0);
   const assistantHasContext = Boolean(aiPrompt.trim() || promptImages.length || promptProductIds.length || promptCollectionIds.length);
   const assistantOpen = composerExpanded || (catalogStatus !== "loading…" && products.length === 0);
+  const latestResearchEvent = researchEvents.at(-1);
+  const activeResearchTotal = Math.max(1, activeResearchRun?.request.budget.maxToolCalls ?? 1);
+  const activeResearchProgress = activeResearchRun
+    ? MOSAIC_TERMINAL_RESEARCH_STATUSES.has(activeResearchRun.status) ? 1 : Math.min(.95, activeResearchRun.eventCount / activeResearchTotal)
+    : 0;
+  const activeResearchCanResume = Boolean(activeResearchRun && MOSAIC_RESUMABLE_RESEARCH_STATUSES.has(activeResearchRun.status));
 
   return (
     <main className={`appShell atlasAppShell mosaicShell imageMode-${imageMode}`}>
@@ -3563,12 +3980,13 @@ export default function Home() {
               <button type="submit" className="mosaicSend" disabled={assistantBusy || (!aiPrompt.trim() && !promptImages.length && !promptProductIds.length && !promptCollectionIds.length)} aria-busy={assistantBusy}>{assistantBusy ? <LoaderCircle className="mosaicIcon mosaicSpinner" aria-hidden="true" /> : <ArrowUp className="mosaicIcon" aria-hidden="true" />}<span className="mosaicSrOnly">{t("ask")}</span></button>
             </div>
             {assistantOpen && onboardingVisible && <div className="mosaicOnboarding" role="note"><div><b>{t("tryRequest")}</b><span>{t("privacyIntro")}</span></div><div>{onboardingExamples.map((example) => <button type="button" key={example} onClick={() => { setAiPrompt(example); requestAnimationFrame(() => composerInputRef.current?.focus()); }}><Sparkles className="mosaicIcon" aria-hidden="true" /><span>{example}</span></button>)}</div><button type="button" className="mosaicOnboardingDismiss" onClick={() => { setOnboardingVisible(false); try { window.localStorage.setItem(MOSAIC_ONBOARDING_KEY, "1"); } catch { /* optional */ } }} aria-label={t("dismissExamples")}><X className="mosaicIcon" aria-hidden="true" /></button></div>}
-            {(promptImages.length > 0 || promptProducts.length > 0 || promptCollectionIds.length > 0 || aiStatus) && <div className="mosaicComposerContext">
+            {(promptImages.length > 0 || promptProducts.length > 0 || promptCollectionIds.length > 0 || aiStatus || activeResearchRun) && <div className="mosaicComposerContext">
               {promptProducts.map((item) => <span className="promptProduct" key={item.id}>{item.image ? <img src={item.image} alt="" /> : <i>✦</i>}<b>{item.name}</b><button type="button" onClick={() => setPromptProductIds((current) => current.filter((id) => id !== item.id))} aria-label={`Retirer ${item.name}`}>×</button></span>)}
               {promptImages.map((image) => <span className="promptImage" key={image.id}><img src={image.dataUrl} alt="" /><button type="button" onClick={() => setPromptImages((current) => current.filter((item) => item.id !== image.id))} aria-label={`Retirer ${image.name}`}>×</button></span>)}
               {promptCollectionIds.map((id) => { const collection = mosaicCollections.find((item) => item.id === id); return collection ? <span className="mosaicContextChip" key={id}>▣ {collection.name}<button type="button" onClick={() => setPromptCollectionIds((current) => current.filter((item) => item !== id))}>×</button></span> : null; })}
               {promptImages.length > 0 && <span className="segmented analysisMode"><button type="button" className={visualMode === "sequential" ? "active" : ""} onClick={() => setVisualMode("sequential")}>1×1</button><button type="button" className={visualMode === "sheet" ? "active" : ""} onClick={() => setVisualMode("sheet")}>{t("board")}</button></span>}
-              {aiStatus && <span className="aiStatus atlasAiStatus">{aiStatus}{aiItems && <button type="button" onClick={() => { setAiItems(null); setAiStatus(""); }}>×</button>}</span>}
+              {aiStatus && <span className={`aiStatus atlasAiStatus${activeResearchRun ? ` research-${activeResearchRun.status}` : ""}`}><b>{activeResearchRun ? "✦" : ""}</b>{aiStatus}{activeResearchRun && assistantBusy && <button type="button" onClick={() => void cancelMosaicResearch()}>{researchText.stop}</button>}{activeResearchCanResume && <button type="button" onClick={() => void resumeMosaicResearch()}>{researchText.resume}</button>}{!assistantBusy && (aiItems || activeResearchRun && MOSAIC_TERMINAL_RESEARCH_STATUSES.has(activeResearchRun.status)) && <button type="button" onClick={() => { setAiItems(null); setAiStatus(""); setActiveResearchRun(null); setResearchEvents([]); }}>×</button>}</span>}
+              {activeResearchRun?.result?.followUps.map((followUp) => <button type="button" className="mosaicResearchFollowUp" key={followUp} onClick={() => prepareMosaicResearchFollowUp(followUp)}>{followUp}</button>)}
             </div>}
             {assistantOpen && <div className="mosaicComposerFooter"><span>{t("constraints")}: {showClothingFallback ? `${selectedSizes.length ? selectedSizes.join(" / ") : t("allSizes")} · ` : ""}{sourceFilter === "all" ? t("allSources") : sourceFilter.replace("source:", "")}{dynamicFilterCount ? ` · ${dynamicFilterCount}` : ""}</span><label>{t("thinking")} <select value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as "low" | "medium")}><option value="low">{t("fast")}</option><option value="medium">{t("thorough")}</option></select></label></div>}
           </form>
@@ -3602,6 +4020,12 @@ export default function Home() {
           </div>
 
         <div className="operationStack">
+          {activeResearchRun && <div className={`mosaicResearchProgress status-${activeResearchRun.status}`} role="status" aria-live="polite">
+            <span className="mosaicResearchFill" style={{ width: `${Math.round(activeResearchProgress * 100)}%` }} />
+            <div><b>{activeResearchRun.result?.title || researchText.title}</b><small>{latestResearchEvent?.message || activeResearchRun.message}</small></div>
+            <em>{mosaicResearchStatusLabels[locale][activeResearchRun.status]}{!MOSAIC_TERMINAL_RESEARCH_STATUSES.has(activeResearchRun.status) ? ` · ${activeResearchRun.eventCount}/${activeResearchTotal}` : ""}</em>
+            <div>{assistantBusy && <button type="button" onClick={() => void cancelMosaicResearch()}>{researchText.stop}</button>}{activeResearchCanResume && <button type="button" onClick={() => void resumeMosaicResearch()}>{researchText.resume}</button>}</div>
+          </div>}
           {refreshJob && !(refreshJob.terminal ?? ATLAS_TERMINAL_REFRESH_STATUSES.includes(refreshJob.status)) && <div className="jobProgress" role="status"><span style={{ width: progressTotal ? `${Math.min(100, progressDone / progressTotal * 100)}%` : "18%" }} /><b>{refreshCooldownActive ? `Shop cooldown · automatic resume at ${refreshCooldownAt}` : refreshJob.message ?? "Verifying product pages"}</b><em>{progressTotal ? `${progressDone}/${progressTotal}` : refreshJob.status}</em><button onClick={() => void cancelAtlasRefresh()}>Stop</button></div>}
           {discoveryBusy && discoveryHasActive && <div className="discoveryProgress" role="status" aria-live="polite" title={discoveryPlan?.description}>
             <span className="discoveryFill" style={{ width: `${Math.round(discoveryProgress * 100)}%` }} />

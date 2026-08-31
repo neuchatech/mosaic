@@ -23,6 +23,7 @@ import {
   type ArtifactCreate,
   type RunView,
 } from "../src/domain/workspace";
+import { researchRequestObjectSchema } from "../src/domain/research";
 import { normalizeProduct } from "../collector/normalize";
 import type { DiscoveryIntent, RawProduct } from "../collector/types";
 import {
@@ -49,6 +50,7 @@ import { attachImageAspectRatios } from "./image-aspect-ratios";
 import { getVisualSelection, startVisualSelection } from "./visual-selection";
 import { findSimilarProducts } from "./similarity";
 import { visualConstraintsSchema } from "./visual-constraints";
+import { ResearchAgentService } from "./research-agent";
 
 const catalogItemFieldsSchema = z.object({
   name: z.string().trim().min(1).max(160),
@@ -127,6 +129,10 @@ const artifactRequestImagesSchema = z.array(z.object({
   name: z.string().trim().max(180).optional(),
   dataUrl: z.string().min(1),
 })).max(6).default([]);
+
+const researchApiRequestSchema = researchRequestObjectSchema.omit({ images: true }).extend({
+  images: artifactRequestImagesSchema,
+});
 
 function assistantFieldsWhere(
   fields: z.infer<typeof assistantFieldConstraintsSchema> | undefined,
@@ -500,13 +506,18 @@ export function createApp(
     sameDomainJitterMs: 4_000,
   }),
   discovery = createDiscoveryService(repository, acquisition),
-  options: { assistantPlanner?: typeof createAssistantPlanWithCodex } = {},
+  options: {
+    assistantPlanner?: typeof createAssistantPlanWithCodex;
+    researchAgent?: ResearchAgentService;
+  } = {},
 ) {
   const app = new Hono();
+  const research = options.researchAgent ?? new ResearchAgentService(repository);
   // A persisted size scan is expected to keep running in the background after
   // a local API reload. Only rate-limit cooldowns are restored automatically;
   // login/CAPTCHA blocks remain manual.
   queueMicrotask(() => acquisition.recoverLatestSizeEnrichment());
+  queueMicrotask(() => research.markInterruptedRuns());
   let interactiveDiscovery: DiscoveryService | null = null;
   const interactiveDiscoveryJobs = new Set<string>();
   let assistantDiscoveryListener: ((job: DiscoveryJobSnapshot) => void) | null = null;
@@ -1252,6 +1263,103 @@ export function createApp(
     return context.json({ deleted: true });
   });
 
+  app.post("/api/research/runs", async (context) => {
+    const parsed = researchApiRequestSchema.safeParse(await context.req.json());
+    if (!parsed.success) return context.json({ error: "invalid research request", issues: parsed.error.issues }, 400);
+    if (!parsed.data.prompt && !parsed.data.itemIds.length && !parsed.data.collectionIds.length
+      && !parsed.data.images.length && !parsed.data.urls.length) {
+      return context.json({ error: "a prompt or at least one input is required" }, 400);
+    }
+    if (!repository.getWorkspace(parsed.data.workspaceId)) return context.json({ error: "workspace not found" }, 404);
+    const mediaId = `research-${crypto.randomUUID()}`;
+    try {
+      const stored = parsed.data.images.length
+        ? await persistCatalogImages(mediaId, parsed.data.images.map((image) => image.dataUrl))
+        : [];
+      const run = research.start({
+        ...parsed.data,
+        images: stored.map((mediaPath, index) => ({
+          name: parsed.data.images[index]?.name || `reference-${index + 1}`,
+          mediaPath,
+          mimeType: mediaPath.endsWith(".png")
+            ? "image/png"
+            : mediaPath.endsWith(".webp") ? "image/webp" : "image/jpeg",
+        })),
+      });
+      return context.json({ run }, 202);
+    } catch (error) {
+      await deleteCatalogMedia(mediaId).catch(() => undefined);
+      return context.json({ error: error instanceof Error ? error.message : "research could not start" }, 409);
+    }
+  });
+
+  app.get("/api/research/runs", (context) => {
+    const workspaceId = context.req.query("workspaceId") ?? DEFAULT_CLOTHING_WORKSPACE_ID;
+    if (!repository.getWorkspace(workspaceId)) return context.json({ error: "workspace not found" }, 404);
+    return context.json({ runs: research.list(workspaceId, boundedLimit(context.req.query("limit"), 50, 200)) });
+  });
+
+  app.get("/api/research/runs/:id", (context) => {
+    const workspaceId = context.req.query("workspaceId") ?? DEFAULT_CLOTHING_WORKSPACE_ID;
+    const run = research.get(context.req.param("id"), workspaceId);
+    if (!run) return context.json({ error: "research run not found" }, 404);
+    const afterSequence = Number(context.req.query("afterSequence") ?? 0);
+    const includeEvents = context.req.query("events") === "1" || Number.isFinite(afterSequence) && afterSequence > 0;
+    return context.json({
+      run,
+      ...(includeEvents ? {
+        events: research.events(run.id, workspaceId, {
+          afterSequence: Number.isFinite(afterSequence) ? Math.max(0, Math.trunc(afterSequence)) : 0,
+          limit: boundedLimit(context.req.query("eventLimit"), 200, 1_000),
+        }),
+      } : {}),
+    });
+  });
+
+  app.get("/api/research/runs/:id/events", (context) => {
+    const workspaceId = context.req.query("workspaceId") ?? DEFAULT_CLOTHING_WORKSPACE_ID;
+    if (!research.get(context.req.param("id"), workspaceId)) return context.json({ error: "research run not found" }, 404);
+    const rawAfter = Number(context.req.query("afterSequence") ?? 0);
+    return context.json({
+      events: research.events(context.req.param("id"), workspaceId, {
+        afterSequence: Number.isFinite(rawAfter) ? Math.max(0, Math.trunc(rawAfter)) : 0,
+        limit: boundedLimit(context.req.query("limit"), 200, 1_000),
+      }),
+    });
+  });
+
+  app.post("/api/research/runs/:id/cancel", (context) => {
+    const workspaceId = context.req.query("workspaceId") ?? DEFAULT_CLOTHING_WORKSPACE_ID;
+    const run = research.cancel(context.req.param("id"), workspaceId);
+    return run ? context.json({ run }) : context.json({ error: "research run not found" }, 404);
+  });
+
+  app.post("/api/research/runs/:id/resume", (context) => {
+    const workspaceId = context.req.query("workspaceId") ?? DEFAULT_CLOTHING_WORKSPACE_ID;
+    try {
+      return context.json({ run: research.resume(context.req.param("id"), workspaceId) }, 202);
+    } catch (error) {
+      return context.json({ error: error instanceof Error ? error.message : "research run could not resume" }, 409);
+    }
+  });
+
+  app.delete("/api/research/runs/:id", async (context) => {
+    const workspaceId = context.req.query("workspaceId") ?? DEFAULT_CLOTHING_WORKSPACE_ID;
+    try {
+      const run = research.delete(context.req.param("id"), workspaceId);
+      if (!run) return context.json({ error: "research run not found" }, 404);
+      const mediaIds = new Set(run.request.images.flatMap((image) => {
+        const match = /^\/api\/media\/([^/?#]+)\/[1-6]\.(?:jpg|png|webp)$/.exec(image.mediaPath);
+        if (!match) return [];
+        try { return [decodeURIComponent(match[1]!)]; } catch { return []; }
+      }));
+      await Promise.all([...mediaIds].map((mediaId) => deleteCatalogMedia(mediaId).catch(() => undefined)));
+      return context.json({ deleted: true });
+    } catch (error) {
+      return context.json({ error: error instanceof Error ? error.message : "research run could not be deleted" }, 409);
+    }
+  });
+
   app.get("/api/runs", (context) => {
     const workspaceId = context.req.query("workspaceId") ?? DEFAULT_CLOTHING_WORKSPACE_ID;
     const limit = boundedLimit(context.req.query("limit"), 50, 200);
@@ -1280,6 +1388,35 @@ export function createApp(
         canResume: job.status === "queued" || job.status === "running" || job.status === "failed" || job.status === "blocked",
         plan: {}, metadata: {}, createdAt: job.createdAt, startedAt: job.startedAt ?? null,
         updatedAt: job.updatedAt, finishedAt: job.finishedAt ?? null,
+      });
+    }
+    for (const run of research.list(workspaceId, limit)) {
+      const terminal = ["succeeded", "partial", "needs_input", "failed", "blocked", "cancelled"].includes(run.status);
+      const completed = Math.min(run.eventCount, run.request.budget.maxToolCalls);
+      runs.push({
+        id: run.id,
+        workspaceId: run.workspaceId,
+        kind: "research",
+        title: (run.result?.title ?? run.request.prompt.slice(0, 120)) || "AI research",
+        source: run.model,
+        status: run.status,
+        progress: terminal ? 1 : Math.min(.95, completed / run.request.budget.maxToolCalls),
+        total: run.request.budget.maxToolCalls,
+        completed,
+        succeeded: run.result?.itemIds.length ?? 0,
+        failed: run.status === "failed" ? 1 : 0,
+        blocked: run.status === "blocked" ? 1 : 0,
+        cancelled: run.status === "cancelled" ? 1 : 0,
+        message: run.message,
+        error: run.error,
+        canCancel: run.status === "queued" || run.status === "running",
+        canResume: ["failed", "blocked", "interrupted", "needs_input"].includes(run.status),
+        plan: run.request as unknown as RunView["plan"],
+        metadata: (run.result as unknown as RunView["metadata"] | null) ?? {},
+        createdAt: run.createdAt,
+        startedAt: run.startedAt,
+        updatedAt: run.updatedAt,
+        finishedAt: run.finishedAt,
       });
     }
     for (const job of repository.listVisualJobs(limit, workspaceId)) {

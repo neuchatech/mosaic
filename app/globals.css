@@ -1096,6 +1096,48 @@ body:has(.mosaicSelectionTray) .toast { bottom: 74px; }
 .mosaicActivityList article > button { min-height: 31px; padding: 5px 8px; border: 1px solid #d8cfc3; border-radius: 6px; background: #f8f4ed; cursor: pointer; font-size: 8px; }
 .mosaicPrimaryNav b.attention { background: var(--mosaic-coral); color: white; }
 
+.mosaicResearchProgress {
+  position: relative; min-width: 0; min-height: 32px; display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 9px;
+  overflow: hidden; padding: 4px 7px; border: 1px solid #cfc9bd; border-radius: 8px;
+  background: #fffdf8ed; color: #565047; box-shadow: 0 6px 18px #30231712; backdrop-filter: blur(12px);
+}
+.mosaicResearchFill { position: absolute; z-index: 0; inset: 0 auto 0 0; background: #f0ded8; transition: width .35s ease; }
+.mosaicResearchProgress > div, .mosaicResearchProgress > em { position: relative; z-index: 1; }
+.mosaicResearchProgress > div:first-of-type { min-width: 0; display: grid; gap: 1px; }
+.mosaicResearchProgress > div:first-of-type b,
+.mosaicResearchProgress > div:first-of-type small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mosaicResearchProgress > div:first-of-type b { color: #493f37; font: 650 8px/1.2 Arial, sans-serif; }
+.mosaicResearchProgress > div:first-of-type small { color: #786f64; font-size: 7px; }
+.mosaicResearchProgress > em { color: #7b7166; font-size: 7px; font-style: normal; white-space: nowrap; }
+.mosaicResearchProgress > div:last-child { display: flex; gap: 4px; }
+.mosaicResearchProgress button,
+.mosaicResearchFollowUp,
+.mosaicRunFollowUps button {
+  min-height: 23px; padding: 3px 8px; border: 1px solid #d9c9c1; border-radius: 999px;
+  background: #fff9f5; color: #7d453c; cursor: pointer; font-size: 7px;
+}
+.mosaicResearchProgress.status-failed,
+.mosaicResearchProgress.status-blocked,
+.mosaicResearchProgress.status-needs_input,
+.mosaicResearchProgress.status-interrupted { border-color: #dfb7ac; background: #fff8f5ed; }
+.mosaicResearchProgress.status-succeeded .mosaicResearchFill { background: #dfe8d7; }
+.mosaicResearchProgress.status-cancelled .mosaicResearchFill { background: #e6e1d8; }
+.atlasAiStatus > b { margin-right: 4px; color: var(--mosaic-coral); }
+.atlasAiStatus.research-blocked,
+.atlasAiStatus.research-needs_input,
+.atlasAiStatus.research-failed,
+.atlasAiStatus.research-interrupted { color: #8a4337; }
+.mosaicResearchFollowUp { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mosaicRunFollowUps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.mosaicComposer.compact .mosaicResearchFollowUp { display: none; }
+
+@media (max-width: 760px) {
+  .mosaicResearchProgress { grid-template-columns: minmax(0, 1fr) auto; gap: 5px; }
+  .mosaicResearchProgress > em { display: none; }
+  .mosaicResearchProgress > div:last-child button { min-width: 54px; }
+}
+
 .mosaicPrivacyNote { display: flex; gap: 10px; padding: 11px; border: 1px solid #d8d7c5; border-radius: 9px; background: #f1f2e8; }
 .mosaicPrivacyNote > span { color: #697358; font-size: 20px; }
 .mosaicPrivacyNote div { display: grid; gap: 4px; }

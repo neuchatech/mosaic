@@ -280,6 +280,36 @@ CREATE TABLE IF NOT EXISTS artifacts (
   FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS research_runs (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  model TEXT NOT NULL,
+  reasoning_effort TEXT NOT NULL DEFAULT 'medium',
+  input_json TEXT NOT NULL DEFAULT '{}',
+  budget_json TEXT NOT NULL DEFAULT '{}',
+  manifest_json TEXT NOT NULL DEFAULT '{}',
+  result_json TEXT,
+  message TEXT NOT NULL DEFAULT '',
+  error TEXT,
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  updated_at TEXT NOT NULL,
+  finished_at TEXT,
+  FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS research_run_events (
+  run_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  message TEXT NOT NULL DEFAULT '',
+  data_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(run_id, sequence),
+  FOREIGN KEY(run_id) REFERENCES research_runs(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_products_source_category ON products(source, category);
 CREATE INDEX IF NOT EXISTS idx_products_decision ON products(decision);
 CREATE INDEX IF NOT EXISTS idx_products_price ON products(price);
@@ -300,3 +330,9 @@ CREATE INDEX IF NOT EXISTS idx_workspace_fields_facets ON workspace_field_defini
 CREATE INDEX IF NOT EXISTS idx_collections_workspace_updated ON collections(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_collection_items_order ON collection_items(collection_id, position, created_at);
 CREATE INDEX IF NOT EXISTS idx_artifacts_workspace_updated ON artifacts(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_research_runs_workspace_updated
+  ON research_runs(workspace_id, updated_at DESC, id);
+CREATE INDEX IF NOT EXISTS idx_research_runs_workspace_status
+  ON research_runs(workspace_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_research_run_events_sequence
+  ON research_run_events(run_id, sequence);

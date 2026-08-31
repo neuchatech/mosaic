@@ -1,4 +1,4 @@
-[mcp_servers.wardrobe_atlas]
+[mcp_servers.mosaic]
 command = "npm"
 args = ["run", "mcp"]
 startup_timeout_sec = 20

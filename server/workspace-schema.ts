@@ -20,6 +20,54 @@ function addColumnIfMissing(
   }
 }
 
+/**
+ * Research runs are generic Activity records, not a replacement for the
+ * specialized legacy job tables. Keeping this migration here also makes a
+ * directly constructed CatalogRepository safe when its database predates the
+ * research runtime.
+ */
+export function migrateResearchRunSchema(db: Database.Database): void {
+  if (!tableExists(db, "workspaces")) {
+    throw new Error("Workspace tables are missing; research runs require a workspace owner.");
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS research_runs (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      model TEXT NOT NULL,
+      reasoning_effort TEXT NOT NULL DEFAULT 'medium',
+      input_json TEXT NOT NULL DEFAULT '{}',
+      budget_json TEXT NOT NULL DEFAULT '{}',
+      manifest_json TEXT NOT NULL DEFAULT '{}',
+      result_json TEXT,
+      message TEXT NOT NULL DEFAULT '',
+      error TEXT,
+      created_at TEXT NOT NULL,
+      started_at TEXT,
+      updated_at TEXT NOT NULL,
+      finished_at TEXT,
+      FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS research_run_events (
+      run_id TEXT NOT NULL,
+      sequence INTEGER NOT NULL,
+      event_type TEXT NOT NULL,
+      message TEXT NOT NULL DEFAULT '',
+      data_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      PRIMARY KEY(run_id, sequence),
+      FOREIGN KEY(run_id) REFERENCES research_runs(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_research_runs_workspace_updated
+      ON research_runs(workspace_id, updated_at DESC, id);
+    CREATE INDEX IF NOT EXISTS idx_research_runs_workspace_status
+      ON research_runs(workspace_id, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_research_run_events_sequence
+      ON research_run_events(run_id, sequence);
+  `);
+}
+
 function hasLegacyGlobalProductIdentity(db: Database.Database): boolean {
   const row = db.prepare(`
     SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'products'
@@ -263,6 +311,7 @@ export function migrateWorkspaceSchema(db: Database.Database): void {
     now,
     now,
   );
+  migrateResearchRunSchema(db);
 
   addColumnIfMissing(
     db,

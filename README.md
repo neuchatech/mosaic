@@ -8,14 +8,14 @@
 
 # Neuchatech MosAIc
 
-MosAIc turns product pages, images, and ideas into a compact visual map. Ask for a direction, paste URLs, drop a moodboard, or select existing items: the assistant plans bounded local operations while the board keeps every result easy to explore.
+MosAIc turns pages, images, objects, and ideas into a compact visual map. Ask for an outcome, paste URLs, drop a moodboard, or select existing items: the research agent chooses a bounded strategy while the board keeps every result easy to explore.
 
 It works especially well for visually driven research—clothing, furniture, televisions, cameras, references—but its workspace schema and filters adapt to the data you import.
 
 ## Highlights
 
 - Spatial and grid views with smooth pan, zoom, viewport culling, minimap, and local CLIP-based visual similarity.
-- One multimodal assistant for imports, supported-shop discovery, enrichment, filtering, comparison, collections, and local Studio drafts.
+- One multimodal research agent for imports, source discovery, enrichment, filtering, comparison, visual retrieval, collections, and local Studio drafts.
 - Dynamic workspace fields and facets instead of a fixed clothing-only schema.
 - Reusable collections, favorites, decisions with undo, saved views, comparisons, and local artifacts.
 - SQLite persistence with strict workspace isolation and durable background jobs.
@@ -50,11 +50,26 @@ MosAIc's deterministic board, filters, imports, and local services work without 
 1. Install and sign in to the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli).
 2. Open this repository as a trusted Codex project.
 3. Start a new Codex task from the repository root.
-4. Run `/mcp` and confirm that the project-scoped `wardrobe_atlas` server is connected.
+4. Run `/mcp` and confirm that the project-scoped `mosaic` server is connected.
 
-The repository includes `.codex/config.toml` and the project skill `.agents/skills/mosaic-acquisition/SKILL.md`. The skill helps Codex choose between a supported adapter, structured public-page import, and an optional visible Chrome workflow.
+The repository includes `.codex/config.toml` and the project skill `.agents/skills/mosaic-research/SKILL.md`. The skill lets a foreground Codex task use MosAIc as a general visual research workspace, while the app's assistant runs the same scoped MCP tools in a durable background run.
 
-For Chrome-assisted extraction, install and authorize the Chrome/Computer Use capability in the Codex desktop app, then start a fresh task. Browser access is explicit, visible, read-only, and never silently granted to MosAIc's background agent. See [Chrome-assisted acquisition](docs/CHROME_ACQUISITION.md) and the official [Codex app documentation](https://learn.chatgpt.com/docs/app).
+For Chrome-assisted extraction, install and authorize a browser in the ChatGPT desktop app, then start a fresh Work or Codex task and `@`-mention it. Browser access is explicit and never silently inherited by MosAIc's background agent: Codex CLI and IDE do not have the built-in browser. See [Chrome-assisted acquisition](docs/CHROME_ACQUISITION.md) and the official [Codex browser documentation](https://developers.openai.com/codex/app/browser).
+
+## Agentic research
+
+The assistant creates a durable, workspace-scoped research run. Luna sees the
+workspace's real fields, facets, selected items, collections, available source
+capabilities, hard constraints, soft preferences, and a resource budget. It can
+choose and revise its own combination of structured queries, visual retrieval,
+representative samples, source imports, enrichment, inspection, collections,
+and annotations. CLIP is a fast retrieval signal, not a fixed candidate list or
+the final judge.
+
+Runs stream compact events into **Activity**, survive partial failures, and are
+explicitly resumable after a restart. The app enforces workspace isolation,
+hard constraints, safe media access, and budgets at the tool boundary. See
+[Agentic research architecture](docs/AGENTIC_RESEARCH.md).
 
 ## Visual similarity
 
@@ -119,6 +134,7 @@ npm test
 
 - [Product contract](docs/V1_PRODUCT.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Agentic research architecture](docs/AGENTIC_RESEARCH.md)
 - [Filter DSL](docs/FILTERS.md)
 - [Chrome-assisted acquisition](docs/CHROME_ACQUISITION.md)
 - [Generative Studio plan](docs/GENERATIVE_TRYON.md)

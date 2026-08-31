@@ -44,6 +44,18 @@ import {
   type WorkspaceSchemaView,
   type WorkspaceUpdate,
 } from "../src/domain/workspace";
+import {
+  researchRunEventSchema,
+  researchRunSchema,
+  researchRunStatusSchema,
+  type ResearchAgentResult,
+  type ResearchRequest,
+  type ResearchRun,
+  type ResearchRunEvent,
+  type ResearchRunEventType,
+  type ResearchRunStatus,
+  type ResearchWorkspaceManifest,
+} from "../src/domain/research";
 import { stableProductId, stableWorkspaceProductId } from "../src/domain/ids";
 import { getDatabase } from "./database";
 import {
@@ -186,6 +198,37 @@ export type WorkspaceSchemaInferenceOptions = {
   maxFacetRatio?: number;
 };
 
+export type ResearchRunCreate = {
+  id?: string;
+  workspaceId: string;
+  model: string;
+  reasoningEffort: ResearchRun["reasoningEffort"];
+  request: ResearchRequest;
+  manifest: ResearchWorkspaceManifest;
+  message?: string;
+};
+
+export type ResearchRunUpdate = {
+  status?: ResearchRunStatus;
+  result?: ResearchAgentResult | null;
+  message?: string;
+  error?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+};
+
+export type ResearchRunEventAppend = {
+  runId: string;
+  type: ResearchRunEventType;
+  message?: string;
+  data?: ResearchRunEvent["data"];
+};
+
+export type ResearchRunEventListOptions = {
+  afterSequence?: number;
+  limit?: number;
+};
+
 function parseJson<T>(value: unknown, fallback: T): T {
   try {
     return JSON.parse(String(value)) as T;
@@ -281,6 +324,45 @@ function rowToArtifact(row: Record<string, unknown>): Artifact {
     updatedAt: row.updated_at,
     finishedAt: row.finished_at ?? null,
   });
+}
+
+function rowToResearchRun(row: Record<string, unknown>): ResearchRun {
+  const request = parseJson<Record<string, unknown>>(row.input_json, {});
+  const storedBudget = parseJson(row.budget_json, request.budget ?? {});
+  return researchRunSchema.parse({
+    id: row.id,
+    workspaceId: row.workspace_id,
+    status: row.status,
+    model: row.model,
+    reasoningEffort: row.reasoning_effort,
+    request: { ...request, budget: storedBudget },
+    manifest: parseJson(row.manifest_json, {}),
+    result: row.result_json === null || row.result_json === undefined
+      ? null
+      : parseJson(row.result_json, null),
+    message: row.message,
+    error: row.error ?? null,
+    eventCount: Number(row.event_count ?? 0),
+    createdAt: row.created_at,
+    startedAt: row.started_at ?? null,
+    updatedAt: row.updated_at,
+    finishedAt: row.finished_at ?? null,
+  });
+}
+
+function rowToResearchRunEvent(row: Record<string, unknown>): ResearchRunEvent {
+  return researchRunEventSchema.parse({
+    runId: row.run_id,
+    sequence: row.sequence,
+    type: row.event_type,
+    message: row.message,
+    data: parseJson(row.data_json, {}),
+    createdAt: row.created_at,
+  });
+}
+
+function isTerminalResearchRunStatus(status: ResearchRunStatus): boolean {
+  return status !== "queued" && status !== "running";
 }
 
 function valueAtField(product: Product, key: string): unknown {
@@ -1108,6 +1190,209 @@ export class CatalogRepository {
         invalidCollections.length ? `collections: ${invalidCollections.join(", ")}` : "",
       ].filter(Boolean).join("; "));
     }
+  }
+
+  createResearchRun(input: ResearchRunCreate): ResearchRun {
+    if (!this.getWorkspace(input.workspaceId)) {
+      throw new Error(`Unknown workspace: ${input.workspaceId}`);
+    }
+    if (input.request.workspaceId !== input.workspaceId) {
+      throw new Error("Research request and run must belong to the same workspace.");
+    }
+    if (input.manifest.workspace.id !== input.workspaceId) {
+      throw new Error("Research manifest and run must belong to the same workspace.");
+    }
+    if (input.request.reasoningEffort !== input.reasoningEffort) {
+      throw new Error("Research request and run must use the same reasoning effort.");
+    }
+    const id = input.id ?? `research-${randomUUID()}`;
+    const exists = this.db.prepare("SELECT 1 FROM research_runs WHERE id = ?").get(id);
+    if (exists) throw new Error(`Research run already exists: ${id}`);
+    const now = new Date().toISOString();
+    const run = researchRunSchema.parse({
+      id,
+      workspaceId: input.workspaceId,
+      status: "queued",
+      model: input.model,
+      reasoningEffort: input.reasoningEffort,
+      request: input.request,
+      manifest: input.manifest,
+      result: null,
+      message: input.message ?? "",
+      error: null,
+      eventCount: 0,
+      createdAt: now,
+      startedAt: null,
+      updatedAt: now,
+      finishedAt: null,
+    });
+    this.db.prepare(`
+      INSERT INTO research_runs (
+        id, workspace_id, status, model, reasoning_effort, input_json,
+        budget_json, manifest_json, result_json, message, error, created_at,
+        started_at, updated_at, finished_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, NULL, ?, NULL)
+    `).run(
+      run.id,
+      run.workspaceId,
+      run.status,
+      run.model,
+      run.reasoningEffort,
+      JSON.stringify(run.request),
+      JSON.stringify(run.request.budget),
+      JSON.stringify(run.manifest),
+      run.message,
+      run.createdAt,
+      run.updatedAt,
+    );
+    return this.getResearchRun(run.id, run.workspaceId)!;
+  }
+
+  getResearchRun(id: string, workspaceId?: string): ResearchRun | null {
+    const row = this.db.prepare(`
+      SELECT r.*,
+        (SELECT COUNT(*) FROM research_run_events event WHERE event.run_id = r.id) AS event_count
+      FROM research_runs r
+      WHERE r.id = ? AND (? IS NULL OR r.workspace_id = ?)
+    `).get(id, workspaceId ?? null, workspaceId ?? null) as Record<string, unknown> | undefined;
+    return row ? rowToResearchRun(row) : null;
+  }
+
+  listResearchRuns(workspaceId: string, limit = 50): ResearchRun[] {
+    const bounded = Math.min(Math.max(Math.trunc(limit), 1), 500);
+    const rows = this.db.prepare(`
+      SELECT r.*,
+        (SELECT COUNT(*) FROM research_run_events event WHERE event.run_id = r.id) AS event_count
+      FROM research_runs r WHERE r.workspace_id = ?
+      ORDER BY r.updated_at DESC, r.id LIMIT ?
+    `).all(workspaceId, bounded) as Record<string, unknown>[];
+    return rows.map(rowToResearchRun);
+  }
+
+  updateResearchRun(
+    id: string,
+    patch: ResearchRunUpdate,
+    workspaceId?: string,
+  ): ResearchRun | null {
+    const current = this.getResearchRun(id, workspaceId);
+    if (!current) return null;
+    const supplied = (key: keyof ResearchRunUpdate): boolean => (
+      Object.prototype.hasOwnProperty.call(patch, key)
+    );
+    const status = supplied("status") && patch.status !== undefined
+      ? researchRunStatusSchema.parse(patch.status)
+      : current.status;
+    const now = new Date().toISOString();
+    const startedAt = supplied("startedAt")
+      ? (patch.startedAt ?? null)
+      : status === "running"
+        ? (current.startedAt ?? now)
+        : current.startedAt;
+    const finishedAt = supplied("finishedAt")
+      ? (patch.finishedAt ?? null)
+      : isTerminalResearchRunStatus(status)
+        ? (current.finishedAt ?? now)
+        : null;
+    const next = researchRunSchema.parse({
+      ...current,
+      status,
+      result: supplied("result") ? (patch.result ?? null) : current.result,
+      message: supplied("message") ? (patch.message ?? "") : current.message,
+      error: supplied("error") ? (patch.error ?? null) : current.error,
+      startedAt,
+      updatedAt: now,
+      finishedAt,
+    });
+    this.db.prepare(`
+      UPDATE research_runs SET status = ?, result_json = ?, message = ?, error = ?,
+        started_at = ?, updated_at = ?, finished_at = ?
+      WHERE id = ? AND workspace_id = ?
+    `).run(
+      next.status,
+      next.result === null ? null : JSON.stringify(next.result),
+      next.message,
+      next.error,
+      next.startedAt,
+      next.updatedAt,
+      next.finishedAt,
+      id,
+      current.workspaceId,
+    );
+    return this.getResearchRun(id, current.workspaceId);
+  }
+
+  setResearchRunStatus(
+    id: string,
+    status: ResearchRunStatus,
+    patch: Omit<ResearchRunUpdate, "status"> = {},
+    workspaceId?: string,
+  ): ResearchRun | null {
+    return this.updateResearchRun(id, { ...patch, status }, workspaceId);
+  }
+
+  deleteResearchRun(id: string, workspaceId?: string): boolean {
+    const run = this.getResearchRun(id, workspaceId);
+    if (!run) return false;
+    return this.db.prepare("DELETE FROM research_runs WHERE id = ? AND workspace_id = ?")
+      .run(id, run.workspaceId).changes > 0;
+  }
+
+  appendResearchRunEvent(
+    input: ResearchRunEventAppend,
+    workspaceId?: string,
+  ): ResearchRunEvent {
+    const run = this.getResearchRun(input.runId, workspaceId);
+    if (!run) throw new Error(`Unknown research run: ${input.runId}`);
+    const append = this.db.transaction(() => {
+      const row = this.db.prepare(`
+        SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence
+        FROM research_run_events WHERE run_id = ?
+      `).get(run.id) as { sequence: number };
+      const now = new Date().toISOString();
+      const event = researchRunEventSchema.parse({
+        runId: run.id,
+        sequence: Number(row.sequence),
+        type: input.type,
+        message: input.message ?? "",
+        data: input.data ?? {},
+        createdAt: now,
+      });
+      this.db.prepare(`
+        INSERT INTO research_run_events (
+          run_id, sequence, event_type, message, data_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        event.runId,
+        event.sequence,
+        event.type,
+        event.message,
+        JSON.stringify(event.data),
+        event.createdAt,
+      );
+      this.db.prepare(`
+        UPDATE research_runs SET updated_at = ? WHERE id = ? AND workspace_id = ?
+      `).run(now, run.id, run.workspaceId);
+      return event;
+    });
+    // Acquire the SQLite writer lock before reading MAX(sequence), otherwise
+    // two local processes could compute the same next event number.
+    return append.immediate();
+  }
+
+  listResearchRunEvents(
+    runId: string,
+    options: ResearchRunEventListOptions = {},
+    workspaceId?: string,
+  ): ResearchRunEvent[] {
+    const run = this.getResearchRun(runId, workspaceId);
+    if (!run) return [];
+    const afterSequence = Math.max(0, Math.trunc(options.afterSequence ?? 0));
+    const limit = Math.min(Math.max(Math.trunc(options.limit ?? 200), 1), 1_000);
+    const rows = this.db.prepare(`
+      SELECT * FROM research_run_events
+      WHERE run_id = ? AND sequence > ? ORDER BY sequence LIMIT ?
+    `).all(run.id, afterSequence, limit) as Record<string, unknown>[];
+    return rows.map(rowToResearchRunEvent);
   }
 
   listProducts(options: {
