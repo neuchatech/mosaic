@@ -14,6 +14,7 @@ export type OpenRouterCredentials = {
   apiKey: string | null;
   model: string | null;
   connectedAt: string | null;
+  supportsImages: boolean | null;
 };
 
 export type OpenRouterModel = {
@@ -23,6 +24,8 @@ export type OpenRouterModel = {
   promptPrice: string | null;
   completionPrice: string | null;
   supportedParameters: string[];
+  inputModalities: string[];
+  supportsImages: boolean;
 };
 
 type StoredOpenRouterCredentials = {
@@ -30,6 +33,7 @@ type StoredOpenRouterCredentials = {
   apiKey: string;
   model: string | null;
   connectedAt: string;
+  supportsImages?: boolean | null;
 };
 
 type PendingFlow = {
@@ -75,7 +79,7 @@ export class OpenRouterCredentialStore {
   }
 
   private load(): OpenRouterCredentials {
-    if (!existsSync(this.filePath)) return { apiKey: null, model: null, connectedAt: null };
+    if (!existsSync(this.filePath)) return { apiKey: null, model: null, connectedAt: null, supportsImages: null };
     try {
       const parsed = JSON.parse(readFileSync(this.filePath, "utf8")) as Partial<StoredOpenRouterCredentials>;
       if (parsed.version !== 1 || typeof parsed.apiKey !== "string" || !parsed.apiKey.trim()) throw new Error();
@@ -83,9 +87,10 @@ export class OpenRouterCredentialStore {
         apiKey: parsed.apiKey.trim(),
         model: safeModelId(parsed.model),
         connectedAt: typeof parsed.connectedAt === "string" ? parsed.connectedAt : null,
+        supportsImages: typeof parsed.supportsImages === "boolean" ? parsed.supportsImages : null,
       };
     } catch {
-      return { apiKey: null, model: null, connectedAt: null };
+      return { apiKey: null, model: null, connectedAt: null, supportsImages: null };
     }
   }
 
@@ -98,6 +103,7 @@ export class OpenRouterCredentialStore {
       apiKey: next.apiKey.trim(),
       model: safeModelId(next.model),
       connectedAt: next.connectedAt ?? new Date().toISOString(),
+      supportsImages: typeof next.supportsImages === "boolean" ? next.supportsImages : null,
     };
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await chmod(directory, 0o700).catch(() => undefined);
@@ -106,14 +112,19 @@ export class OpenRouterCredentialStore {
       await chmod(temporary, 0o600);
       await rename(temporary, this.filePath);
       await chmod(this.filePath, 0o600);
-      this.value = { apiKey: wire.apiKey, model: wire.model, connectedAt: wire.connectedAt };
+      this.value = {
+        apiKey: wire.apiKey,
+        model: wire.model,
+        connectedAt: wire.connectedAt,
+        supportsImages: wire.supportsImages ?? null,
+      };
     } finally {
       await rm(temporary, { force: true }).catch(() => undefined);
     }
   }
 
   async clear(): Promise<void> {
-    this.value = { apiKey: null, model: null, connectedAt: null };
+    this.value = { apiKey: null, model: null, connectedAt: null, supportsImages: null };
     await rm(this.filePath, { force: true });
   }
 }
@@ -195,7 +206,12 @@ export class OpenRouterConnectionService {
       throw new Error(message);
     }
     const current = this.store.snapshot();
-    await this.store.save({ apiKey: payload.key, model: current.model, connectedAt: this.now().toISOString() });
+    await this.store.save({
+      apiKey: payload.key,
+      model: current.model,
+      connectedAt: this.now().toISOString(),
+      supportsImages: current.supportsImages,
+    });
     this.modelCache = null;
   }
 
@@ -229,6 +245,12 @@ export class OpenRouterConnectionService {
         : [];
       if (!id || !supported.includes("tools")) return [];
       const pricing = record.pricing && typeof record.pricing === "object" ? record.pricing as Record<string, unknown> : {};
+      const architecture = record.architecture && typeof record.architecture === "object"
+        ? record.architecture as Record<string, unknown>
+        : {};
+      const inputModalities = Array.isArray(architecture.input_modalities)
+        ? architecture.input_modalities.filter((item): item is string => typeof item === "string")
+        : [];
       return [{
         id,
         name: typeof record.name === "string" && record.name.trim() ? record.name.trim() : id,
@@ -236,8 +258,16 @@ export class OpenRouterConnectionService {
         promptPrice: typeof pricing.prompt === "string" ? pricing.prompt : null,
         completionPrice: typeof pricing.completion === "string" ? pricing.completion : null,
         supportedParameters: supported,
+        inputModalities,
+        supportsImages: inputModalities.includes("image"),
       }];
     });
+    const current = this.store.snapshot();
+    const currentModel = models.find((model) => model.id === current.model);
+    if (!this.environment.OPENROUTER_API_KEY?.trim() && current.apiKey && currentModel
+      && current.supportsImages !== currentModel.supportsImages) {
+      await this.store.save({ ...current, supportsImages: currentModel.supportsImages });
+    }
     this.modelCache = { key: keyHash, expiresAt: this.now().getTime() + MODEL_CACHE_MS, models };
     return models;
   }
@@ -246,14 +276,20 @@ export class OpenRouterConnectionService {
     const id = safeModelId(model);
     if (!id) throw new Error("Invalid OpenRouter model id.");
     const models = await this.models();
-    if (!models.some((candidate) => candidate.id === id)) throw new Error("Choose an OpenRouter model that supports tools.");
+    const selected = models.find((candidate) => candidate.id === id);
+    if (!selected) throw new Error("Choose an OpenRouter model that supports tools.");
     if (this.environment.OPENROUTER_API_KEY?.trim() || this.environment.MOSAIC_OPENROUTER_MODEL?.trim()) {
       throw new Error("OpenRouter is managed by environment variables. Set MOSAIC_OPENROUTER_MODEL and restart MosAIc.");
     }
     const current = this.store.snapshot();
     const key = current.apiKey;
     if (!key) throw new Error("OpenRouter is not connected.");
-    await this.store.save({ apiKey: key, model: id, connectedAt: current.connectedAt ?? this.now().toISOString() });
+    await this.store.save({
+      apiKey: key,
+      model: id,
+      connectedAt: current.connectedAt ?? this.now().toISOString(),
+      supportsImages: selected.supportsImages,
+    });
   }
 
   async disconnect(): Promise<void> {

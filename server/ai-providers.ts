@@ -11,6 +11,7 @@ import {
   type ResearchRunEvent,
 } from "../src/domain/research";
 import { codexExecutable } from "./codex-bridge";
+import { catalogMediaType, readCatalogMedia } from "./media";
 
 export type AiProviderId = Exclude<ResearchAiProvider, "auto">;
 
@@ -37,10 +38,15 @@ export type ResolvedAiProvider = {
   baseUrl?: string;
   apiKey?: string;
   headers?: Record<string, string>;
+  supportsImages?: boolean;
 };
 
 type ProviderEnvironment = Record<string, string | undefined>;
-export type AiProviderCredentials = { apiKey: string | null; model: string | null };
+export type AiProviderCredentials = {
+  apiKey: string | null;
+  model: string | null;
+  supportsImages?: boolean | null;
+};
 
 const LOCAL_DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -100,7 +106,7 @@ export function aiProviderCatalog(
       detail: "LM Studio, Ollama, vLLM, or another OpenAI-compatible server",
       connected: Boolean(envModel(environment, "local")),
       managedBy: envModel(environment, "local") ? "environment" : "none",
-      imageWorkflow: "local-clip",
+      imageWorkflow: environment.MOSAIC_LOCAL_AI_VISION === "1" ? "native" : "local-clip",
     },
     {
       id: "openrouter",
@@ -111,7 +117,9 @@ export function aiProviderCatalog(
       detail: "OpenRouter model with MosAIc's local tools",
       connected: Boolean(environment.OPENROUTER_API_KEY?.trim() || openRouter.apiKey),
       managedBy: environment.OPENROUTER_API_KEY?.trim() ? "environment" : openRouter.apiKey ? "local" : "none",
-      imageWorkflow: "local-clip",
+      imageWorkflow: environment.MOSAIC_OPENROUTER_VISION === "1" || openRouter.supportsImages === true
+        ? "native"
+        : "local-clip",
     },
   ];
   const requested = providers.find((provider) => provider.id === requestedDefault && provider.configured);
@@ -131,13 +139,14 @@ export function resolveAiProvider(
   if (!view?.configured) throw new Error(`${view?.label ?? id} is not configured.`);
   const model = modelOverride?.trim() || view.model;
   if (!model) throw new Error(`${view.label} needs a model.`);
-  if (id === "codex") return { id, model };
+  if (id === "codex") return { id, model, supportsImages: true };
   if (id === "local") {
     return {
       id,
       model,
       baseUrl: normalizedBaseUrl(environment.MOSAIC_LOCAL_AI_BASE_URL?.trim() || LOCAL_DEFAULT_BASE_URL, id),
       apiKey: environment.MOSAIC_LOCAL_AI_API_KEY?.trim() || undefined,
+      supportsImages: environment.MOSAIC_LOCAL_AI_VISION === "1",
     };
   }
   return {
@@ -151,6 +160,7 @@ export function resolveAiProvider(
         : {}),
       "X-OpenRouter-Title": environment.MOSAIC_OPENROUTER_APP_NAME?.trim() || "Neuchatech MosAIc",
     },
+    supportsImages: environment.MOSAIC_OPENROUTER_VISION === "1" || openRouter.supportsImages === true,
   };
 }
 
@@ -171,14 +181,19 @@ export type OpenAiCompatibleAgentOptions = {
   instruction: string;
   fetch?: typeof fetch;
   createToolClient?: (run: ResearchRun) => Promise<ResearchToolClient>;
+  readMedia?: (itemId: string, fileName: string, maxBytes: number) => Promise<Buffer>;
 };
 
 type ChatMessage = {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  content: string | ChatContentPart[] | null;
   tool_call_id?: string;
   tool_calls?: ChatToolCall[];
 };
+
+type ChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
 
 type ChatToolCall = {
   id: string;
@@ -197,8 +212,46 @@ type ChatCompletion = {
 };
 
 function toolResultText(value: unknown): string {
-  const serialized = JSON.stringify(value);
+  const serialized = JSON.stringify(value, function omitForwardedImageBytes(key, entry) {
+    if (key === "data" && this && typeof this === "object" && (this as { type?: unknown }).type === "image") {
+      return "[image bytes omitted from text payload]";
+    }
+    return entry;
+  });
   return serialized.length > 30_000 ? `${serialized.slice(0, 30_000)}…` : serialized;
+}
+
+function mcpImageParts(value: unknown): ChatContentPart[] {
+  if (!value || typeof value !== "object") return [];
+  const content = (value as { content?: unknown }).content;
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((entry): ChatContentPart[] => {
+    if (!entry || typeof entry !== "object") return [];
+    const image = entry as { type?: unknown; data?: unknown; mimeType?: unknown };
+    const mimeType = typeof image.mimeType === "string" ? image.mimeType : "";
+    if (image.type !== "image" || typeof image.data !== "string" || image.data.length > 28_000_000) return [];
+    if (!["image/jpeg", "image/png", "image/webp"].includes(mimeType)) return [];
+    return [{ type: "image_url", image_url: { url: `data:${mimeType};base64,${image.data}` } }];
+  }).slice(0, 6);
+}
+
+async function attachedImageParts(
+  run: ResearchRun,
+  readMedia: NonNullable<OpenAiCompatibleAgentOptions["readMedia"]>,
+): Promise<ChatContentPart[]> {
+  const parts: ChatContentPart[] = [];
+  for (const image of run.request.images.slice(0, 6)) {
+    const match = /^\/api\/media\/([^/?#]+)\/([1-6]\.(?:jpg|png|webp))$/.exec(image.mediaPath);
+    if (!match) throw new Error("Research images must use app-owned /api/media paths.");
+    let itemId: string;
+    try { itemId = decodeURIComponent(match[1]!); } catch { throw new Error("Invalid research media path."); }
+    const bytes = await readMedia(itemId, match[2]!, 12 * 1024 * 1024);
+    parts.push({
+      type: "image_url",
+      image_url: { url: `data:${catalogMediaType(match[2]!)};base64,${bytes.toString("base64")}` },
+    });
+  }
+  return parts;
 }
 
 function validatedToolResult(value: unknown): ResearchAgentResult | null {
@@ -279,7 +332,7 @@ export async function runOpenAiCompatibleResearchAgent(
   const toolClient = await (options.createToolClient ?? createScopedToolClient)(input.run);
   const nativeImageTools = new Set(["inspect_workspace_item", "build_workspace_contact_sheet"]);
   const tools = (await toolClient.listTools()).tools
-    .filter((tool) => !nativeImageTools.has(tool.name))
+    .filter((tool) => options.provider.supportsImages || !nativeImageTools.has(tool.name))
     .map((tool) => ({
     type: "function",
     function: {
@@ -288,11 +341,20 @@ export async function runOpenAiCompatibleResearchAgent(
       parameters: tool.inputSchema ?? { type: "object", properties: {} },
     },
     }));
+  const inputImages = options.provider.supportsImages
+    ? await attachedImageParts(input.run, options.readMedia ?? readCatalogMedia)
+    : [];
   const messages: ChatMessage[] = [
     { role: "system", content: options.instruction },
     {
       role: "user",
-      content: "Use the available MosAIc tools autonomously. Return only the validated research-result JSON when finished.",
+      content: inputImages.length ? [
+        {
+          type: "text",
+          text: "Use the available MosAIc tools autonomously. The images below are explicit user-provided references for this request. Return only the validated research-result JSON when finished.",
+        },
+        ...inputImages,
+      ] : "Use the available MosAIc tools autonomously. Return only the validated research-result JSON when finished.",
     },
   ];
   let toolCalls = 0;
@@ -329,6 +391,7 @@ export async function runOpenAiCompatibleResearchAgent(
       const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
       messages.push({ role: "assistant", content: content || null, ...(calls.length ? { tool_calls: calls } : {}) });
       if (calls.length) {
+        const visualEvidence: ChatContentPart[] = [];
         for (const call of calls) {
           if (toolCalls >= input.run.request.budget.maxToolCalls) {
             throw new Error(`Research reached its ${input.run.request.budget.maxToolCalls} tool-call budget.`);
@@ -349,6 +412,7 @@ export async function runOpenAiCompatibleResearchAgent(
             }
           }
           messages.push({ role: "tool", tool_call_id: call.id, content: toolResultText(result) });
+          if (options.provider.supportsImages) visualEvidence.push(...mcpImageParts(result));
           input.onEvent({ type: "tool-result", message: `Completed ${call.function.name}`, data: { tool: call.function.name } });
           if (call.function.name === "validate_research_result") {
             const parsed = validatedToolResult(result);
@@ -362,6 +426,15 @@ export async function runOpenAiCompatibleResearchAgent(
               };
             }
           }
+        }
+        if (visualEvidence.length) {
+          messages.push({
+            role: "user",
+            content: [
+              { type: "text", text: "Native visual evidence returned by the MosAIc tools:" },
+              ...visualEvidence.slice(0, 6),
+            ],
+          });
         }
         continue;
       }

@@ -23,7 +23,7 @@ test("OpenRouter PKCE connects, exposes tool models, persists the selection, and
     }
     if (url.includes("/models?")) {
       return new Response(JSON.stringify({ data: [
-        { id: "anthropic/claude-tools", name: "Claude Tools", context_length: 200_000, supported_parameters: ["tools", "tool_choice"], pricing: { prompt: "0.1", completion: "0.2" } },
+        { id: "anthropic/claude-tools", name: "Claude Tools", context_length: 200_000, supported_parameters: ["tools", "tool_choice"], architecture: { input_modalities: ["text", "image"] }, pricing: { prompt: "0.1", completion: "0.2" } },
         { id: "vendor/no-tools", name: "No tools", supported_parameters: ["temperature"] },
       ] }), { status: 200 });
     }
@@ -67,7 +67,9 @@ test("OpenRouter PKCE connects, exposes tool models, persists the selection, and
 
   const models = await app.request("/api/ai/openrouter/models");
   assert.equal(models.status, 200);
-  assert.deepEqual((await models.json() as { models: Array<{ id: string }> }).models.map((model) => model.id), ["anthropic/claude-tools"]);
+  const modelList = (await models.json() as { models: Array<{ id: string; supportsImages: boolean }> }).models;
+  assert.deepEqual(modelList.map((model) => model.id), ["anthropic/claude-tools"]);
+  assert.equal(modelList[0]?.supportsImages, true);
 
   const selected = await app.request("/api/ai/openrouter/settings", {
     method: "PUT",
@@ -80,6 +82,7 @@ test("OpenRouter PKCE connects, exposes tool models, persists the selection, and
   assert.equal(selectedWire.includes("anthropic/claude-tools"), true);
   assert.equal((await stat(secretPath)).mode & 0o777, 0o600);
   assert.equal((await readFile(secretPath, "utf8")).includes("sk-or-user-secret"), true);
+  assert.equal(JSON.parse(await readFile(secretPath, "utf8")).supportsImages, true);
 
   const replay = await app.request("/api/ai/openrouter/callback", {
     method: "POST",

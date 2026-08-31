@@ -36,6 +36,7 @@ workspace over the network.
 MOSAIC_AI_PROVIDER=local
 MOSAIC_LOCAL_AI_BASE_URL=http://127.0.0.1:1234/v1
 MOSAIC_LOCAL_AI_MODEL=your-loaded-model-id
+MOSAIC_LOCAL_AI_VISION=1 # only for a model that accepts image_url input
 ```
 
 An API key is normally unnecessary for loopback LM Studio. If another local
@@ -77,7 +78,10 @@ MOSAIC_OPENROUTER_APP_NAME=Neuchatech MosAIc
 
 OpenRouter receives the model prompt and bounded tool results, but it never
 receives database credentials or unrestricted filesystem access. MCP tools are
-executed locally and remain scoped to the active workspace.
+executed locally and remain scoped to the active workspace. When the selected
+model advertises image input, images explicitly attached to the request and
+visual evidence explicitly requested by the agent are sent as native
+multimodal inputs.
 
 The model picker loads `GET /api/v1/models?supported_parameters=tools` from
 OpenRouter and excludes models that do not advertise function calling. Model
@@ -112,10 +116,12 @@ An OpenAI-compatible provider must support:
 - assistant `tool_calls` and `tool` result messages;
 - enough context for the workspace manifest and relevant tool results.
 
-Codex can receive explicitly attached reference images through its native image
-input. Local API and OpenRouter runs use MosAIc's local CLIP retrieval for
-attached images; MosAIc does not silently forward their raw pixels to those
-endpoints. If no local CLIP index is available, an image request is rejected
-immediately with a recovery message instead of running as if vision were
-available. Raw image inspection and contact-sheet tools are therefore omitted
-from the OpenAI-compatible tool list for now.
+Codex receives explicitly attached references through its native image input.
+OpenRouter does the same when its model metadata advertises the `image` input
+modality. A local OpenAI-compatible server enables native images with
+`MOSAIC_LOCAL_AI_VISION=1`, because that capability is not standardized by all
+local `/v1/models` implementations. Vision-capable providers may also receive
+images or contact sheets returned by scoped MosAIc tools. Otherwise the run
+keeps local CLIP retrieval; if neither native input nor a local CLIP index is
+available, MosAIc rejects the image request immediately and explains how to
+recover.

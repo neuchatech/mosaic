@@ -427,7 +427,7 @@ export function assertResearchImageWorkflow(
   request: ResearchRequest,
   manifest: ResearchWorkspaceManifest,
 ): void {
-  if (!request.images.length || provider.id === "codex") return;
+  if (!request.images.length || provider.supportsImages) return;
   if (!manifest.visualIndex.localEmbeddingArtifactAvailable) {
     throw new Error(
       `${provider.id === "openrouter" ? "OpenRouter" : "The local AI provider"} cannot inspect attached images in this MosAIc configuration, and the local CLIP index is unavailable. Build the local visual index or use Codex for this image request.`,

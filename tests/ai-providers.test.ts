@@ -64,9 +64,12 @@ test("provider catalog resolves Codex, local OpenAI-compatible, and OpenRouter w
     model: "qwen-local",
     baseUrl: "http://localhost:1234/v1",
     apiKey: undefined,
+    supportsImages: false,
   });
   assert.equal(catalog.providers.find((provider) => provider.id === "codex")?.imageWorkflow, "native");
   assert.equal(catalog.providers.find((provider) => provider.id === "openrouter")?.imageWorkflow, "local-clip");
+  assert.equal(aiProviderCatalog(environment, { apiKey: "key", model: "vision-model", supportsImages: true })
+    .providers.find((provider) => provider.id === "openrouter")?.imageWorkflow, "native");
   assert.throws(() => resolveAiProvider("local", null, {
     ...environment,
     MOSAIC_LOCAL_AI_BASE_URL: "http://192.168.1.9:1234/v1",
@@ -103,6 +106,48 @@ test("OpenAI-compatible providers expose CLIP retrieval but not raw image-return
   assert.deepEqual(tools.map((tool) => tool.function.name), ["rank_workspace_by_visual_references"]);
 });
 
+test("vision-capable OpenAI-compatible providers receive attached and tool-returned images natively", async () => {
+  const requests: Array<Record<string, unknown>> = [];
+  let completion = 0;
+  const requestFetch: typeof fetch = async (_input, init) => {
+    requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    completion += 1;
+    const body = completion === 1 ? {
+      choices: [{ message: { content: null, tool_calls: [{
+        id: "inspect-one", type: "function", function: { name: "inspect_workspace_item", arguments: JSON.stringify({ itemId: "item-one" }) },
+      }] } }],
+    } : { choices: [{ message: { content: JSON.stringify(result()) } }] };
+    return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const imageRun = run();
+  imageRun.request.images = [{ name: "moodboard.jpg", mediaPath: "/api/media/reference-one/1.jpg", mimeType: "image/jpeg" }];
+  const toolClient: ResearchToolClient = {
+    async listTools() { return { tools: [{ name: "inspect_workspace_item" }] }; },
+    async callTool() {
+      return { content: [
+        { type: "text", text: "item-one" },
+        { type: "image", mimeType: "image/jpeg", data: Buffer.from("tool-image").toString("base64") },
+      ] };
+    },
+    async close() {},
+  };
+  await runOpenAiCompatibleResearchAgent({
+    run: imageRun, signal: new AbortController().signal, onEvent: () => undefined,
+  }, {
+    provider: { id: "openrouter", model: "vision-model", baseUrl: "https://openrouter.ai/api/v1", apiKey: "test", supportsImages: true },
+    instruction: "Research visually.", fetch: requestFetch, createToolClient: async () => toolClient,
+    readMedia: async () => Buffer.from("attached-image"),
+  });
+  const firstMessages = requests[0]?.messages as Array<{ role: string; content: unknown }>;
+  const initialContent = firstMessages.find((message) => message.role === "user")?.content as Array<{ type: string; image_url?: { url: string } }>;
+  assert.equal(initialContent.some((part) => part.type === "image_url" && part.image_url?.url.startsWith("data:image/jpeg;base64,")), true);
+  const secondMessages = requests[1]?.messages as Array<{ role: string; content: unknown }>;
+  const visualFollowUp = secondMessages.find((message) => message.role === "user" && Array.isArray(message.content)
+    && message.content.some((part) => (part as { type?: string }).type === "image_url"));
+  assert.ok(visualFollowUp);
+  assert.equal(JSON.stringify(secondMessages.find((message) => message.role === "tool")).includes(Buffer.from("tool-image").toString("base64")), false);
+});
+
 test("image requests fail clearly when neither native images nor local CLIP are available", () => {
   const requestWithImage = {
     ...run().request,
@@ -117,6 +162,11 @@ test("image requests fail clearly when neither native images nor local CLIP are 
     { id: "openrouter", model: "text-model", baseUrl: "https://openrouter.ai/api/v1" },
     requestWithImage,
     { visualIndex: { imagesAvailable: 1, coordinatesAvailable: 0, localEmbeddingArtifactAvailable: true, hybridEmbeddingsMayBeAvailable: true } } as unknown as ResearchRun["manifest"],
+  ));
+  assert.doesNotThrow(() => assertResearchImageWorkflow(
+    { id: "openrouter", model: "vision-model", baseUrl: "https://openrouter.ai/api/v1", supportsImages: true },
+    requestWithImage,
+    { visualIndex: { imagesAvailable: 0, coordinatesAvailable: 0, localEmbeddingArtifactAvailable: false, hybridEmbeddingsMayBeAvailable: false } } as unknown as ResearchRun["manifest"],
   ));
 });
 

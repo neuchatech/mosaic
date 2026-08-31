@@ -42,7 +42,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Settings2,
-  Undo2,
+  RotateCcw,
   X,
 } from "lucide-react";
 import {
@@ -1151,6 +1151,7 @@ type MosaicAiProviderCatalog = {
     detail: string;
     connected: boolean;
     managedBy: "environment" | "local" | "none";
+    imageWorkflow: "native" | "local-clip";
   }>;
 };
 type MosaicOpenRouterModel = {
@@ -1160,6 +1161,8 @@ type MosaicOpenRouterModel = {
   promptPrice: string | null;
   completionPrice: string | null;
   supportedParameters: string[];
+  inputModalities: string[];
+  supportsImages: boolean;
 };
 type MosaicWorkspace = { id: string; name: string; profile?: string; description?: string };
 type MosaicWorkspaceOperation = { workspaceId: string; epoch: number; signal: AbortSignal };
@@ -3437,6 +3440,11 @@ export default function Home() {
     setDynamicFacetSelections({}); setDynamicNumberFilters({}); setSelectedCollectionId(null);
   }
 
+  function showAllAtlasItems() {
+    resetAtlasFilters();
+    setAiItems(null); setAiStatus(""); setScope("catalogue"); setRenderWindow({ signature: "", limit: ATLAS_PAGE_SIZE });
+  }
+
   const changeAtlasZoom = useCallback((nextValue: number, anchor?: { x: number; y: number }) => {
     const atlas = atlasElementRef.current;
     const next = Math.min(ATLAS_MAX_ZOOM, Math.max(.25, Math.round(nextValue * 1000) / 1000));
@@ -4339,6 +4347,7 @@ export default function Home() {
   ].filter(Boolean).length + dynamicFilterCount;
   const filterBadgeCount = advancedFilterCount + (sourceFilter !== "all" ? 1 : 0)
     + (showClothingFallback ? selectedSizes.length + (activeFilter !== "Tout" ? 1 : 0) : 0);
+  const boardIsReduced = aiItems !== null || filterBadgeCount > 0 || scope !== "catalogue" || Boolean(selectedCollectionId);
   const assistantOpen = composerExpanded || (catalogStatus !== "loading…" && products.length === 0);
   const latestResearchEvent = researchEvents.at(-1);
   const latestAssistantMessage = [...assistantMessages].reverse().find((message) => message.role === "assistant");
@@ -4450,7 +4459,7 @@ export default function Home() {
               <span>{t("constraints")}: {showClothingFallback ? `${selectedSizes.length ? selectedSizes.join(" / ") : t("allSizes")} · ` : ""}{sourceFilter === "all" ? t("allSources") : sourceFilter.replace("source:", "")}{dynamicFilterCount ? ` · ${dynamicFilterCount}` : ""}</span>
               <label>{t("aiProvider")} <select value={aiProvider} onChange={(event) => changeAiProvider(event.target.value as MosaicAiProviderId)}>
                 <option value="auto">{t("automatic")}{aiProviders ? ` · ${aiProviders.providers.find((provider) => provider.id === aiProviders.defaultProvider)?.label ?? aiProviders.defaultProvider}` : ""}</option>
-                {(aiProviders?.providers ?? [{ id: "codex", label: "Codex", configured: true, local: true, model: null, detail: "", connected: true, managedBy: "environment" as const }]).map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.configured}>{provider.label}{provider.model ? ` · ${provider.model}` : ""}{provider.configured ? "" : ` · ${t("notConfigured")}`}</option>)}
+                {(aiProviders?.providers ?? [{ id: "codex", label: "Codex", configured: true, local: true, model: null, detail: "", connected: true, managedBy: "environment" as const, imageWorkflow: "native" as const }]).map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.configured}>{provider.label}{provider.model ? ` · ${provider.model}` : ""}{provider.configured ? "" : ` · ${t("notConfigured")}`}</option>)}
               </select></label>
               <button type="button" className="mosaicAiSettingsButton" onClick={openAiProviderSettings} title={t("aiSettings")} aria-label={t("aiSettings")}><Settings2 className="mosaicIcon" aria-hidden="true" /></button>
               <label>{t("thinking")} <select value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as "low" | "medium")}><option value="low">{t("fast")}</option><option value="medium">{t("thorough")}</option></select></label>
@@ -4488,7 +4497,7 @@ export default function Home() {
               <label className="mosaicAxisPill"><span>Y</span><select value={yAxis} onChange={(event) => setYAxis(event.target.value as AxisField)} aria-label="Y axis"><option value="pca">{t("similarity")}</option><option value="price">{t("price")}</option><option value="score">{t("score")}</option></select></label>
               <button type="button" className="mosaicSavedViewsButton" onClick={() => setDrawer("views")} title={t("savedViews")} aria-label={t("savedViews")}><Bookmark className="mosaicIcon" aria-hidden="true" /></button>
             </div>
-            <div className="mosaicBoardMeta"><span>{products.length} {t("items")}</span><button className="undoButton" disabled={!undoStack.length} onClick={() => void undoLastAction()} aria-label="Undo"><Undo2 className="mosaicIcon" aria-hidden="true" /></button></div>
+            <div className="mosaicBoardMeta"><span>{products.length} {t("items")}</span><button className="undoButton" disabled={!boardIsReduced} onClick={showAllAtlasItems} aria-label={t("showAll")} title={t("showAll")}><RotateCcw className="mosaicIcon" aria-hidden="true" /></button></div>
           </div>
 
         <div className="operationStack">
@@ -4608,12 +4617,12 @@ export default function Home() {
                 <p className="drawerHint">{t("aiSettingsIntro")}</p>
                 {(aiProviders?.providers ?? []).map((provider) => <article className="mosaicProviderCard" key={provider.id}>
                   <span className={`mosaicProviderStatus ${provider.connected ? "connected" : ""}`} aria-hidden="true" />
-                  <div><strong>{provider.label}</strong><small>{provider.detail}</small>{provider.model && <code>{provider.model}</code>}</div>
+                  <div><strong>{provider.label}</strong><small>{provider.detail} · {provider.imageWorkflow === "native" ? t("nativeVision") : t("localClipVision")}</small>{provider.model && <code>{provider.model}</code>}</div>
                   <b>{provider.configured ? t("ready") : provider.connected ? t("chooseModel") : t("notConfigured")}</b>
                 </article>)}
                 <section className="mosaicOpenRouterSettings">
                   <header><div><span>OpenRouter</span><small>{openRouter?.managedBy === "environment" ? t("managedByEnvironment") : t("localCredential")}</small></div>{openRouter?.connected && openRouter.managedBy !== "environment" ? <button type="button" disabled={openRouterBusy} onClick={() => void disconnectOpenRouter()}>{t("disconnect")}</button> : null}</header>
-                  {!openRouter?.connected ? <button type="button" className="primaryButton mosaicConnectOpenRouter" disabled={openRouterBusy} onClick={() => void connectOpenRouter()}>{openRouterBusy ? t("connecting") : t("connectOpenRouter")}</button> : <label><span>{t("toolModel")}</span><select value={selectedModel} disabled={openRouterBusy || openRouter.managedBy === "environment"} onChange={(event) => void selectOpenRouterModel(event.target.value)}><option value="">{openRouterBusy ? t("loading") : t("chooseModel")}</option>{openRouterModels.map((model) => <option value={model.id} key={model.id}>{model.name} · {model.id}</option>)}</select></label>}
+                  {!openRouter?.connected ? <button type="button" className="primaryButton mosaicConnectOpenRouter" disabled={openRouterBusy} onClick={() => void connectOpenRouter()}>{openRouterBusy ? t("connecting") : t("connectOpenRouter")}</button> : <label><span>{t("toolModel")}</span><select value={selectedModel} disabled={openRouterBusy || openRouter.managedBy === "environment"} onChange={(event) => void selectOpenRouterModel(event.target.value)}><option value="">{openRouterBusy ? t("loading") : t("chooseModel")}</option>{openRouterModels.map((model) => <option value={model.id} key={model.id}>{model.name} · {model.id}{model.supportsImages ? ` · ${t("nativeVision")}` : ""}</option>)}</select></label>}
                   {openRouter?.connected && !openRouterModels.length && !openRouterBusy && <button type="button" onClick={() => void loadOpenRouterModels()}>{t("loadModels")}</button>}
                   {openRouterError && <p className="mosaicProviderError" role="alert">{openRouterError}</p>}
                   <small>{t("openRouterPrivacy")}</small>
