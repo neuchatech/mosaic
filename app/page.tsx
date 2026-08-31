@@ -1187,6 +1187,7 @@ type AtlasDiscoverySession = { plan: AtlasDiscoveryPlan; jobIds: string[]; works
 // directly to the API process started alongside it by `npm start`.
 const ATLAS_API = process.env.NODE_ENV === "production" ? "http://127.0.0.1:8788/api" : "/api";
 const ATLAS_ORIGIN = ATLAS_API.slice(0, -4);
+const MOSAIC_STUDIO_ENABLED = false;
 const ATLAS_PAGE_SIZE = 240;
 const ATLAS_DEFAULT_ZOOM = 2;
 const MOSAIC_SOURCE_COLORS = [
@@ -3875,7 +3876,7 @@ export default function Home() {
       } else if (payload.action === "artifact" && payload.artifact) {
         const artifact = mosaicNormalizeArtifact(payload.artifact);
         setMosaicArtifacts((current) => [artifact, ...current.filter((item) => item.id !== artifact.id)]);
-        setArtifactsApiAvailable(true); setDrawer("studio");
+        setArtifactsApiAvailable(true); setDrawer(MOSAIC_STUDIO_ENABLED ? "studio" : "activity");
         if (payload.discoveryPlan && payload.jobs?.length) {
           setDiscoveryPlan(payload.discoveryPlan);
           setDiscoveryJobs(payload.jobs);
@@ -4351,7 +4352,7 @@ export default function Home() {
           <button className={drawer === null ? "active" : ""} onClick={() => { setDrawer(null); setSelectedCollectionId(null); }}><Compass className="mosaicIcon" aria-hidden="true" /><span>{t("explore")}</span></button>
           <button className={drawer === "collections" ? "active" : ""} onClick={() => setDrawer("collections")}><FolderHeart className="mosaicIcon" aria-hidden="true" /><span>{t("collections")}</span><b>{mosaicCollections.length}</b></button>
           <button className={drawer === "activity" ? "active" : ""} onClick={() => setDrawer("activity")}><Clock3 className="mosaicIcon" aria-hidden="true" /><span>{t("activity")}</span>{activityAttentionCount > 0 && <b className="attention">{activityAttentionCount}</b>}</button>
-          <button className={drawer === "studio" ? "active" : ""} onClick={() => setDrawer("studio")}><Palette className="mosaicIcon" aria-hidden="true" /><span>{t("studio")}</span>{mosaicArtifacts.length > 0 && <b>{mosaicArtifacts.length}</b>}</button>
+          {MOSAIC_STUDIO_ENABLED && <button className={drawer === "studio" ? "active" : ""} onClick={() => setDrawer("studio")}><Palette className="mosaicIcon" aria-hidden="true" /><span>{t("studio")}</span>{mosaicArtifacts.length > 0 && <b>{mosaicArtifacts.length}</b>}</button>}
         </nav>
         <div className="mosaicLibrary"><small>{t("library")}</small>{atlasScopes.filter((item) => showClothingFallback || ["catalogue", "saved", "reference"].includes(item.id)).map((item) => <button key={item.id} className={scope === item.id ? "active" : ""} onClick={() => { setScope(item.id); setSelectedCollectionId(null); setDrawer(null); }}><span><MosaicScopeIcon scope={item.id} /></span>{item.id === "catalogue" ? t("allItems") : item.id === "saved" ? t("favorites") : item.id === "owned" ? t("wardrobe") : item.id === "reference" ? t("references") : t("outfits")}</button>)}</div>
         <button className="mosaicAdd" onClick={() => setDrawer("add")}><Plus className="mosaicIcon" aria-hidden="true" /> {t("add")}</button>
@@ -4563,7 +4564,7 @@ export default function Home() {
             <button onClick={() => setDrawer("collections")}><FolderHeart className="mosaicIcon" aria-hidden="true" /> {t("collection")}</button>
             <button onClick={() => { setPromptProductIds((current) => [...new Set([...current, ...selectedItems.map((item) => item.id)])].slice(-12)); setSelectedIds(new Set()); setComposerExpanded(true); requestAnimationFrame(() => composerInputRef.current?.focus()); }}><Sparkles className="mosaicIcon" aria-hidden="true" /> {t("askAi")}</button>
             <button onClick={() => { setCompareIds(new Set(selectedItems.slice(0, 4).map((item) => item.id))); setDrawer("compare"); }}><GitCompareArrows className="mosaicIcon" aria-hidden="true" /> {t("compare")}</button>
-            <button onClick={() => setDrawer("studio")}><Palette className="mosaicIcon" aria-hidden="true" /> {t("studio")}</button>
+            {MOSAIC_STUDIO_ENABLED && <button onClick={() => setDrawer("studio")}><Palette className="mosaicIcon" aria-hidden="true" /> {t("studio")}</button>}
           </div>
           <button className="mosaicTrayClear" onClick={() => setSelectedIds(new Set())} aria-label={t("clearSelection")}><X className="mosaicIcon" aria-hidden="true" /></button>
         </aside>
@@ -4659,7 +4660,7 @@ export default function Home() {
               </div>
             )}
 
-            {drawer === "studio" && (
+            {MOSAIC_STUDIO_ENABLED && drawer === "studio" && (
               <div className="drawerBody mosaicStudioDrawer">
                 <div className="mosaicPrivacyNote"><span>⌁</span><div><strong>Studio local, privé par défaut</strong><p>Le brouillon enregistre uniquement les références choisies. Les aperçus visuels sont des approximations ; aucune image n’est envoyée à un fournisseur externe dans cette version.</p></div></div>
                 <form onSubmit={(event) => void createMosaicArtifact(event)}><label><span>Nom du brouillon</span><input value={artifactName} onChange={(event) => setArtifactName(event.target.value)} placeholder={showClothingFallback ? "Planche matières chaudes" : "Planche de recherche"} /></label><div className="mosaicStudioContext"><span>{selectedIds.size || promptProductIds.length} éléments</span><span>{promptImages.length + personalImages.length} images de référence</span>{aiPrompt.trim() && <span>Prompt joint</span>}</div><button className="primaryButton" disabled={artifactBusy}>{artifactBusy ? "Enregistrement…" : "Créer le brouillon"}</button></form>
