@@ -11,7 +11,7 @@ export default function OpenRouterCallbackPage() {
   useEffect(() => {
     const parameters = new URLSearchParams(window.location.search);
     const code = parameters.get("code");
-    const state = parameters.get("mosaic_state");
+    const state = parameters.get("mosaic_state") ?? window.localStorage.getItem("mosaic:openrouter:pkce-state");
     if (!code || !state) {
       queueMicrotask(() => {
         setFailed(true);
@@ -26,6 +26,7 @@ export default function OpenRouterCallbackPage() {
     }).then(async (response) => {
       const payload = await response.json() as { error?: string };
       if (!response.ok) throw new Error(payload.error || "OpenRouter connection failed.");
+      window.localStorage.removeItem("mosaic:openrouter:pkce-state");
       setMessage("OpenRouter connected. Choose a model in MosAIc.");
       if (window.opener) {
         window.opener.postMessage({ type: "mosaic:openrouter-connected" }, window.location.origin);
@@ -34,6 +35,7 @@ export default function OpenRouterCallbackPage() {
         window.setTimeout(() => window.location.replace("/"), 900);
       }
     }).catch((error) => {
+      window.localStorage.removeItem("mosaic:openrouter:pkce-state");
       setFailed(true);
       setMessage(error instanceof Error ? error.message : "OpenRouter connection failed.");
     });

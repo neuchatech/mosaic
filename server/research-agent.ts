@@ -530,7 +530,7 @@ export class ResearchAgentService {
     return aiProviderCatalog(this.environment, this.openRouter.credentials());
   }
 
-  beginOpenRouterConnection(callbackUrl: string): { authorizationUrl: string; expiresAt: string } {
+  beginOpenRouterConnection(callbackUrl: string): { authorizationUrl: string; state: string; expiresAt: string } {
     return this.openRouter.begin(callbackUrl);
   }
 

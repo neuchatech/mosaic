@@ -156,12 +156,11 @@ export class OpenRouterConnectionService {
     };
   }
 
-  begin(callback: string): { authorizationUrl: string; expiresAt: string } {
+  begin(callback: string): { authorizationUrl: string; state: string; expiresAt: string } {
     const callbackUrl = loopbackCallback(callback);
     const state = randomBytes(24).toString("base64url");
     const verifier = randomBytes(48).toString("base64url");
     const challenge = createHash("sha256").update(verifier).digest("base64url");
-    callbackUrl.searchParams.set("mosaic_state", state);
     const expiresAt = this.now().getTime() + FLOW_TTL_MS;
     this.pending.set(state, { verifier, callbackUrl: callbackUrl.toString(), expiresAt });
     const authorization = new URL("/auth", OPENROUTER_ORIGIN);
@@ -169,7 +168,7 @@ export class OpenRouterConnectionService {
     authorization.searchParams.set("code_challenge", challenge);
     authorization.searchParams.set("code_challenge_method", "S256");
     authorization.searchParams.set("key_label", "Neuchatech MosAIc");
-    return { authorizationUrl: authorization.toString(), expiresAt: new Date(expiresAt).toISOString() };
+    return { authorizationUrl: authorization.toString(), state, expiresAt: new Date(expiresAt).toISOString() };
   }
 
   async complete(input: { state: string; code: string }): Promise<void> {

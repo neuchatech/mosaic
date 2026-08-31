@@ -2083,8 +2083,9 @@ export default function Home() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ callbackUrl: `${window.location.origin}/auth/openrouter` }),
       });
-      const payload = await response.json() as { authorizationUrl?: string; error?: string };
-      if (!response.ok || !payload.authorizationUrl) throw new Error(payload.error || "OpenRouter connection could not start");
+      const payload = await response.json() as { authorizationUrl?: string; state?: string; error?: string };
+      if (!response.ok || !payload.authorizationUrl || !payload.state) throw new Error(payload.error || "OpenRouter connection could not start");
+      window.localStorage.setItem("mosaic:openrouter:pkce-state", payload.state);
       const popup = window.open(payload.authorizationUrl, "mosaic-openrouter", "popup,width=620,height=760");
       if (!popup) window.location.assign(payload.authorizationUrl);
       else setOpenRouterBusy(false);

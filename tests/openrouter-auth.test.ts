@@ -47,11 +47,13 @@ test("OpenRouter PKCE connects, exposes tool models, persists the selection, and
     body: JSON.stringify({ callbackUrl: "http://localhost:3000/auth/openrouter" }),
   });
   assert.equal(begin.status, 200);
-  const authorizationUrl = new URL((await begin.json() as { authorizationUrl: string }).authorizationUrl);
+  const beginPayload = await begin.json() as { authorizationUrl: string; state: string };
+  const authorizationUrl = new URL(beginPayload.authorizationUrl);
   assert.equal(authorizationUrl.origin, "https://openrouter.ai");
   assert.equal(authorizationUrl.searchParams.get("code_challenge_method"), "S256");
   const callbackUrl = new URL(authorizationUrl.searchParams.get("callback_url")!);
-  const state = callbackUrl.searchParams.get("mosaic_state");
+  assert.equal(callbackUrl.searchParams.has("mosaic_state"), false);
+  const state = beginPayload.state;
   assert.ok(state);
 
   const callback = await app.request("/api/ai/openrouter/callback", {
