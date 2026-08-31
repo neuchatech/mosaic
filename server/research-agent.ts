@@ -527,8 +527,12 @@ export class ResearchAgentService {
   }
 
   private defaultRunner(run: ResearchRun): ResearchAgentRunner {
+    // Runs created before provider selection existed parse with provider=auto.
+    // They were all Codex runs, so keep their resume path stable even if the
+    // user's new automatic default now points at LM Studio or OpenRouter.
+    const requestedProvider = run.request.provider === "auto" ? "codex" : run.request.provider;
     const provider = resolveAiProvider(
-      run.request.provider as ResearchAiProvider,
+      requestedProvider as ResearchAiProvider,
       run.model,
       this.environment,
     );

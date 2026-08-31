@@ -23,7 +23,7 @@ OpenAI-compatible `POST /v1/chat/completions` function calling. The endpoint is
 restricted to loopback so a setting named "local" cannot silently transmit a
 workspace over the network.
 
-LM Studio setup:
+[LM Studio](https://lmstudio.ai/docs/developer/openai-compat/tools) setup:
 
 1. Install LM Studio and start its server from **Developer**, or run
    `lms server start`.
@@ -48,7 +48,7 @@ output up to three times before failing truthfully.
 
 ## OpenRouter
 
-Create an OpenRouter key, choose a model that supports tool calling, and keep
+Create an [OpenRouter](https://openrouter.ai/docs/guides/features/tool-calling) key, choose a model that supports tool calling, and keep
 the credentials in the local environment:
 
 ```bash

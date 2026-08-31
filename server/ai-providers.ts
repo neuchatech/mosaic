@@ -236,6 +236,8 @@ export async function runOpenAiCompatibleResearchAgent(
   options: OpenAiCompatibleAgentOptions,
 ): Promise<ResearchAgentResult> {
   const requestFetch = options.fetch ?? fetch;
+  const timeoutSignal = AbortSignal.timeout(input.run.request.budget.maxDurationMs);
+  const requestSignal = AbortSignal.any([input.signal, timeoutSignal]);
   const toolClient = await (options.createToolClient ?? createScopedToolClient)(input.run);
   const tools = (await toolClient.listTools()).tools.map((tool) => ({
     type: "function",
@@ -257,7 +259,10 @@ export async function runOpenAiCompatibleResearchAgent(
   const maxRounds = Math.min(164, input.run.request.budget.maxToolCalls + 8);
   try {
     for (let round = 0; round < maxRounds; round += 1) {
-      if (input.signal.aborted) throw new DOMException("Research run cancelled", "AbortError");
+      if (requestSignal.aborted) {
+        if (input.signal.aborted) throw new DOMException("Research run cancelled", "AbortError");
+        throw new Error(`Research reached its ${Math.round(input.run.request.budget.maxDurationMs / 1_000)} second budget.`);
+      }
       const response = await requestFetch(`${options.provider.baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
@@ -270,10 +275,10 @@ export async function runOpenAiCompatibleResearchAgent(
           messages,
           tools,
           tool_choice: "auto",
-          parallel_tool_calls: false,
           temperature: 0.2,
         }),
-        signal: input.signal,
+        signal: requestSignal,
+        redirect: options.provider.id === "local" ? "error" : "follow",
       });
       const completion = await response.json() as ChatCompletion;
       if (!response.ok) throw new Error(completion.error?.message || `${options.provider.id} returned HTTP ${response.status}.`);
@@ -287,16 +292,20 @@ export async function runOpenAiCompatibleResearchAgent(
           if (toolCalls >= input.run.request.budget.maxToolCalls) {
             throw new Error(`Research reached its ${input.run.request.budget.maxToolCalls} tool-call budget.`);
           }
-          let args: Record<string, unknown>;
+          let args: Record<string, unknown> | null = null;
           try { args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>; }
-          catch { args = {}; }
+          catch { /* Return a tool error so the model can repair its own call. */ }
           toolCalls += 1;
           input.onEvent({ type: "tool-call", message: `Using ${call.function.name}`, data: { tool: call.function.name } });
           let result: unknown;
-          try {
-            result = await toolClient.callTool({ name: call.function.name, arguments: args });
-          } catch (error) {
-            result = { isError: true, error: error instanceof Error ? error.message : String(error) };
+          if (!args) {
+            result = { isError: true, error: "Tool arguments were not valid JSON. Retry with a JSON object." };
+          } else {
+            try {
+              result = await toolClient.callTool({ name: call.function.name, arguments: args });
+            } catch (error) {
+              result = { isError: true, error: error instanceof Error ? error.message : String(error) };
+            }
           }
           messages.push({ role: "tool", tool_call_id: call.id, content: toolResultText(result) });
           input.onEvent({ type: "tool-result", message: `Completed ${call.function.name}`, data: { tool: call.function.name } });

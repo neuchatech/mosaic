@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import Database from "better-sqlite3";
 import {
   aiProviderCatalog,
   resolveAiProvider,
@@ -7,6 +9,9 @@ import {
   type ResearchToolClient,
 } from "../server/ai-providers";
 import type { ResearchAgentResult, ResearchRun } from "../src/domain/research";
+import { ResearchAgentService } from "../server/research-agent";
+import { CatalogRepository } from "../server/repository";
+import { DEFAULT_CLOTHING_WORKSPACE_ID } from "../src/domain/workspace";
 
 function result(): ResearchAgentResult {
   return {
@@ -31,7 +36,7 @@ function run(): ResearchRun {
     workspaceId: "workspace-one",
     model: "local-model",
     request: {
-      budget: { maxToolCalls: 4 },
+      budget: { maxToolCalls: 4, maxDurationMs: 30_000 },
     },
   } as ResearchRun;
 }
@@ -114,4 +119,29 @@ test("OpenAI-compatible agent executes scoped MCP tools and returns validated JS
   const secondMessages = requests[1]?.messages as Array<{ role: string; tool_call_id?: string }>;
   assert.equal(secondMessages.at(-1)?.role, "tool");
   assert.equal(secondMessages.at(-1)?.tool_call_id, "call-one");
+});
+
+test("automatic provider is resolved once and persisted with the research run", async (t) => {
+  const database = new Database(":memory:");
+  database.exec(readFileSync(new URL("../server/schema.sql", import.meta.url), "utf8"));
+  t.after(() => database.close());
+  const repository = new CatalogRepository(database);
+  const service = new ResearchAgentService(repository, {
+    environment: {
+      MOSAIC_AI_PROVIDER: "local",
+      MOSAIC_LOCAL_AI_MODEL: "qwen-tool-model",
+      MOSAIC_LOCAL_AI_BASE_URL: "http://127.0.0.1:1234/v1",
+    },
+    runner: async () => result(),
+  });
+  const queued = service.start({
+    workspaceId: DEFAULT_CLOTHING_WORKSPACE_ID,
+    prompt: "Research with my automatic provider.",
+    provider: "auto",
+  });
+  const finished = await service.waitFor(queued.id, queued.workspaceId);
+  assert.equal(finished.request.provider, "local");
+  assert.equal(finished.request.model, "qwen-tool-model");
+  assert.equal(finished.model, "qwen-tool-model");
+  assert.equal(finished.status, "succeeded");
 });

@@ -899,9 +899,10 @@ body:has(.compareDock) .toast { bottom: 61px; }
 }
 .mosaicContextChip { min-height: 25px; display: flex; align-items: center; gap: 5px; padding: 3px 4px 3px 7px; border: 1px solid #ddd5c9; border-radius: 999px; color: #6d6459; font-size: 7px; }
 .mosaicContextChip button { width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: #eee8de; cursor: pointer; }
-.mosaicComposerFooter { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #8b8276; font-size: 7px; }
+.mosaicComposerFooter { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; color: #8b8276; font-size: 7px; }
+.mosaicComposerFooter > span { min-width: 0; margin-right: auto; }
 .mosaicComposerFooter label { display: flex; align-items: center; gap: 5px; }
-.mosaicComposerFooter select { padding: 4px 5px; border: 1px solid #dbd3c8; border-radius: 5px; background: white; color: #625a50; font-size: 7px; }
+.mosaicComposerFooter select { max-width: 210px; padding: 4px 8px; border: 1px solid #dbd3c8; border-radius: 999px; background: white; color: #625a50; font-size: 7px; }
 
 .mosaicBoardBar {
   position: absolute; z-index: 18; top: 61px; right: 10px; left: 10px; min-width: 0;

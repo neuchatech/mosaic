@@ -1249,7 +1249,7 @@ function mosaicResearchAsRun(run: MosaicResearchRun, latestMessage?: string): Mo
     progress: terminal ? 1 : Math.min(.95, run.eventCount / total),
     completed: Math.min(run.eventCount, total),
     total,
-    source: run.model,
+    source: `${run.request.provider ?? "codex"} · ${run.model}`,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     error: run.error ?? undefined,
@@ -4319,7 +4319,7 @@ export default function Home() {
               <span>{t("constraints")}: {showClothingFallback ? `${selectedSizes.length ? selectedSizes.join(" / ") : t("allSizes")} · ` : ""}{sourceFilter === "all" ? t("allSources") : sourceFilter.replace("source:", "")}{dynamicFilterCount ? ` · ${dynamicFilterCount}` : ""}</span>
               <label>{t("aiProvider")} <select value={aiProvider} onChange={(event) => changeAiProvider(event.target.value as MosaicAiProviderId)}>
                 <option value="auto">{t("automatic")}{aiProviders ? ` · ${aiProviders.providers.find((provider) => provider.id === aiProviders.defaultProvider)?.label ?? aiProviders.defaultProvider}` : ""}</option>
-                {(aiProviders?.providers ?? [{ id: "codex", label: "Codex", configured: true, local: true, model: null, detail: "" }]).map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.configured}>{provider.label}{provider.model ? ` · ${provider.model}` : ""}{provider.configured ? "" : " · not configured"}</option>)}
+                {(aiProviders?.providers ?? [{ id: "codex", label: "Codex", configured: true, local: true, model: null, detail: "" }]).map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.configured}>{provider.label}{provider.model ? ` · ${provider.model}` : ""}{provider.configured ? "" : ` · ${t("notConfigured")}`}</option>)}
               </select></label>
               <label>{t("thinking")} <select value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as "low" | "medium")}><option value="low">{t("fast")}</option><option value="medium">{t("thorough")}</option></select></label>
             </div>}

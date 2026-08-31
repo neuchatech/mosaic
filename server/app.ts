@@ -1498,7 +1498,7 @@ export function createApp(
         workspaceId: run.workspaceId,
         kind: "research",
         title: (run.result?.title ?? run.request.prompt.slice(0, 120)) || "AI research",
-        source: run.model,
+        source: `${run.request.provider} · ${run.model}`,
         status: run.status,
         progress: terminal ? 1 : Math.min(.95, completed / run.request.budget.maxToolCalls),
         total: run.request.budget.maxToolCalls,
