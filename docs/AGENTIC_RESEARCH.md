@@ -35,7 +35,8 @@ long prohibition before every operation.
 flowchart LR
   U["Conversation turn + context"] --> R["Persistent research run"]
   R --> M["Workspace manifest"]
-  M --> A["Codex Luna research agent"]
+  M --> P{"AI provider"}
+  P --> A["Codex / local model / OpenRouter agent"]
   A --> Q["Query / sample / similarity"]
   A --> V["Inspect images / contact sheets"]
   A --> S["Source capabilities / acquisition"]
@@ -59,6 +60,12 @@ become the assistant message for that turn and are available to the next turn.
 Runs and compact events are stored locally. A server restart marks interrupted
 work explicitly; reading a run never resumes it. Resume and retry are explicit
 operations and reuse completed work where possible.
+
+Provider selection changes inference transport, not agent authority. Codex
+connects to the private run-scoped MCP directly; OpenAI-compatible local models
+and OpenRouter use MosAIc's bounded function-calling loop to invoke the same MCP
+tools. Credentials remain server-side and the resolved provider/model are saved
+with the run for an honest Activity history.
 
 ## Workspace manifest
 

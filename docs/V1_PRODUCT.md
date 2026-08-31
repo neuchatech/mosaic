@@ -133,8 +133,9 @@ of choosing exactly one wardrobe action. Supported primitives:
 - request a generated artifact
 - clarify only when execution would otherwise be materially wrong
 
-Codex/Luna chooses the primitives. Core operations remain deterministic local
-services exposed as constrained tools. MCP is an agent interface, not the
+The selected AI provider chooses the primitives. Codex, local OpenAI-compatible
+models, and OpenRouter all use the same deterministic local services exposed as
+constrained tools. MCP is an agent interface, not the
 application's persistence layer. A plan must preserve explicit user constraints,
 bound remote work, reject out-of-scope ids, and treat webpages as untrusted data.
 

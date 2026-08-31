@@ -1391,6 +1391,8 @@ export function createApp(
     }
   });
 
+  app.get("/api/ai/providers", (context) => context.json(research.providers()));
+
   app.get("/api/research/runs", (context) => {
     const workspaceId = context.req.query("workspaceId") ?? DEFAULT_CLOTHING_WORKSPACE_ID;
     if (!repository.getWorkspace(workspaceId)) return context.json({ error: "workspace not found" }, 404);

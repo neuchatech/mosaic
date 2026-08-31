@@ -12,6 +12,7 @@ import {
   type AssistantConversation,
   type AssistantMessage,
   type ResearchAgentResult,
+  type ResearchAiProvider,
   type ResearchRequest,
   type ResearchRequestInput,
   type ResearchRun,
@@ -25,6 +26,13 @@ import { codexExecutable } from "./codex-bridge";
 import { catalogMediaPath } from "./media";
 import { buildResearchManifest } from "./research-context";
 import type { CatalogRepository } from "./repository";
+import {
+  aiProviderCatalog,
+  resolveAiProvider,
+  runOpenAiCompatibleResearchAgent,
+  type AiProviderCatalog,
+  type ResolvedAiProvider,
+} from "./ai-providers";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const researchSchemaPath = resolve(projectRoot, "schemas/research-agent-result.json");
@@ -94,6 +102,8 @@ export type ResearchAgentRunner = (input: {
 
 export type ResearchAgentServiceOptions = {
   runner?: ResearchAgentRunner;
+  runnerForRun?: (run: ResearchRun) => ResearchAgentRunner;
+  environment?: Record<string, string | undefined>;
   idFactory?: () => string;
   now?: () => Date;
 };
@@ -425,7 +435,8 @@ function childJobsFromEvents(events: ResearchRunEvent[]): ResearchChildJob[] {
 }
 
 export class ResearchAgentService {
-  private readonly runner: ResearchAgentRunner;
+  private readonly runnerForRun: (run: ResearchRun) => ResearchAgentRunner;
+  private readonly environment: Record<string, string | undefined>;
   private readonly idFactory: () => string;
   private readonly now: () => Date;
   private readonly queue: string[] = [];
@@ -439,13 +450,16 @@ export class ResearchAgentService {
     private readonly repository: ResearchRunRepository,
     options: ResearchAgentServiceOptions = {},
   ) {
-    this.runner = options.runner ?? runCodexResearchAgent;
+    this.environment = options.environment ?? process.env;
+    this.runnerForRun = options.runnerForRun
+      ?? (options.runner ? () => options.runner! : (run) => this.defaultRunner(run));
     this.idFactory = options.idFactory ?? (() => crypto.randomUUID());
     this.now = options.now ?? (() => new Date());
   }
 
   start(input: ResearchRequestInput): ResearchRun {
     const parsed = researchRequestSchema.parse(input);
+    const provider = resolveAiProvider(parsed.provider, parsed.model, this.environment);
     const conversation = parsed.conversationId
       ? this.repository.getAssistantConversation(parsed.conversationId, parsed.workspaceId)
       : this.repository.createAssistantConversation({
@@ -453,7 +467,12 @@ export class ResearchAgentService {
         title: conversationTitle(parsed.prompt),
       });
     if (!conversation) throw new Error("Unknown or cross-workspace assistant conversation.");
-    const request = researchRequestSchema.parse({ ...parsed, conversationId: conversation.id });
+    const request = researchRequestSchema.parse({
+      ...parsed,
+      conversationId: conversation.id,
+      provider: provider.id,
+      model: provider.model,
+    });
     const history = this.repository.listAssistantMessages(conversation.id, request.workspaceId, 24);
     const manifest = researchWorkspaceManifestSchema.parse({
       ...buildResearchManifest(request, this.repository),
@@ -462,7 +481,7 @@ export class ResearchAgentService {
     const run = this.repository.createResearchRun({
       id: this.idFactory(),
       workspaceId: request.workspaceId,
-      model: "gpt-5.6-luna",
+      model: provider.model,
       reasoningEffort: request.reasoningEffort,
       request,
       manifest,
@@ -501,6 +520,23 @@ export class ResearchAgentService {
     this.emit(run);
     void this.drain();
     return run;
+  }
+
+  providers(): AiProviderCatalog {
+    return aiProviderCatalog(this.environment);
+  }
+
+  private defaultRunner(run: ResearchRun): ResearchAgentRunner {
+    const provider = resolveAiProvider(
+      run.request.provider as ResearchAiProvider,
+      run.model,
+      this.environment,
+    );
+    if (provider.id === "codex") return runCodexResearchAgent;
+    return (input) => runOpenAiCompatibleResearchAgent(input, {
+      provider: provider as ResolvedAiProvider,
+      instruction: researchAgentInstruction(input.run),
+    });
   }
 
   get(id: string, workspaceId?: string): ResearchRun | null {
@@ -669,7 +705,7 @@ export class ResearchAgentService {
         const controller = new AbortController();
         this.active = { id, controller };
         try {
-          const result = await this.runner({
+          const result = await this.runnerForRun(running)({
             run: running,
             signal: controller.signal,
             onEvent: (event) => {

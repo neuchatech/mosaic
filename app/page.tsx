@@ -1089,6 +1089,8 @@ type MosaicResearchRun = {
     prompt: string;
     conversationId: string | null;
     budget: { maxToolCalls: number };
+    provider?: "codex" | "local" | "openrouter";
+    model?: string | null;
   };
   result: MosaicResearchResult | null;
   message: string;
@@ -1136,6 +1138,18 @@ type MosaicEmbeddingJob = {
   summary?: { embedded: number; metadataOnly: number; cacheHits: number; errors: number };
 };
 type AtlasSimilarityMode = "hybrid" | "visual" | "metadata";
+type MosaicAiProviderId = "auto" | "codex" | "local" | "openrouter";
+type MosaicAiProviderCatalog = {
+  defaultProvider: Exclude<MosaicAiProviderId, "auto">;
+  providers: Array<{
+    id: Exclude<MosaicAiProviderId, "auto">;
+    label: string;
+    configured: boolean;
+    local: boolean;
+    model: string | null;
+    detail: string;
+  }>;
+};
 type MosaicWorkspace = { id: string; name: string; profile?: string; description?: string };
 type MosaicWorkspaceOperation = { workspaceId: string; epoch: number; signal: AbortSignal };
 type MosaicArtifact = {
@@ -1192,6 +1206,7 @@ const MOSAIC_ONBOARDING_KEY = "mosaic:onboarding:dismissed:v1";
 const MOSAIC_ACTIVE_WORKSPACE_KEY = "mosaic:workspace:active:v1";
 const MOSAIC_ARTIFACTS_FALLBACK_KEY = "mosaic:artifacts:fallback:v1";
 const MOSAIC_LOCALE_KEY = "mosaic:locale:v1";
+const MOSAIC_AI_PROVIDER_KEY = "mosaic:ai:provider:v1";
 const ATLAS_TERMINAL_DISCOVERY_STATUSES = new Set<AtlasDiscoveryStatus>(["succeeded", "failed", "blocked", "cancelled"]);
 const ATLAS_DISCOVERY_SOURCE_LABELS: Record<string, string> = { "zalando-ch": "Zalando CH", "aboutyou-ch": "About You CH", aliexpress: "AliExpress" };
 const MOSAIC_TERMINAL_RESEARCH_STATUSES = new Set<MosaicResearchRun["status"]>([
@@ -1888,6 +1903,8 @@ export default function Home() {
   const [catalogStatus, setCatalogStatus] = useState("loading…");
   const [visualMode, setVisualMode] = useState<"sequential" | "sheet">("sheet");
   const [reasoningEffort, setReasoningEffort] = useState<"low" | "medium">("low");
+  const [aiProvider, setAiProvider] = useState<MosaicAiProviderId>("auto");
+  const [aiProviders, setAiProviders] = useState<MosaicAiProviderCatalog | null>(null);
   const [promptImages, setPromptImages] = useState<AtlasPromptImage[]>([]);
   const [promptProductIds, setPromptProductIds] = useState<string[]>([]);
   const [promptCollectionIds, setPromptCollectionIds] = useState<string[]>([]);
@@ -1978,6 +1995,36 @@ export default function Home() {
     setLocale(next);
     document.documentElement.lang = next;
     try { window.localStorage.setItem(MOSAIC_LOCALE_KEY, next); } catch { /* optional */ }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(`${ATLAS_API}/ai/providers`, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("provider catalog unavailable");
+        return response.json() as Promise<MosaicAiProviderCatalog>;
+      })
+      .then((catalog) => {
+        setAiProviders(catalog);
+        let stored: MosaicAiProviderId | null = null;
+        try {
+          const value = window.localStorage.getItem(MOSAIC_AI_PROVIDER_KEY);
+          if (value === "auto" || value === "codex" || value === "local" || value === "openrouter") stored = value;
+        } catch { /* optional */ }
+        const storedAvailable = stored === "auto" || catalog.providers.some((provider) => provider.id === stored && provider.configured);
+        setAiProvider(stored && storedAvailable ? stored : catalog.defaultProvider);
+      })
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setAiProviders(null);
+        setAiProvider("codex");
+      });
+    return () => controller.abort();
+  }, []);
+
+  const changeAiProvider = useCallback((provider: MosaicAiProviderId) => {
+    setAiProvider(provider);
+    try { window.localStorage.setItem(MOSAIC_AI_PROVIDER_KEY, provider); } catch { /* optional */ }
   }, []);
 
   const atlasElementRef = useRef<HTMLDivElement>(null);
@@ -3594,6 +3641,7 @@ export default function Home() {
           constraints: activeMosaicResearchConstraints(researchFreshnessBoundary),
           budget,
           reasoningEffort,
+          provider: aiProvider,
           locale,
         }),
         signal: operation.signal,
@@ -4267,7 +4315,14 @@ export default function Home() {
               {!assistantOpen && aiStatus && <span className={`aiStatus atlasAiStatus${activeResearchRun ? ` research-${activeResearchRun.status}` : ""}`}><b>{activeResearchRun ? "✦" : ""}</b>{aiStatus}{activeResearchRun && assistantBusy && <button type="button" onClick={() => void cancelMosaicResearch()}>{researchText.stop}</button>}{activeResearchCanResume && <button type="button" onClick={() => void resumeMosaicResearch()}>{researchText.resume}</button>}{!assistantBusy && (aiItems || activeResearchRun && MOSAIC_TERMINAL_RESEARCH_STATUSES.has(activeResearchRun.status)) && <button type="button" onClick={() => { setAiItems(null); setAiStatus(""); setActiveResearchRun(null); setResearchEvents([]); }}>×</button>}</span>}
               {!assistantOpen && assistantFollowUps.map((followUp) => <button type="button" className="mosaicResearchFollowUp" key={followUp} onClick={() => prepareMosaicResearchFollowUp(followUp, activeResearchRun?.result ?? latestAssistantMessage?.result ?? undefined)}>{followUp}</button>)}
             </div>}
-            {assistantOpen && <div className="mosaicComposerFooter"><span>{t("constraints")}: {showClothingFallback ? `${selectedSizes.length ? selectedSizes.join(" / ") : t("allSizes")} · ` : ""}{sourceFilter === "all" ? t("allSources") : sourceFilter.replace("source:", "")}{dynamicFilterCount ? ` · ${dynamicFilterCount}` : ""}</span><label>{t("thinking")} <select value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as "low" | "medium")}><option value="low">{t("fast")}</option><option value="medium">{t("thorough")}</option></select></label></div>}
+            {assistantOpen && <div className="mosaicComposerFooter">
+              <span>{t("constraints")}: {showClothingFallback ? `${selectedSizes.length ? selectedSizes.join(" / ") : t("allSizes")} · ` : ""}{sourceFilter === "all" ? t("allSources") : sourceFilter.replace("source:", "")}{dynamicFilterCount ? ` · ${dynamicFilterCount}` : ""}</span>
+              <label>{t("aiProvider")} <select value={aiProvider} onChange={(event) => changeAiProvider(event.target.value as MosaicAiProviderId)}>
+                <option value="auto">{t("automatic")}{aiProviders ? ` · ${aiProviders.providers.find((provider) => provider.id === aiProviders.defaultProvider)?.label ?? aiProviders.defaultProvider}` : ""}</option>
+                {(aiProviders?.providers ?? [{ id: "codex", label: "Codex", configured: true, local: true, model: null, detail: "" }]).map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.configured}>{provider.label}{provider.model ? ` · ${provider.model}` : ""}{provider.configured ? "" : " · not configured"}</option>)}
+              </select></label>
+              <label>{t("thinking")} <select value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as "low" | "medium")}><option value="low">{t("fast")}</option><option value="medium">{t("thorough")}</option></select></label>
+            </div>}
           </form>
 
           <div className="mosaicBoardBar">

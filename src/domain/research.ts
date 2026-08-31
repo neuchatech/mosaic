@@ -53,6 +53,7 @@ export const researchBudgetSchema = z.object({
 });
 
 export const researchAgentAccessSchema = z.enum(["scoped", "full"]);
+export const researchAiProviderSchema = z.enum(["auto", "codex", "local", "openrouter"]);
 
 export const DEFAULT_RESEARCH_BUDGET = {
   maxDurationMs: 180_000,
@@ -91,6 +92,8 @@ export const researchRequestObjectSchema = z.object({
   budget: researchBudgetSchema.default(DEFAULT_RESEARCH_BUDGET),
   reasoningEffort: z.enum(["low", "medium"]).default("medium"),
   agentAccess: researchAgentAccessSchema.default("scoped"),
+  provider: researchAiProviderSchema.default("auto"),
+  model: z.string().trim().min(1).max(240).nullable().default(null),
   locale: z.string().trim().min(2).max(35).default("en"),
 });
 
@@ -337,6 +340,7 @@ export const researchRunEventSchema = z.object({
 export type ResearchConstraint = z.infer<typeof researchConstraintSchema>;
 export type ResearchBudget = z.infer<typeof researchBudgetSchema>;
 export type ResearchAgentAccess = z.infer<typeof researchAgentAccessSchema>;
+export type ResearchAiProvider = z.infer<typeof researchAiProviderSchema>;
 export type ResearchRequest = z.infer<typeof researchRequestSchema>;
 export type ResearchRequestInput = z.input<typeof researchRequestSchema>;
 export type ResearchSourceCapability = z.infer<typeof researchSourceCapabilitySchema>;

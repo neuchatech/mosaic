@@ -28,7 +28,7 @@ Requirements:
 
 - Node.js 22.13 or newer
 - npm
-- Optional: a local Codex login for assistant and Vision features
+- Optional: Codex, a local OpenAI-compatible server, or OpenRouter for assistant features
 
 ```bash
 git clone <your-fork-or-repository-url> neuchatech-mosaic
@@ -43,9 +43,19 @@ The first launch creates an empty private workspace and database under `data/`. 
 
 All files under `data/` are ignored by Git. Back up `data/wardrobe-atlas.sqlite` with SQLite's backup command while the app is running; do not copy only the main database file when WAL files may be active.
 
-## Codex setup
+## AI setup
 
-MosAIc's deterministic board, filters, imports, and local services work without Codex. Assistant planning, visual scoring, and agent-guided acquisition use your local Codex installation—no application API key is stored in this repository.
+MosAIc's deterministic board, filters, imports, CLIP index, and local services work without an AI provider. The conversational research agent supports Codex, local OpenAI-compatible inference (including LM Studio), and OpenRouter. All three use the same durable runs and workspace-scoped MosAIc tools.
+
+Copy the example configuration if you want to change the default provider:
+
+```bash
+cp .env.example .env
+```
+
+The assistant's provider menu shows only configured options as available. **Automatic** follows `MOSAIC_AI_PROVIDER`. See [AI providers](docs/AI_PROVIDERS.md) for complete local and OpenRouter setup.
+
+### Codex
 
 1. Install and sign in to the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli).
 2. Open this repository as a trusted Codex project.
@@ -65,7 +75,7 @@ context. The expanded composer shows a compact action recap and the final
 answer; it never exposes private chain-of-thought. You can continue with a
 follow-up, revisit an earlier conversation, or start a clean one.
 
-For each turn, Luna sees the
+For each turn, the selected model sees the
 workspace's real fields, facets, selected items, collections, available source
 capabilities, hard constraints, soft preferences, and a resource budget. It can
 choose and revise its own combination of structured queries, visual retrieval,
@@ -142,6 +152,7 @@ npm test
 - [Product contract](docs/V1_PRODUCT.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Agentic research architecture](docs/AGENTIC_RESEARCH.md)
+- [AI providers](docs/AI_PROVIDERS.md)
 - [Filter DSL](docs/FILTERS.md)
 - [Chrome-assisted acquisition](docs/CHROME_ACQUISITION.md)
 - [Generative Studio plan](docs/GENERATIVE_TRYON.md)
