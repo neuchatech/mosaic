@@ -217,6 +217,8 @@ test("OpenAI-compatible agent executes scoped MCP tools and returns validated JS
   assert.deepEqual(called, ["get_research_context"]);
   assert.deepEqual(events, ["tool-call", "tool-result"]);
   assert.equal(requests.length, 2);
+  assert.equal(requests[0]?.max_tokens, 512);
+  assert.equal(requests[0]?.tool_choice, "required");
   const secondMessages = requests[1]?.messages as Array<{ role: string; tool_call_id?: string }>;
   assert.equal(secondMessages.at(-1)?.role, "tool");
   assert.equal(secondMessages.at(-1)?.tool_call_id, "call-one");

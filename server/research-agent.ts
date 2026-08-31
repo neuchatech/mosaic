@@ -170,7 +170,39 @@ function parseCodexProgress(line: string): ResearchAgentProgress | null {
   return null;
 }
 
-export function researchAgentInstruction(run: ResearchRun): string {
+function compactResearchManifest(manifest: ResearchWorkspaceManifest): Record<string, unknown> {
+  return {
+    version: manifest.version,
+    workspace: manifest.workspace,
+    fields: manifest.fields.map((field) => ({
+      key: field.key,
+      label: field.label,
+      primitiveType: field.primitiveType,
+      unit: field.unit,
+      semanticRole: field.semanticRole,
+      facetable: field.facetable,
+      sortable: field.sortable,
+    })),
+    facetHints: manifest.facets.map((facet) => ({
+      fieldKey: facet.fieldKey,
+      coverage: facet.coverage,
+      cardinality: facet.cardinality,
+      values: facet.values.slice(0, 12),
+      min: facet.min,
+      max: facet.max,
+    })),
+    counts: manifest.counts,
+    selectedItems: manifest.selectedItems,
+    selectedCollections: manifest.selectedCollections,
+    sources: manifest.sources,
+    constraints: manifest.constraints,
+    budget: manifest.budget,
+    visualIndex: manifest.visualIndex,
+    conversation: manifest.conversation,
+  };
+}
+
+export function researchAgentInstruction(run: ResearchRun, options: { compactManifest?: boolean } = {}): string {
   const hard = run.request.constraints.filter((constraint) => constraint.strength === "hard");
   const soft = run.request.constraints.filter((constraint) => constraint.strength === "soft");
   return [
@@ -193,7 +225,7 @@ export function researchAgentInstruction(run: ResearchRun): string {
     `Hard constraints:\n${JSON.stringify(hard)}`,
     `Soft preferences:\n${JSON.stringify(soft)}`,
     `Resource budget (enforced by the runtime and tools):\n${JSON.stringify(run.request.budget)}`,
-    `Workspace manifest:\n${JSON.stringify(run.manifest)}`,
+    `Workspace manifest:\n${JSON.stringify(options.compactManifest ? compactResearchManifest(run.manifest) : run.manifest)}`,
   ].join("\n\n");
 }
 
@@ -582,7 +614,7 @@ export class ResearchAgentService {
     if (provider.id === "codex") return runCodexResearchAgent;
     return (input) => runOpenAiCompatibleResearchAgent(input, {
       provider: provider as ResolvedAiProvider,
-      instruction: researchAgentInstruction(input.run),
+      instruction: researchAgentInstruction(input.run, { compactManifest: true }),
     });
   }
 

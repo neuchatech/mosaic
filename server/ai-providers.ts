@@ -377,8 +377,11 @@ export async function runOpenAiCompatibleResearchAgent(
           model: options.provider.model,
           messages,
           tools,
-          tool_choice: "auto",
+          tool_choice: round === 0 ? "required" : "auto",
           temperature: 0.2,
+          max_tokens: round === 0
+            ? 512
+            : input.run.request.reasoningEffort === "low" ? 1_024 : 4_096,
         }),
         signal: requestSignal,
         redirect: options.provider.id === "local" ? "error" : "follow",
