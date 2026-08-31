@@ -2605,6 +2605,8 @@ export default function Home() {
       setPreferencesReady(true);
     });
     return () => { cancelled = true; };
+    // These callbacks are intentionally captured once during preference hydration.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
