@@ -54,6 +54,70 @@ test("recognized multi-word shops stay canonical after natural connective phrase
   assert.deepEqual(plan.effectiveShops, ["aboutyou-ch"]);
 });
 
+test("an explicit French add request from About You starts discovery instead of filtering", () => {
+  const plan = heuristicAssistantPlan(plannerInput({
+    prompt: "ajoute des pantalons baggy fins depuis aboutyou",
+    workspaceProfile: "clothing",
+  }));
+
+  assert.equal(plan.action, "discover");
+  assert.equal(plan.steps[0]?.type, "discover_adapter");
+  assert.deepEqual(plan.effectiveShops, ["aboutyou-ch"]);
+  assert.deepEqual(plan.steps[0]?.type === "discover_adapter" ? plan.steps[0].sources : [], ["aboutyou-ch"]);
+  assert.match(plan.steps[0]?.type === "discover_adapter" ? plan.steps[0].query : "", /pantalons baggy fins/i);
+});
+
+test("named-shop acquisition routes to discovery in every supported UI language", () => {
+  const prompts = [
+    "ajoutes des nouvelles chaussettes de aboutyou",
+    "add new socks from About You",
+    "füge neue Socken von About You hinzu",
+    "aggiungi nuovi calzini da About You",
+    "añade calcetines nuevos de About You",
+  ];
+
+  for (const prompt of prompts) {
+    const plan = heuristicAssistantPlan(plannerInput({ prompt, workspaceProfile: "clothing" }));
+    assert.equal(plan.action, "discover", prompt);
+    assert.equal(plan.steps[0]?.type, "discover_adapter", prompt);
+    assert.deepEqual(plan.effectiveShops, ["aboutyou-ch"], prompt);
+    assert.deepEqual(plan.steps[0]?.type === "discover_adapter" ? plan.steps[0].sources : [], ["aboutyou-ch"], prompt);
+  }
+});
+
+test("mentioning a shop without an acquisition verb remains a local filter", () => {
+  const plan = heuristicAssistantPlan(plannerInput({
+    prompt: "montre les chaussettes de aboutyou déjà dans mon espace",
+    workspaceProfile: "clothing",
+  }));
+
+  assert.equal(plan.action, "filter");
+  assert.equal(plan.steps[0]?.type, "filter");
+});
+
+test("one assistant request can discover from multiple named shops", () => {
+  const plan = heuristicAssistantPlan(plannerInput({
+    prompt: "ajoute 12 pantalons larges depuis About You et Zalando",
+    workspaceProfile: "clothing",
+  }));
+
+  assert.equal(plan.action, "discover");
+  assert.equal(plan.targetCount, 12);
+  assert.deepEqual(plan.effectiveShops, ["zalando-ch", "aboutyou-ch"]);
+  assert.deepEqual(plan.steps[0]?.type === "discover_adapter" ? plan.steps[0].sources : [], ["zalando-ch", "aboutyou-ch"]);
+});
+
+test("adding a selection to a collection is not mistaken for remote discovery", () => {
+  const plan = heuristicAssistantPlan(plannerInput({
+    prompt: "ajoute cette sélection à ma collection automne",
+    productIds: ["item-a", "item-b"],
+    collectionIds: ["collection-autumn"],
+    workspaceProfile: "clothing",
+  }));
+
+  assert.equal(plan.steps[0]?.type, "collection_operation");
+});
+
 test("stock is a local filter unless the user explicitly asks to refresh it", () => {
   const filter = heuristicAssistantPlan(plannerInput({
     prompt: "Montre uniquement les vestes brunes en stock sous CHF 200 dans cet espace",
@@ -163,6 +227,21 @@ test("selected items and collections remain explicit reusable scopes", () => {
   assert.equal(collection.steps[0]?.type, "compare_summarize");
   assert.equal(collection.steps[0]?.type === "compare_summarize" ? collection.steps[0].scope : "", "selected_collections");
   assert.deepEqual(collection.steps[0]?.type === "compare_summarize" ? collection.steps[0].collectionIds : [], ["collection-autumn"]);
+});
+
+test("an explicit visual-analysis request is not reduced to vector similarity", () => {
+  const plan = heuristicAssistantPlan(plannerInput({
+    prompt: "analyse visuellement cette pièce et montre-moi 5 articles au même style",
+    productIds: ["item-a"],
+    workspaceProfile: "clothing",
+  }));
+
+  assert.equal(plan.action, "visual");
+  assert.equal(plan.targetCount, 5);
+  assert.equal(plan.steps[0]?.type, "visual_score");
+  assert.deepEqual(plan.steps[0]?.type === "visual_score" ? plan.steps[0].itemIds : [], ["item-a"]);
+  assert.ok(plan.steps[0]?.type === "visual_score" && plan.steps[0].candidateLimit <= 50);
+  assert.ok(plan.steps[0]?.type === "visual_score" && plan.steps[0].topN <= 24);
 });
 
 test("finalization rejects out-of-scope ids and forward dependencies", () => {

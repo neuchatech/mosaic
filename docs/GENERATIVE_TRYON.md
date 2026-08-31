@@ -44,7 +44,7 @@ The first provider can be a general image-edit model. A dedicated virtual try-on
 
 1. The unified composer detects `try_on` when a person photo and garment attachments are present. Before a provider exists, it creates a local draft and opens Studio instead of silently doing something else.
 2. Studio shows the person image, garment slots (`haut`, `couche`, `bas`, `chaussures`, `accessoire`), an editable prompt, and the provider/privacy state.
-3. `Générer` creates a queued job. The rail streams `queued → generating → complete/error` and survives reloads.
+3. **Generate** creates a queued job. The rail streams `queued → generating → complete/error` and survives reloads.
 4. `Variante` keeps the same inputs and branches from an attempt. Replacing one garment creates a new job, preserving the old comparison.
 5. Completed attempts can be dragged back into the AI composer as mood-board references, but are never treated as shop products.
 

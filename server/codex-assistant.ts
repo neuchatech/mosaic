@@ -39,9 +39,10 @@ export async function createAssistantPlanWithCodex(input: AssistantPlannerInput)
     "Supported steps: filter queries the current workspace; import_urls imports only supplied public HTTP(S) URLs; discover_adapter searches supported adapters; enrich refreshes bounded fields; similarity uses cached local hybrid embeddings; visual_score scores a frozen bounded candidate set; collection_operation creates or updates reusable selections; compare_summarize compares or summarizes selected inputs; compose makes an outfit or another profile-specific set; artifact creates a draft or requests configured generation; clarify asks one necessary question.",
     "Use scope=selected_items or selected_collections only with supplied ids. Use imported_urls after an import step, previous_step with a dependency, filtered_workspace for the current result set, and workspace only when the whole local workspace is explicitly requested.",
     "For collection_operation, scope identifies the items being operated on; every update/add/remove step must also include the supplied target collection id in collectionIds.",
-    "Never emit itemIds, collectionIds, or URLs outside the supplied request scope. Remote work must have explicit targetCount/candidateLimit bounds. Keep visual candidateLimit <=160 and topN <=60.",
+    "Never emit itemIds, collectionIds, or URLs outside the supplied request scope. Remote work must have explicit targetCount/candidateLimit bounds. Keep visual candidateLimit <=50 and topN <=24; local CLIP preselection runs before the bounded visual review.",
     "Direct product links are imported first. Add subsequent steps when the user also asks to compare, enrich, find similar items, compose, collect, or create an artifact. Successful imports must not be discarded because another link fails.",
     "Use discover_adapter only for broad search on installed adapter ids: zalando-ch, aboutyou-ch, and aliexpress. Unknown shops are usable through supplied public product URLs when structured data is available; otherwise clarify rather than silently substituting another shop.",
+    "An explicit request to add, fetch, import, scrape, scan, find, or retrieve products from a named supported shop is discover_adapter, not a filter of existing products. This applies equally in English, French, German, Italian, and Spanish: for example 'add ... from', 'ajoute/ajoutes ... de/depuis', 'füge ... von ... hinzu', 'aggiungi ... da', and 'añade ... de'.",
     "Use explicit constraints in the user's text over defaults. sizePolicy=explicit with exact labels, all when size constraints are removed or the workspace is not clothing, otherwise default. Apply the same policy logic to shops and price. Preserve exact requested sources even when they require clarification.",
     "For clothing discovery with explicit sizes or live availability, follow discovery with a bounded enrich step. For TVs and generic products, do not introduce garment sizes or clothing composition language.",
     "A request to show or filter items that are already marked in stock is a filter step, not enrich. Use enrich only when the user explicitly asks to verify, refresh, update, retrieve, or scrape current remote details.",
@@ -65,7 +66,17 @@ export async function createAssistantPlanWithCodex(input: AssistantPlannerInput)
       timeoutMs: 120_000,
     });
     const parsed = assistantPlanSchema.parse(JSON.parse(await readFile(outputPath, "utf8")));
-    return finalizeAssistantPlan(parsed, input, "gpt-5.6-luna");
+    const finalized = finalizeAssistantPlan(parsed, input, "gpt-5.6-luna");
+    const generatedPrimary = finalized.steps.find((step) => step.id === finalized.primaryStepId);
+    const fallbackPrimary = fallback.steps.find((step) => step.id === fallback.primaryStepId);
+    if (fallbackPrimary?.type === "visual_score" && generatedPrimary?.type !== "visual_score") {
+      return fallback;
+    }
+    if (generatedPrimary?.type === "filter" && fallbackPrimary
+      && ["discover_adapter", "similarity", "visual_score", "import_urls"].includes(fallbackPrimary.type)) {
+      return fallback;
+    }
+    return finalized;
   } catch {
     return fallback;
   }

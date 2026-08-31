@@ -1,4 +1,4 @@
-# Mosaic V1 architecture
+# Neuchatech MosAIc V1 architecture
 
 ```text
 assistant request ── bounded typed plan ── deterministic executor

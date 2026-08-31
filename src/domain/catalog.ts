@@ -21,9 +21,9 @@ export const productSchema = z.object({
   description: z.string().default(""),
   price: z.number().nonnegative().nullable(),
   originalPrice: z.number().nonnegative().nullable().default(null),
-  currency: z.string().length(3).default("CHF"),
-  category: z.string().default("Autre"),
-  color: z.string().default("Inconnue"),
+  currency: z.string().length(3).default("XXX"),
+  category: z.string().default("Other"),
+  color: z.string().default("Unknown"),
   colorFamily: z.string().default("unknown"),
   fit: z.string().default("unknown"),
   attributes: z.record(

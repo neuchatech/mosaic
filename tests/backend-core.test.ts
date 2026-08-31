@@ -5,7 +5,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 import { migrateDatabase } from "../server/database";
 import { CatalogRepository } from "../server/repository";
-import { seedProducts } from "../src/catalog/seed";
+import { seedProducts } from "./fixtures/products";
 import { filterSpecSchema, productSchema, type Product } from "../src/domain/catalog";
 import { applyFilter } from "../src/domain/filter";
 

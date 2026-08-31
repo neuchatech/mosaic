@@ -4,9 +4,9 @@ import { resolve } from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
 import { CatalogRepository } from "../server/repository";
-import { convertCodexNode } from "../server/codex-bridge";
+import { convertCodexNode, normalizeCodexFilterForCatalog, relaxSoftFilterForCatalog } from "../server/codex-bridge";
 import { getVisualSelection } from "../server/visual-selection";
-import { seedProducts } from "../src/catalog/seed";
+import { seedProducts } from "./fixtures/products";
 import { filterSpecSchema } from "../src/domain/catalog";
 import { applyFilter } from "../src/domain/filter";
 import { compactProjection } from "../src/projection/compact";
@@ -22,16 +22,16 @@ test("nested filters can inspect standard, dynamic, and negated criteria", () =>
       type: "group",
       conjunction: "and",
       children: [
-        { type: "clause", field: "colorFamily", operator: "in", value: ["brown", "beige"] },
+        { type: "clause", field: "colorFamily", operator: "in", value: ["blue", "grey", "beige"] },
         { type: "not", child: { type: "clause", field: "tags", operator: "contains", value: "sportswear" } },
         { type: "clause", field: "scores.style_match", operator: "gte", value: 85 },
-        { type: "clause", field: "attributes.season", operator: "eq", value: "autumn-winter" }
+        { type: "clause", field: "attributes.fixture", operator: "eq", value: true }
       ]
     },
     limit: 100
   });
   const result = applyFilter(seedProducts, filter);
-  assert.deepEqual(result.map((product) => product.id), ["seed_1", "seed_2", "seed_3"]);
+  assert.deepEqual(result.map((product) => product.id), ["fixture-1", "fixture-2", "fixture-3"]);
 });
 
 test("numeric filters do not treat a missing reference price as zero", () => {
@@ -161,13 +161,67 @@ test("Codex filter conversion removes placeholder clauses from groups", () => {
   });
 });
 
+test("semantic catalog filters repair invented text fields and preserve at-least-two logic", () => {
+  const products = [
+    { ...seedProducts[0]!, id: "ribbed-knit", sourceId: "ribbed-knit", name: "Ribbed knit jumper", category: "Mailles", fit: "straight" },
+    { ...seedProducts[1]!, id: "baggy-cord", sourceId: "baggy-cord", name: "Baggy corduroy trousers", category: "Pantalons", fit: "large" },
+    { ...seedProducts[2]!, id: "plain-baggy", sourceId: "plain-baggy", name: "Baggy cotton trousers", category: "Pantalons", fit: "large" },
+    { ...seedProducts[0]!, id: "plain-shirt", sourceId: "plain-shirt", name: "Poplin shirt", category: "Chemises", fit: "straight" },
+  ];
+  const generated = filterSpecSchema.parse({
+    id: "semantic-two-of-three",
+    name: "Textured, knit or baggy",
+    where: {
+      type: "group",
+      conjunction: "or",
+      children: [
+        { type: "group", conjunction: "and", children: [
+          { type: "clause", field: "attributes.listingText", operator: "contains", value: "texturé" },
+          { type: "clause", field: "category", operator: "eq", value: "Mailles" },
+        ] },
+        { type: "group", conjunction: "and", children: [
+          { type: "clause", field: "attributes.listingText", operator: "contains", value: "texturé" },
+          { type: "clause", field: "fit", operator: "eq", value: "baggy" },
+        ] },
+        { type: "group", conjunction: "and", children: [
+          { type: "clause", field: "category", operator: "eq", value: "Mailles" },
+          { type: "clause", field: "fit", operator: "eq", value: "baggy" },
+        ] },
+      ],
+    },
+    limit: 100,
+  });
+  const repaired = { ...generated, where: normalizeCodexFilterForCatalog(generated.where, products) };
+  assert.deepEqual(applyFilter(products, repaired).map((product) => product.id), ["ribbed-knit", "baggy-cord"]);
+});
+
+test("soft preferences relax before a valid semantic search becomes an empty board", () => {
+  const products = [
+    { ...seedProducts[0]!, id: "leather-jacket", sourceId: "leather-jacket", name: "Leather jacket", category: "Vestes", fit: "unknown", materials: ["leather"] },
+    { ...seedProducts[1]!, id: "cotton-jacket", sourceId: "cotton-jacket", name: "Cotton jacket", category: "Vestes", fit: "courte", materials: ["cotton"] },
+  ];
+  const exact = filterSpecSchema.parse({
+    id: "soft-cut",
+    name: "Leather jackets, preferably short",
+    where: { type: "group", conjunction: "and", children: [
+      { type: "clause", field: "category", operator: "eq", value: "Vestes" },
+      { type: "clause", field: "materials", operator: "in", value: ["leather"] },
+      { type: "clause", field: "fit", operator: "eq", value: "courte" },
+    ] },
+    limit: 100,
+  });
+  assert.equal(applyFilter(products, exact).length, 0);
+  const relaxed = relaxSoftFilterForCatalog(exact, "vestes en cuir, plutôt courtes", products);
+  assert.deepEqual(applyFilter(products, relaxed).map((product) => product.id), ["leather-jacket"]);
+});
+
 test("SQLite repository persists products, decisions, and arbitrary scores", () => {
   const db = new Database(":memory:");
   db.exec(readFileSync(resolve(process.cwd(), "server/schema.sql"), "utf8"));
   const repository = new CatalogRepository(db);
   assert.equal(repository.upsertProducts(seedProducts), seedProducts.length);
-  assert.equal(repository.patchProducts(["seed_1"], { decision: "rejected", scores: { too_workwear: 82 } }), 1);
-  const product = repository.getProduct("seed_1");
+  assert.equal(repository.patchProducts(["fixture-1"], { decision: "rejected", scores: { too_workwear: 82 } }), 1);
+  const product = repository.getProduct("fixture-1");
   assert.equal(product?.decision, "rejected");
   assert.equal(product?.scores.too_workwear, 82);
   assert.equal(repository.stats().products, seedProducts.length);
@@ -181,7 +235,7 @@ test("visual jobs stream only non-rejected scores strictly above their threshold
   repository.upsertProducts(seedProducts);
   repository.createVisualJob({
     id: "vision_test",
-    prompt: "brun ténébreux",
+    prompt: "visual fixture",
     maxInspections: 3,
     targetCount: 2,
     threshold: .5,
@@ -189,15 +243,15 @@ test("visual jobs stream only non-rejected scores strictly above their threshold
     referenceImages: ["/tmp/mood-board.jpg"],
   });
   repository.recordVisualAssessment({
-    jobId: "vision_test", productId: "seed_1", score: .5, rejected: false,
+    jobId: "vision_test", productId: "fixture-1", score: .5, rejected: false,
     reason: "Borderline", signals: ["brown"],
   });
   repository.recordVisualAssessment({
-    jobId: "vision_test", productId: "seed_2", score: .51, rejected: false,
+    jobId: "vision_test", productId: "fixture-2", score: .51, rejected: false,
     reason: "Pass", signals: ["wide"],
   });
   repository.recordVisualAssessment({
-    jobId: "vision_test", productId: "seed_3", score: .9, rejected: true,
+    jobId: "vision_test", productId: "fixture-3", score: .9, rejected: true,
     reason: "Hard conflict", signals: [],
   });
   const job = repository.getVisualJob("vision_test");
@@ -205,10 +259,10 @@ test("visual jobs stream only non-rejected scores strictly above their threshold
   assert.equal(job?.selected, 1);
   assert.equal(job?.analysisMode, "sequential");
   assert.deepEqual(job?.referenceImages, ["/tmp/mood-board.jpg"]);
-  assert.equal(repository.getProduct("seed_2")?.scores.visual_match, undefined);
-  assert.equal(repository.listVisualAssessments("vision_test")[0]?.productId, "seed_3");
+  assert.equal(repository.getProduct("fixture-2")?.scores.visual_match, undefined);
+  assert.equal(repository.listVisualAssessments("vision_test")[0]?.productId, "fixture-3");
   const view = getVisualSelection("vision_test", repository);
-  assert.deepEqual(view?.products.map((product) => product.id), ["seed_2"]);
+  assert.deepEqual(view?.products.map((product) => product.id), ["fixture-2"]);
   assert.equal(view?.products[0]?.scores.visual_match, 51);
   assert.equal(view?.products[0]?.attributes.visual_reason, "Pass");
   db.close();

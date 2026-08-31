@@ -4,7 +4,11 @@ import { dirname } from "node:path";
 import test from "node:test";
 import { extractGenericJsonLdProduct } from "../collector/adapters/generic-jsonld";
 import { loadProductImage } from "../mcp/contact-sheet";
-import { fetchPublicBytes, setPublicNetworkTestHooksForTests } from "../server/public-html";
+import {
+  fetchPublicBytes,
+  parseRetryAfter,
+  setPublicNetworkTestHooksForTests,
+} from "../server/public-html";
 import { catalogMediaPath, persistCatalogImages } from "../server/media";
 import {
   isPublicIpAddress,
@@ -15,6 +19,13 @@ import {
 import { productSchema, type Product } from "../src/domain/catalog";
 
 const publicResolver: PublicHostResolver = async () => [{ address: "8.8.8.8", family: 4 }];
+
+test("Retry-After supports delay seconds and HTTP dates", () => {
+  const now = Date.parse("2026-08-31T10:00:00.000Z");
+  assert.equal(parseRetryAfter("45", now), 45_000);
+  assert.equal(parseRetryAfter("Sun, 31 Aug 2026 10:02:00 GMT", now), 120_000);
+  assert.equal(parseRetryAfter("not-a-date", now), undefined);
+});
 
 function productWithImage(
   image: string,

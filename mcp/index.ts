@@ -502,16 +502,32 @@ server.registerTool("inspect_visual_context", {
   };
 });
 
-server.registerTool("record_visual_assessment", {
+const visualAssessmentInputSchema = {
+  jobId: z.string().min(1),
+  productId: z.string().min(1),
+  score: z.number().min(0).max(1),
+  rejected: z.boolean().default(false),
+  reason: z.string().min(1).max(300),
+  signals: z.array(z.string().max(80)).max(6).default([]),
+};
+
+if (scopedVisualJobId) server.registerTool("propose_visual_assessment", {
+  title: "Propose one visual assessment",
+  description: "After inspecting exactly one frozen candidate image, return its 0–1 score and rationale. This tool is read-only; the scoped local runner validates and persists successful proposals.",
+  inputSchema: visualAssessmentInputSchema,
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+}, async (input) => {
+  assertVisualJobScope(input.jobId);
+  if (!repository.isVisualJobCandidate(input.jobId, input.productId)) {
+    throw new Error(`Product ${input.productId} is not an allowed candidate for visual job ${input.jobId}.`);
+  }
+  return textResult(input);
+});
+else server.registerTool("record_visual_assessment", {
   title: "Record one visual assessment",
-  description: "After inspecting exactly one product image, record its 0–1 relevance score and concise rationale. This immediately streams progress to the local UI.",
+  description: "Record a validated 0–1 visual assessment in an interactive Mosaic session.",
   inputSchema: {
-    jobId: z.string().min(1),
-    productId: z.string().min(1),
-    score: z.number().min(0).max(1),
-    rejected: z.boolean().default(false),
-    reason: z.string().min(1).max(300),
-    signals: z.array(z.string().max(80)).max(6).default([]),
+    ...visualAssessmentInputSchema,
   },
   annotations: { readOnlyHint: false, idempotentHint: true },
 }, async (input) => {

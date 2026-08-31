@@ -35,7 +35,7 @@ export async function createTransformersClipEncoder(
   const modelSpec = options.model ?? DEFAULT_CLIP_MODEL;
   const transformers = await import("@huggingface/transformers");
   const cacheDir = resolve(options.modelCacheDir);
-  // Keep every model/config/processor artifact in Wardrobe Atlas' ignored local cache.
+  // Keep every model/config/processor artifact in MosAIc's ignored local cache.
   transformers.env.cacheDir = cacheDir;
   const localFilesOnly = !options.allowModelDownload;
   const progressCallback = (progress: { status?: string; file?: string; progress?: number }) => {

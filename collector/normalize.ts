@@ -11,7 +11,7 @@ export function guessCategory(value: string): string {
   if (/pull|pullover|pulli|sweater|maille|knit|strick|cardigan|gilet|\bweste\b/.test(normalized)) return "Mailles";
   if (/veste|jacket|jacke|blouson|surchemise|overshirt|manteau|mantel|coat|bomber/.test(normalized)) return "Vestes";
   if (/chemise|shirt|\bhemd\b/.test(normalized)) return "Chemises";
-  return "Autre";
+  return "Other";
 }
 
 export function guessColorFamily(value: string): string {
@@ -76,13 +76,13 @@ export function normalizeProduct(
     description: raw.description ?? "",
     price: raw.price ?? null,
     originalPrice: raw.originalPrice ?? null,
-    currency: raw.currency ?? "CHF",
+    currency: raw.currency ?? "XXX",
     // Shops often expose a very specific taxonomy ("Pantalons cargo",
     // "Vestes de mi-saison", ...). The board facets intentionally use a
     // small canonical set, so normalize the retailer category together with
     // the product copy instead of leaking shop-specific labels into the UI.
     category: guessCategory(`${raw.category ?? ""} ${descriptiveText}`),
-    color: raw.color ?? "Inconnue",
+    color: raw.color ?? "Unknown",
     colorFamily: raw.colorFamily ?? guessColorFamily(descriptiveText),
     fit: raw.fit ?? guessFit(descriptiveText),
     attributes: raw.attributes ?? {},

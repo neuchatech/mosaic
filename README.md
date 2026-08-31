@@ -1,106 +1,133 @@
-# Mosaic · Wardrobe Atlas
+<p align="center">
+  <img src="public/mosaic-logo.svg" alt="Neuchatech MosAIc" width="420" />
+</p>
 
-Mosaic is a private, local-first visual research canvas. Wardrobe Atlas is its first domain profile: it turns shop results, owned garments, and visual references into one compact spatial board. Mosaic remains a selection layer; product pages and checkout stay on the original shop.
+<p align="center">
+  A private, local-first visual research canvas for collecting, comparing, and exploring anything.
+</p>
 
-## What is included
+# Neuchatech MosAIc
 
-- A compact PCA projection: filter a subset, project it again, then pack it into nearby free cells so filtered views do not retain empty holes.
-- A complete nested filter DSL with `and`, `or`, `not`, arbitrary product paths, dynamic `attributes.*` fields, and vision-generated `scores.*` fields.
-- SQLite persistence for products, owned garments, references, decisions with undo, views, outfits, acquisition jobs, frozen Vision candidates, and per-job assessments.
-- Exact available-size filtering with independent stock, price, and size freshness timestamps.
-- A serial, rate-limited Crawlee + Playwright enrichment queue with retry/cancel/recovery, a Zalando Switzerland adapter, and a conservative opt-in JSON-LD fallback.
-- A compact shortlist/compare workflow, targeted refresh, local image import, outfit boards, wardrobe-gap analysis, JSON export, keyboard controls, and responsive/touch behavior.
-- A local Codex MCP server for hard-constrained visual selection, mood-board and wardrobe context, cached contact sheets, structured filters, and streamed per-item reasons.
+MosAIc turns product pages, images, and ideas into a compact visual map. Ask for a direction, paste URLs, drop a moodboard, or select existing items: the assistant plans bounded local operations while the board keeps every result easy to explore.
 
-## Quickstart
+It works especially well for visually driven research—clothing, furniture, televisions, cameras, references—but its workspace schema and filters adapt to the data you import.
 
-Requirements: Node.js 22.13 or newer, npm, and a local Codex login for assistant features.
+## Highlights
+
+- Spatial and grid views with smooth pan, zoom, viewport culling, minimap, and local CLIP-based visual similarity.
+- One multimodal assistant for imports, supported-shop discovery, enrichment, filtering, comparison, collections, and local Studio drafts.
+- Dynamic workspace fields and facets instead of a fixed clothing-only schema.
+- Reusable collections, favorites, decisions with undo, saved views, comparisons, and local artifacts.
+- SQLite persistence with strict workspace isolation and durable background jobs.
+- Local media storage, read-only agent sandboxes, guarded public fetches, and no CAPTCHA bypass or checkout automation.
+- English, French, German, Italian, and Spanish interface with automatic browser-language detection and a manual language switcher.
+
+## Quick start
+
+Requirements:
+
+- Node.js 22.13 or newer
+- npm
+- Optional: a local Codex login for assistant and Vision features
 
 ```bash
+git clone <your-fork-or-repository-url> neuchatech-mosaic
+cd neuchatech-mosaic
 npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`. The local catalog API runs at `http://localhost:8788`. The board, filters, imports, and deterministic local services work without Chrome. Assistant routes use the local Codex login and degrade to a bounded heuristic plan if the structured planner is unavailable.
+Open [http://localhost:3000](http://localhost:3000). The local API runs at `http://localhost:8788`.
 
-On a fresh demo installation, run `npm run db:seed` once before `npm run dev`.
-Do not seed an existing catalog: Mosaic migrates its SQLite schema in place at
-startup while preserving product ids and user decisions. Back up `data/wardrobe-atlas.sqlite`
-before a major upgrade; use SQLite's backup command while the database is live
-rather than copying only the main file when WAL files may be present.
+The first launch creates an empty private workspace and database under `data/`. There is no demo catalog and no default clothing size, shop, currency, or style preference. Start by asking the assistant, adding images, or pasting public product URLs.
 
-The default assistant accepts a request plus URLs, images, selected items, or collections. It returns an ordered, reviewable plan before remote work. Broad discovery stays adapter-backed; public product URLs use structured metadata first.
+All files under `data/` are ignored by Git. Back up `data/wardrobe-atlas.sqlite` with SQLite's backup command while the app is running; do not copy only the main database file when WAL files may be active.
 
-For the strongest visual layout, open **Activity** and choose **Improve** under
-“Local visual placement”. The first run downloads the quantized CLIP vision
-model (about 90 MB), then indexes product images incrementally on-device. Images,
-model files, and vectors stay under the ignored `data/image-cache` directory.
-Later runs reuse the cache; if the model or network is unavailable, Mosaic keeps
-working with its metadata projection.
+## Codex setup
 
-## Collect a user-selected Zalando result page
+MosAIc's deterministic board, filters, imports, and local services work without Codex. Assistant planning, visual scoring, and agent-guided acquisition use your local Codex installation—no application API key is stored in this repository.
+
+1. Install and sign in to the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli).
+2. Open this repository as a trusted Codex project.
+3. Start a new Codex task from the repository root.
+4. Run `/mcp` and confirm that the project-scoped `wardrobe_atlas` server is connected.
+
+The repository includes `.codex/config.toml` and the project skill `.agents/skills/mosaic-acquisition/SKILL.md`. The skill helps Codex choose between a supported adapter, structured public-page import, and an optional visible Chrome workflow.
+
+For Chrome-assisted extraction, install and authorize the Chrome/Computer Use capability in the Codex desktop app, then start a fresh task. Browser access is explicit, visible, read-only, and never silently granted to MosAIc's background agent. See [Chrome-assisted acquisition](docs/CHROME_ACQUISITION.md) and the official [Codex app documentation](https://learn.chatgpt.com/docs/app).
+
+## Visual similarity
+
+Open **Activity** and choose **Improve** under local visual placement. The first run downloads the quantized CLIP vision model (about 90 MB); later runs reuse the ignored local cache under `data/image-cache/`. If the model or network is unavailable, MosAIc keeps its metadata projection.
+
+The equivalent command is:
 
 ```bash
-npm run collect -- --url "https://fr.zalando.ch/…" --headed --details 30
+npm run catalog:embed -- --download-model
 ```
 
-The collector uses one browser page at a time, waits between requests, caps the number of products, and never performs account or checkout actions. Run `npm run collect -- --list-adapters` to inspect installed shops. Add another shop by implementing `ShopAdapter` under `collector/adapters/` and registering it in `collector/registry.ts`.
+## Collecting products
 
-For a manually chosen shop page with usable Product JSON-LD, `--generic` enables the conservative fallback. It is opt-in and does not turn the app into an unattended crawler.
+List installed adapters:
 
-For pages that cannot be collected through an adapter or public structured data, Chrome-assisted acquisition is an optional, interactive recovery path in the ChatGPT desktop app. It requires a user-installed extension and a supported Computer Use rollout; it is never installed or enabled by this repository. See [`docs/CHROME_ACQUISITION.md`](docs/CHROME_ACQUISITION.md).
+```bash
+npm run collect -- --list-adapters
+```
 
-To add current size availability to products already in the local catalog:
+Collect a user-selected public result page in a visible browser:
+
+```bash
+npm run collect -- --url "https://example-shop.test/men" --headed --details 30
+```
+
+Enrich an existing catalog in bounded batches:
 
 ```bash
 npm run collect -- --enrich-existing 50
 ```
 
-Run it in bounded batches. The collector preserves existing decisions, scores, images, and board coordinates while enriching detail-page fields.
+Collectors use one page at a time, preserve a dedicated Chrome cookie profile,
+and keep a human-paced per-shop cadence (at most ten requests per minute in the
+CLI). A `429` pauses the affected shop, honors `Retry-After` when supplied, and
+resumes automatically with bounded exponential backoff. A rejected stateless
+HTML read is retried through the persistent real-Chrome session; login and
+CAPTCHA challenges still stop that URL. Product pages and checkout remain on
+the original shop. A conservative JSON-LD fallback is available for explicitly
+chosen public pages with `--generic`; it is not an unrestricted crawler.
 
-## Add references
-
-POST a reference to `http://localhost:8788/api/references` with a name and one or more image URLs or browser data URLs. Uploaded image bytes are copied under `data/media` instead of being stored in SQLite. References receive `kind: "reference"`, are included in PCA, can carry tags/colors/fits/attributes, and serve as frozen style context for Vision without becoming purchasable candidates.
-
-## Codex integration
-
-Open this directory as a trusted Codex project. Its project-scoped `.codex/config.toml` starts the `wardrobe_atlas` STDIO MCP server. Start a fresh Codex task after trusting the project, then use `/mcp` to confirm the tools are connected.
-
-The repository also ships the project skill
-`.agents/skills/mosaic-acquisition/SKILL.md`. A fresh Codex task can use it to
-choose between a fast adapter, direct structured URL import, and an interactive
-Chrome recovery path while preserving the same limits and safety rules. No
-extra copy step is required when Codex trusts this project.
-
-To enable the Chrome path, install/enable **Computer Use**, connect its Chrome
-extension in the desktop app, start a fresh task, and mention `@Chrome`. This is
-a visible user-level permission and cannot be silently enabled by the repository
-or by the Luna process running behind Mosaic’s assistant field. The in-app Luna
-planner still decides among the deterministic operations it actually has; a
-desktop Codex task with the project skill can additionally decide when the
-user-authorized Chrome path is necessary. Full setup and boundaries are in
-[`docs/CHROME_ACQUISITION.md`](docs/CHROME_ACQUISITION.md).
-
-The text-filter bridge calls `codex exec` with `gpt-5.6-luna` in a read-only ephemeral run and validates the result against a JSON Schema. Vision also runs in a read-only sandbox with approval policy `never`; its job-scoped MCP is the only path allowed to record one assessment at a time. The shell tool stays disabled, candidates are frozen before launch, and the repository rejects any assessment outside that hard-filtered set. Both paths use the local Codex login and require no application API key.
-
-Vision defaults to Luna `low`; switch to `medium` in the toolbar when a nuanced mood board warrants more judgment. Each visual score and reason belongs to its job rather than overwriting the product’s durable metadata.
-
-The assistant planner may emit several bounded steps—import, discovery, enrichment, similarity, visual scoring, collections, comparison, composition, or artifact drafting—while preserving explicit source, size, price, and count constraints. Page contents are treated as untrusted input. The planner cannot silently grant itself browser access or expand a run beyond the declared bounds.
+The app-owned browser profile lives under ignored `data/browser-sessions/`. It
+is deliberately separate from your personal Chrome profile. Delete that folder
+only if you intentionally want to reset the collector's shop cookies.
 
 ## Useful commands
 
 ```bash
-npm run dev          # web + local API
-npm run build && npm start # production web + local API
-npm run db:seed      # fresh/demo install only; never reseed an existing catalog
-npm run project      # recompute the complete compact PCA layout
-npm run catalog:embed -- --download-model # first local CLIP index (optional)
-npm run catalog:embed                    # later incremental/offline runs
-npm run collect -- --list-adapters
-npm run catalog:normalize # improve inferred categories/colors/fits, then reproject
-npm run mcp          # run the STDIO server manually
+npm run dev                 # web app + local API
+npm run build               # production build
+npm start                   # production web app + local API
+npm run project             # recompute the compact projection
+npm run catalog:embed       # update the local visual index
+npm run catalog:normalize   # normalize catalog metadata
+npm run collect -- --help   # collector options
+npm run mcp                 # run the MCP server manually
 npm run typecheck
+npm run lint
 npm test
 ```
 
-See `docs/ARCHITECTURE.md`, `docs/FILTERS.md`, and `docs/ROADMAP.md` for extension points, the filter contract, and the delivered sprint map.
+## Architecture and safety
+
+- [Product contract](docs/V1_PRODUCT.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Filter DSL](docs/FILTERS.md)
+- [Chrome-assisted acquisition](docs/CHROME_ACQUISITION.md)
+- [Generative Studio plan](docs/GENERATIVE_TRYON.md)
+- [Delivered roadmap](docs/ROADMAP.md)
+- [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
+
+MosAIc is local-first, not “scrape anything at any cost.” It does not bypass anti-bot systems, log in, purchase products, or transmit personal photos without an explicit configured action.
+
+## License
+
+[MIT](LICENSE). Built with care by [Neuchatech](https://www.neuchatech.ch).

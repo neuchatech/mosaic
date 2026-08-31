@@ -8,7 +8,39 @@ function list(value: unknown): string[] {
   return Array.isArray(value) ? value.map(normalize) : [normalize(value)];
 }
 
+const semanticAliases: Array<{ signals: string[]; aliases: string }> = [
+  { signals: ["knit", "knitted", "strick", "maille", "jumper", "sweater", "cardigan", "pullover", "ribbed", "cable knit"], aliases: "maille mailles tricot knit knitted strick pull sweater jumper cardigan" },
+  { signals: ["textur", "ribbed", "côtel", "cable", "chunky", "bouclé", "boucle", "tweed", "corduroy", "velour", "velvet", "fleece", "sherpa", "suede", "daim", "strick", "knit", "maille", "pleated", "plissé"], aliases: "texture textured texturé texturée texturisé relief matière" },
+  { signals: ["baggy", "wide", "loose", "large", "relaxed", "oversized", "ample"], aliases: "baggy wide loose large relaxed oversized ample oversize" },
+  { signals: ["cropped", "crop", "courte", "court", "short jacket"], aliases: "cropped crop court courte raccourci" },
+  { signals: ["leather", "cuir", "suede", "daim"], aliases: "leather cuir suede daim" },
+  { signals: ["wool", "wolle", "laine", "merino", "mohair"], aliases: "wool laine wolle merino mohair" },
+  { signals: ["linen", "leinen", "lin"], aliases: "linen lin leinen" },
+  { signals: ["cotton", "baumwolle", "coton"], aliases: "cotton coton baumwolle" },
+  { signals: ["brown", "brun", "marron"], aliases: "brown brun marron" },
+  { signals: ["beige", "cream", "ecru", "écru"], aliases: "beige cream crème ecru écru" },
+  { signals: ["green", "vert", "olive", "khaki", "kaki"], aliases: "green vert olive khaki kaki" },
+  { signals: ["blue", "bleu", "navy", "denim"], aliases: "blue bleu navy marine denim" },
+  { signals: ["black", "noir"], aliases: "black noir" },
+  { signals: ["grey", "gray", "gris", "charcoal"], aliases: "grey gray gris charcoal anthracite" },
+  { signals: ["white", "blanc", "ivory"], aliases: "white blanc ivory ivoire" },
+];
+
+function searchableText(product: Product): string {
+  const attributes = Object.values(product.attributes).flatMap((value) => Array.isArray(value) ? value : [value]);
+  const base = [
+    product.brand, product.name, product.description, product.category, product.color, product.colorFamily,
+    product.fit, ...product.materials, ...product.tags, ...attributes,
+  ].filter((value) => typeof value === "string" || typeof value === "number" || typeof value === "boolean").join(" ");
+  const normalizedBase = normalize(base);
+  const aliases = semanticAliases
+    .filter((group) => group.signals.some((signal) => normalizedBase.includes(signal)))
+    .map((group) => group.aliases);
+  return `${base} ${aliases.join(" ")}`;
+}
+
 function valueAtPath(product: Product, path: string): unknown {
+  if (path === "searchText") return searchableText(product);
   if (path === "discountPercent") {
     if (product.price === null || product.originalPrice === null || product.originalPrice === 0) return null;
     return ((product.originalPrice - product.price) / product.originalPrice) * 100;

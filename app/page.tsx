@@ -9,12 +9,59 @@ import {
   type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  memo,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import {
+  ArrowUp,
+  Bookmark,
+  Check,
+  ChevronDown,
+  Clock3,
+  Compass,
+  Crop,
+  Expand,
+  ExternalLink,
+  FolderHeart,
+  Gem,
+  GitCompareArrows,
+  Heart,
+  ImagePlus,
+  Layers3,
+  LayoutGrid,
+  LoaderCircle,
+  Map as MapIcon,
+  Minus,
+  Palette,
+  Plus,
+  Shirt,
+  SlidersHorizontal,
+  Sparkles,
+  Undo2,
+  X,
+} from "lucide-react";
+import {
+  faArrowRightArrowLeft,
+  faGem,
+  faHeart,
+  faPlus,
+  faWandMagicSparkles,
+  faXmark,
+} from "@fortawesome/free-solid-svg-icons";
+import type { IconDefinition } from "@fortawesome/fontawesome-common-types";
+import {
+  detectMosaicLocale,
+  mosaicLocaleLabels,
+  mosaicLocales,
+  mosaicTranslate,
+  normalizeMosaicLocale,
+  type MosaicLocale,
+  type MosaicMessageKey,
+} from "./i18n";
 
 type SeedItem = {
   id: number;
@@ -81,20 +128,50 @@ type PromptImage = {
   dataUrl: string;
 };
 
-const seedItems: SeedItem[] = [
-  { id: 1, brand: "Selected", name: "Veste worker raccourcie", price: 129, color: "Tabac", category: "Vestes", fit: "Courte", score: 94, x: 6, y: 8, crop: "4% 6%", sizes: ["S", "M", "L"], sizeAvailabilityKnown: true, available: true },
-  { id: 2, brand: "Weekday", name: "Pantalon ample à pinces", price: 79, color: "Brun", category: "Pantalons", fit: "Large", score: 91, x: 28, y: 18, crop: "29% 9%", sizes: ["M", "L", "XL"], sizeAvailabilityKnown: true, available: true },
-  { id: 3, brand: "Massimo Dutti", name: "Maille texturée", price: 99, color: "Grège", category: "Mailles", fit: "Relax", score: 88, x: 52, y: 6, crop: "47% 8%", sizes: ["XL"], sizeAvailabilityKnown: true, available: true },
-  { id: 4, brand: "Carhartt WIP", name: "Surchemise vieillie", price: 149, color: "Olive", category: "Vestes", fit: "Droite", score: 86, x: 73, y: 20, crop: "58% 58%" },
-  { id: 5, brand: "ARKET", name: "Pantalon laine ample", price: 139, color: "Anthracite", category: "Pantalons", fit: "Large", score: 84, x: 16, y: 58, crop: "71% 19%" },
-  { id: 6, brand: "COS", name: "Cardigan compact", price: 115, color: "Chocolat", category: "Mailles", fit: "Court", score: 82, x: 43, y: 55, crop: "86% 16%" },
-  { id: 7, brand: "Levi's", name: "Jean 568 loose", price: 109, color: "Bleu vieilli", category: "Pantalons", fit: "Large", score: 79, x: 67, y: 62, crop: "80% 52%" },
-  { id: 8, brand: "Minimum", name: "Pull col rond dense", price: 89, color: "Camel", category: "Mailles", fit: "Relax", score: 77, x: 83, y: 52, crop: "41% 79%" },
-  { id: 9, brand: "Référence", name: "Silhouette veste courte", price: 0, color: "Brun", category: "Références", fit: "Courte", score: 97, x: 23, y: 40, crop: "14% 8%", kind: "reference" },
-  { id: 10, brand: "Référence", name: "Volume pantalon ample", price: 0, color: "Terre", category: "Références", fit: "Large", score: 96, x: 61, y: 43, crop: "72% 17%", kind: "reference" },
-];
+function MosaicScopeIcon({ scope }: { scope: string }) {
+  const Icon = scope === "saved" ? Heart
+    : scope === "owned" ? Shirt
+      : scope === "reference" ? Bookmark
+        : scope === "outfits" ? Layers3
+          : LayoutGrid;
+  return <Icon className="mosaicIcon" aria-hidden="true" />;
+}
 
-const filters = ["Tout", "Vestes", "Pantalons", "Mailles", "Chemises", "T-shirts", "Références"];
+type MosaicCardActionKind = "save" | "compare" | "assistant" | "outfit" | "owned" | "reject";
+
+const mosaicCardIconDefinitions: Record<MosaicCardActionKind, IconDefinition> = {
+  save: faHeart,
+  compare: faArrowRightArrowLeft,
+  assistant: faWandMagicSparkles,
+  outfit: faPlus,
+  owned: faGem,
+  reject: faXmark,
+};
+
+function MosaicCardIconSprite() {
+  return (
+    <svg className="mosaicIconSprite" aria-hidden="true">
+      <defs>
+        {(Object.entries(mosaicCardIconDefinitions) as [MosaicCardActionKind, IconDefinition][]).map(([kind, definition]) => {
+          const [width, height, , , pathData] = definition.icon;
+          return (
+            <symbol id={`mosaic-card-icon-${kind}`} viewBox={`0 0 ${width} ${height}`} key={kind}>
+              {Array.isArray(pathData)
+                ? pathData.map((path, index) => <path d={path} key={index} />)
+                : <path d={pathData} />}
+            </symbol>
+          );
+        })}
+      </defs>
+    </svg>
+  );
+}
+
+const MosaicCardActionIcon = memo(function MosaicCardActionIcon({ kind }: { kind: MosaicCardActionKind }) {
+  return <svg className="mosaicIcon mosaicSolidIcon" aria-hidden="true"><use href={`#mosaic-card-icon-${kind}`} /></svg>;
+});
+
+const seedItems: SeedItem[] = [];
 
 const tileShapes = [
   [3, 18], [3, 14], [2, 16], [4, 20], [3, 15],
@@ -135,6 +212,7 @@ function apiProductsToItems(items: ApiProduct[]): SeedItem[] {
 }
 
 const standardSizes = ["XS", "S", "M", "L", "XL", "XXL"];
+const filters = ["Tout", "Vestes", "Pantalons", "Mailles", "Chemises", "T-shirts", "Chaussures", "Accessoires"];
 
 function normalizedSize(value: string) {
   return value.trim().toLocaleUpperCase().replace(/^TAILLE\s+/i, "");
@@ -189,7 +267,7 @@ export function LegacyHome() {
   const [aiItems, setAiItems] = useState<SeedItem[] | null>(null);
   const [catalogStatus, setCatalogStatus] = useState("démo locale");
   const [visualBusy, setVisualBusy] = useState(false);
-  const [visualMode, setVisualMode] = useState<"sequential" | "sheet">("sequential");
+  const [visualMode, setVisualMode] = useState<"sequential" | "sheet">("sheet");
   const [promptImages, setPromptImages] = useState<PromptImage[]>([]);
   const [xAxis, setXAxis] = useState<AxisField>("pca");
   const [yAxis, setYAxis] = useState<AxisField>("pca");
@@ -439,9 +517,9 @@ export function LegacyHome() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           prompt,
-          maxCandidates: 48,
-          topN: 24,
-          threshold: .5,
+          maxCandidates: 50,
+          topN: 20,
+          threshold: .55,
           analysisMode: visualMode,
           images: promptImages.map(({ name, dataUrl }) => ({ name, dataUrl })),
         }),
@@ -1018,13 +1096,26 @@ const ATLAS_API = process.env.NODE_ENV === "production" ? "http://127.0.0.1:8788
 const ATLAS_ORIGIN = ATLAS_API.slice(0, -4);
 const ATLAS_PAGE_SIZE = 240;
 const ATLAS_DEFAULT_ZOOM = 2;
+const MOSAIC_SOURCE_COLORS = [
+  "#d52a1d", "#287c78", "#6a5aa6", "#b4872c", "#3d6e9e",
+  "#587245", "#9a4f71", "#a85f32", "#2f8795", "#74506f",
+] as const;
+
+function mosaicSourceColor(source: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return MOSAIC_SOURCE_COLORS[(hash >>> 0) % MOSAIC_SOURCE_COLORS.length];
+}
 const ATLAS_MAX_ZOOM = 10;
 const ATLAS_ZOOM_SENSITIVITY = .009;
 const ATLAS_CULL_INTERVAL_MS = 250;
+const ATLAS_CULL_MOVEMENT_PX = 84;
 const ATLAS_MAX_IMAGES = 6;
 const ATLAS_MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const ATLAS_MAX_TOTAL_BYTES = 24 * 1024 * 1024;
-const ATLAS_DEMO_FRESH_AT = "2026-08-28T12:00:00.000Z";
 const ATLAS_TERMINAL_REFRESH_STATUSES = ["complete", "error", "blocked", "cancelled"];
 const ATLAS_PREFERENCES_KEY = "wardrobe-atlas:board-preferences:v2";
 const ATLAS_DISCOVERY_SESSION_KEY = "wardrobe-atlas:discovery-session:v1";
@@ -1032,6 +1123,7 @@ const MOSAIC_COLLECTIONS_FALLBACK_KEY = "mosaic:collections:fallback:v1";
 const MOSAIC_ONBOARDING_KEY = "mosaic:onboarding:dismissed:v1";
 const MOSAIC_ACTIVE_WORKSPACE_KEY = "mosaic:workspace:active:v1";
 const MOSAIC_ARTIFACTS_FALLBACK_KEY = "mosaic:artifacts:fallback:v1";
+const MOSAIC_LOCALE_KEY = "mosaic:locale:v1";
 const ATLAS_TERMINAL_DISCOVERY_STATUSES = new Set<AtlasDiscoveryStatus>(["succeeded", "failed", "blocked", "cancelled"]);
 const ATLAS_DISCOVERY_SOURCE_LABELS: Record<string, string> = { "zalando-ch": "Zalando CH", "aboutyou-ch": "About You CH", aliexpress: "AliExpress" };
 
@@ -1041,18 +1133,7 @@ function atlasWorkspaceApiUrl(path: string, workspaceId: string) {
   return `${ATLAS_API}${path}${separator}workspaceId=${encodeURIComponent(workspaceId)}`;
 }
 
-const atlasSeedItems: AtlasItem[] = [
-  { id: "demo_worker", brand: "Selected", name: "Veste worker raccourcie", price: 129, currency: "CHF", color: "Tabac", category: "Vestes", fit: "Courte", score: 94, x: 6, y: 8, crop: "4% 6%", images: [], kind: "shop", decision: "saved", source: "demo", materials: ["Coton"], sizes: ["S", "M", "L"], tags: [], sizeAvailabilityKnown: true, available: true, stockStatus: "in_stock", sizesCheckedAt: ATLAS_DEMO_FRESH_AT },
-  { id: "demo_trouser", brand: "Weekday", name: "Pantalon ample à pinces", price: 79, currency: "CHF", color: "Brun", category: "Pantalons", fit: "Large", score: 91, x: 28, y: 18, crop: "29% 9%", images: [], kind: "shop", decision: "saved", source: "demo", materials: ["Coton"], sizes: ["M", "L", "XL"], tags: [], sizeAvailabilityKnown: true, available: true, stockStatus: "in_stock", sizesCheckedAt: ATLAS_DEMO_FRESH_AT },
-  { id: "demo_knit", brand: "Massimo Dutti", name: "Maille texturée", price: 99, currency: "CHF", color: "Grège", category: "Mailles", fit: "Relax", score: 88, x: 52, y: 6, crop: "47% 8%", images: [], kind: "shop", decision: "unseen", source: "demo", materials: ["Laine"], sizes: ["XL"], tags: [], sizeAvailabilityKnown: true, available: true, stockStatus: "in_stock", sizesCheckedAt: ATLAS_DEMO_FRESH_AT },
-  { id: "demo_overshirt", brand: "Carhartt WIP", name: "Surchemise vieillie", price: 149, currency: "CHF", color: "Olive", category: "Vestes", fit: "Droite", score: 86, x: 73, y: 20, crop: "58% 58%", images: [], kind: "shop", decision: "unseen", source: "demo", materials: [], sizes: [], tags: [], sizeAvailabilityKnown: false, available: true, stockStatus: "unknown" },
-  { id: "demo_wool", brand: "ARKET", name: "Pantalon laine ample", price: 139, currency: "CHF", color: "Anthracite", category: "Pantalons", fit: "Large", score: 84, x: 16, y: 58, crop: "71% 19%", images: [], kind: "shop", decision: "unseen", source: "demo", materials: ["Laine"], sizes: [], tags: [], sizeAvailabilityKnown: false, available: true, stockStatus: "unknown" },
-  { id: "demo_cardigan", brand: "COS", name: "Cardigan compact", price: 115, currency: "CHF", color: "Chocolat", category: "Mailles", fit: "Court", score: 82, x: 43, y: 55, crop: "86% 16%", images: [], kind: "shop", decision: "unseen", source: "demo", materials: ["Laine"], sizes: [], tags: [], sizeAvailabilityKnown: false, available: true, stockStatus: "unknown" },
-  { id: "demo_jean", brand: "Levi's", name: "Jean 568 loose", price: 109, currency: "CHF", color: "Bleu vieilli", category: "Pantalons", fit: "Large", score: 79, x: 67, y: 62, crop: "80% 52%", images: [], kind: "shop", decision: "unseen", source: "demo", materials: ["Denim"], sizes: [], tags: [], sizeAvailabilityKnown: false, available: true, stockStatus: "unknown" },
-  { id: "demo_sweater", brand: "Minimum", name: "Pull col rond dense", price: 89, currency: "CHF", color: "Camel", category: "Mailles", fit: "Relax", score: 77, x: 83, y: 52, crop: "41% 79%", images: [], kind: "shop", decision: "unseen", source: "demo", materials: [], sizes: [], tags: [], sizeAvailabilityKnown: false, available: true, stockStatus: "unknown" },
-  { id: "demo_ref_jacket", brand: "Référence", name: "Silhouette veste courte", price: null, currency: "CHF", color: "Brun", category: "Références", fit: "Courte", score: 97, x: 23, y: 40, crop: "14% 8%", images: [], kind: "reference", decision: "saved", source: "reference", materials: [], sizes: [], tags: [], sizeAvailabilityKnown: false, available: true, stockStatus: "not_applicable" },
-  { id: "demo_ref_volume", brand: "Référence", name: "Volume pantalon ample", price: null, currency: "CHF", color: "Terre", category: "Références", fit: "Large", score: 96, x: 61, y: 43, crop: "72% 17%", images: [], kind: "reference", decision: "saved", source: "reference", materials: [], sizes: [], tags: [], sizeAvailabilityKnown: false, available: true, stockStatus: "not_applicable" },
-];
+const atlasSeedItems: AtlasItem[] = [];
 
 const atlasCategories = ["Tout", "Vestes", "Pantalons", "Mailles", "Chemises", "T-shirts", "Chaussures", "Accessoires", "Références"];
 const atlasSizes = ["XS", "S", "M", "L", "XL", "XXL"];
@@ -1107,10 +1188,10 @@ function atlasApiToItem(item: AtlasApiProduct, index = 0): AtlasItem {
   const x = typeof item.x === "number" ? (item.x <= 1 ? item.x * 100 : item.x) : (index * 17) % 100;
   const y = typeof item.y === "number" ? (item.y <= 1 ? item.y * 100 : item.y) : (index * 29) % 100;
   return {
-    id: String(item.id), brand: item.brand ?? "Unknown", name: item.name ?? "Article sans nom",
+    id: String(item.id), brand: item.brand ?? "Unknown", name: item.name ?? "Untitled item",
     price: typeof item.price === "number" ? item.price : null,
     originalPrice: typeof item.originalPrice === "number" ? item.originalPrice : null,
-    currency: item.currency ?? "CHF", color: item.color ?? "Inconnue", category: item.category ?? "Autre",
+    currency: item.currency ?? "XXX", color: item.color ?? "Unknown", category: item.category ?? "Other",
     fit: item.fit ?? "unknown", score: Math.round(rawScore <= 1 ? rawScore * 100 : rawScore), x, y, crop: "center",
     image: images[0], images, url: item.url, reason,
     kind: item.kind ?? "shop", decision: item.decision ?? (item.kind === "owned" ? "owned" : "unseen"),
@@ -1158,6 +1239,8 @@ type AtlasSpaceLayout = {
   height: number;
   positions: Map<string, { left: number; top: number; width: number; height: number }>;
 };
+
+const atlasLayoutCache = new Map<string, AtlasSpaceLayout>();
 
 type AtlasPackingNode = { x: number; y: number; width: number; height: number; hash: number };
 
@@ -1414,15 +1497,16 @@ function atlasSpaceCardStyle(item: AtlasItem, layout: AtlasSpaceLayout): CSSProp
   } as CSSProperties;
 }
 
-function atlasTimestamp(value?: string | null) {
-  if (!value) return "jamais vérifié";
+function atlasTimestamp(value?: string | null, locale: MosaicLocale = "en") {
+  if (!value) return "—";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "date inconnue";
+  if (Number.isNaN(date.getTime())) return "—";
   const seconds = Math.max(0, (Date.now() - date.getTime()) / 1000);
-  if (seconds < 60) return "à l’instant";
-  if (seconds < 3600) return `il y a ${Math.round(seconds / 60)} min`;
-  if (seconds < 86400) return `il y a ${Math.round(seconds / 3600)} h`;
-  return `il y a ${Math.round(seconds / 86400)} j`;
+  const relative = new Intl.RelativeTimeFormat(locale, { numeric: "auto", style: "short" });
+  if (seconds < 60) return relative.format(-Math.max(0, Math.round(seconds)), "second");
+  if (seconds < 3600) return relative.format(-Math.round(seconds / 60), "minute");
+  if (seconds < 86400) return relative.format(-Math.round(seconds / 3600), "hour");
+  return relative.format(-Math.round(seconds / 86400), "day");
 }
 
 function mosaicCompactRunError(value?: string | null) {
@@ -1432,7 +1516,7 @@ function mosaicCompactRunError(value?: string | null) {
   const encodedRatio = sample.length
     ? (sample.match(/[A-Za-z0-9+/=]/g)?.length ?? 0) / sample.length
     : 0;
-  if (compact.length > 600 && encodedRatio > .94) return "détails techniques masqués";
+  if (compact.length > 600 && encodedRatio > .94) return "technical details hidden";
   return compact.length > 220 ? `${compact.slice(0, 217)}…` : compact;
 }
 
@@ -1447,6 +1531,12 @@ function atlasCooldownTimestamp(value?: string | null) {
     second: "2-digit",
     timeZoneName: "short",
   });
+}
+
+function atlasCooldownIsActive(value?: string | null) {
+  if (!value) return false;
+  const time = Date.parse(value);
+  return Number.isFinite(time) && time > Date.now();
 }
 
 function atlasIsStale(value?: string | null, days = 2) {
@@ -1496,6 +1586,16 @@ function atlasDecisionLabel(decision: AtlasDecision) {
 
 function mosaicBrandLabel(item: AtlasItem, clothingProfile: boolean) {
   return !clothingProfile && item.kind === "owned" && item.brand === "Mon dressing" ? "Élément local" : item.brand;
+}
+
+function mosaicCardPriceContent(item: AtlasItem, referenceLabel: string, ownedLabel: string) {
+  if (item.kind === "reference") return <span>{referenceLabel}</span>;
+  if (item.kind === "owned") return <span>{ownedLabel}</span>;
+  if (item.price == null) return <span>—</span>;
+  const wholeAmount = Number.isInteger(item.price);
+  const value = item.price.toFixed(wholeAmount ? 0 : 2);
+  const suffix = item.currency.toUpperCase() === "CHF" ? (wholeAmount ? ".–" : "") : item.currency;
+  return <><span>{value}</span>{suffix && <small>{suffix}</small>}</>;
 }
 
 function mosaicNormalizeCollection(raw: Partial<MosaicCollection> & { items?: Array<string | { id?: string }> }): MosaicCollection {
@@ -1574,7 +1674,7 @@ function mosaicFieldDisplayValue(item: AtlasItem, field: MosaicFieldDefinition) 
 function mosaicSummaryText(summary: AtlasAssistantResponse["summary"]): string | undefined {
   if (typeof summary === "string") return summary;
   if (!summary || typeof summary !== "object") return undefined;
-  const count = typeof summary.count === "number" ? `${summary.count} élément${summary.count > 1 ? "s" : ""}` : "Comparaison prête";
+  const count = typeof summary.count === "number" ? `${summary.count} item${summary.count === 1 ? "" : "s"}` : "Comparison ready";
   const price = summary.price && typeof summary.price === "object" ? summary.price as Record<string, unknown> : null;
   const priceText = price && typeof price.min === "number" && typeof price.max === "number"
     ? ` · ${price.min}–${price.max} ${typeof price.currency === "string" ? price.currency : ""}` : "";
@@ -1582,6 +1682,7 @@ function mosaicSummaryText(summary: AtlasAssistantResponse["summary"]): string |
 }
 
 export default function Home() {
+  const [locale, setLocale] = useState<MosaicLocale>("en");
   const [scope, setScope] = useState<AtlasScope>("catalogue");
   const [activeFilter, setActiveFilter] = useState("Tout");
   const [mode, setMode] = useState<"space" | "grid">("space");
@@ -1589,8 +1690,8 @@ export default function Home() {
   const [aiStatus, setAiStatus] = useState("");
   const [catalogItems, setCatalogItems] = useState<AtlasItem[]>(atlasSeedItems);
   const [aiItems, setAiItems] = useState<AtlasItem[] | null>(null);
-  const [catalogStatus, setCatalogStatus] = useState("démo locale");
-  const [visualMode, setVisualMode] = useState<"sequential" | "sheet">("sequential");
+  const [catalogStatus, setCatalogStatus] = useState("loading…");
+  const [visualMode, setVisualMode] = useState<"sequential" | "sheet">("sheet");
   const [reasoningEffort, setReasoningEffort] = useState<"low" | "medium">("low");
   const [promptImages, setPromptImages] = useState<AtlasPromptImage[]>([]);
   const [promptProductIds, setPromptProductIds] = useState<string[]>([]);
@@ -1656,8 +1757,24 @@ export default function Home() {
   const [artifactName, setArtifactName] = useState("");
   const [artifactBusy, setArtifactBusy] = useState(false);
   const [artifactsApiAvailable, setArtifactsApiAvailable] = useState(false);
-  const [composerExpanded, setComposerExpanded] = useState(true);
+  const [composerExpanded, setComposerExpanded] = useState(false);
   const [onboardingVisible, setOnboardingVisible] = useState(false);
+
+  const t = useCallback((key: MosaicMessageKey) => mosaicTranslate(locale, key), [locale]);
+
+  useEffect(() => {
+    let stored: string | null = null;
+    try { stored = window.localStorage.getItem(MOSAIC_LOCALE_KEY); } catch { /* optional */ }
+    const next = stored ? normalizeMosaicLocale(stored) : detectMosaicLocale(window.navigator.languages);
+    document.documentElement.lang = next;
+    queueMicrotask(() => setLocale(next));
+  }, []);
+
+  const changeLocale = useCallback((next: MosaicLocale) => {
+    setLocale(next);
+    document.documentElement.lang = next;
+    try { window.localStorage.setItem(MOSAIC_LOCALE_KEY, next); } catch { /* optional */ }
+  }, []);
 
   const atlasElementRef = useRef<HTMLDivElement>(null);
   const atlasCanvasRef = useRef<HTMLDivElement>(null);
@@ -1676,6 +1793,7 @@ export default function Home() {
   const atlasZoomRef = useRef(ATLAS_DEFAULT_ZOOM);
   const atlasZoomFrameRef = useRef<number | null>(null);
   const atlasScrollTimerRef = useRef<number | null>(null);
+  const atlasInteractionTimerRef = useRef<number | null>(null);
   const atlasLastCullAtRef = useRef(0);
   const atlasPendingZoomCommitRef = useRef(false);
   const atlasViewRef = useRef({ left: 0, top: 0, width: 1000, height: 650 });
@@ -1686,7 +1804,6 @@ export default function Home() {
   const atlasDraggingRef = useRef(false);
   const atlasHoverTimerRef = useRef<number | null>(null);
   const atlasHoverCardRef = useRef<HTMLElement | null>(null);
-  const atlasLayoutCacheRef = useRef(new Map<string, AtlasSpaceLayout>());
   const discoveryMonitorRef = useRef(0);
   const activeWorkspaceIdRef = useRef("");
   const workspaceEpochRef = useRef(0);
@@ -1710,12 +1827,12 @@ export default function Home() {
     setAssistantBusy(false); setAssistantDropActive(false); setSavedViews([]); setViewName(""); setOutfitBoards([]); setOutfitName(""); setSelectedOutfitBoardId(null);
     setMosaicCollections([]); setCollectionName(""); setMosaicArtifacts([]); setArtifactName(""); setMosaicRuns([]); setSelectedIds(new Set()); setFocusedIndex(0);
     setRefreshJob(null); setRefreshRecovered(false); setDiscoveryPlan(null); setDiscoveryJobs([]); setDiscoveryRecovered(false); setDiscoveryBusy(false);
-    setWorkspaceSchema(null); setCatalogStatus(workspaceId ? "chargement…" : "aucun espace actif"); setSelectedCollectionId(null);
-    setActiveFilter("Tout"); setSourceFilter("all"); setPriceFilter("all"); setFitFilter("all"); setMaterialFilter("all"); setSelectedSizes(["M", "L"]);
+    setWorkspaceSchema(null); setCatalogStatus(workspaceId ? "loading…" : "no active workspace"); setSelectedCollectionId(null);
+    setActiveFilter("Tout"); setSourceFilter("all"); setPriceFilter("all"); setFitFilter("all"); setMaterialFilter("all"); setSelectedSizes([]);
     setStockFilter("all"); setAttributeQuery(""); setMinPrice(""); setMaxPrice(""); setIncludeRejected(false); setDynamicFacetSelections({}); setDynamicNumberFilters({});
     setPersonalKind("owned"); setPersonalImages([]); setPersonalBusy(false); setArtifactBusy(false); setWorkspaceBusy(false); setCollectionsApiAvailable(false); setArtifactsApiAvailable(false);
-    setComposerExpanded(true); setXAxis("pca"); setYAxis("pca"); setRenderWindow({ signature: "", limit: ATLAS_PAGE_SIZE }); setToast("");
-    atlasLayoutCacheRef.current.clear();
+    setComposerExpanded(false); setXAxis("pca"); setYAxis("pca"); setRenderWindow({ signature: "", limit: ATLAS_PAGE_SIZE }); setToast("");
+    atlasLayoutCache.clear();
     previewReturnFocusRef.current = null; drawerReturnFocusRef.current = null;
     const atlas = atlasElementRef.current;
     if (atlas) { atlas.scrollLeft = 0; atlas.scrollTop = 0; }
@@ -1738,13 +1855,13 @@ export default function Home() {
     if (!isWorkspaceOperationCurrent(operation)) return;
     setCatalogItems(items.map(atlasApiToItem));
     setAiItems(null);
-    setCatalogStatus("catalogue local");
+    setCatalogStatus("catalog ready");
   }
 
   async function retryAtlasCatalog() {
     const operation = captureWorkspaceOperation();
     try { await reloadAtlasCatalog(operation); }
-    catch { if (isWorkspaceOperationCurrent(operation)) setToast("L’API locale ne répond pas encore"); }
+    catch { if (isWorkspaceOperationCurrent(operation)) setToast("The local API is not ready yet"); }
   }
 
   async function reloadMosaicArtifactsAndRuns(operation = captureWorkspaceOperation()) {
@@ -1786,11 +1903,11 @@ export default function Home() {
             if (!isWorkspaceOperationCurrent(operation)) return;
             setCatalogItems(items.map(atlasApiToItem));
             setAiItems(null);
-            setCatalogStatus("catalogue local · placement visuel à jour");
+            setCatalogStatus("catalog ready · visual placement updated");
           }
         }
       } catch (error) {
-        if (isWorkspaceOperationCurrent(operation) && !(error instanceof DOMException && error.name === "AbortError")) setToast("L’index visuel répondra dans Activité");
+        if (isWorkspaceOperationCurrent(operation) && !(error instanceof DOMException && error.name === "AbortError")) setToast("Visual indexing progress is available in Activity");
       }
     }, 1_500);
     return () => window.clearTimeout(timer);
@@ -1862,8 +1979,8 @@ export default function Home() {
         const items = await response.json() as AtlasApiProduct[];
         if (!current()) return;
         setCatalogItems(items.map(atlasApiToItem));
-        setCatalogStatus("catalogue local");
-      }).catch((error) => { if (current() && !(error instanceof DOMException && error.name === "AbortError")) setCatalogStatus("API locale indisponible"); }),
+        setCatalogStatus("catalog ready");
+      }).catch((error) => { if (current() && !(error instanceof DOMException && error.name === "AbortError")) setCatalogStatus("local API unavailable"); }),
       fetch(scoped("/workspaces/current/ui-schema"), { signal: controller.signal }).then(async (response) => {
         if (!response.ok) return;
         const payload = await response.json() as Partial<MosaicWorkspaceSchema>;
@@ -1938,8 +2055,8 @@ export default function Home() {
         const jobs = sessionJobs?.length ? sessionJobs : fallbackJobs;
         if (!jobs.length) return;
         const plan = sessionJobs?.length && session ? session.plan : {
-          id: "recovered", name: "Découverte locale retrouvée", description: "Derniers jobs persistés par source.",
-          targetCount: jobs.reduce((sum, job) => sum + (job.intent.maxItems ?? 0), 0), sizes: ["M", "L"], sizeMode: "any" as const,
+          id: "recovered", name: "Recovered local discovery", description: "Latest durable jobs grouped by source.",
+          targetCount: jobs.reduce((sum, job) => sum + (job.intent.maxItems ?? 0), 0), sizes: [], sizeMode: "any" as const,
           searches: jobs.map((job) => job.intent),
         };
         if (!current()) return;
@@ -1971,7 +2088,7 @@ export default function Home() {
     }
     queueMicrotask(() => {
       if (cancelled) return;
-      setSelectedSizes(storedSizes ?? ["M", "L"]);
+      setSelectedSizes(storedSizes ?? []);
       if (storedImageMode) setImageMode(storedImageMode);
       setPreferencesReady(true);
     });
@@ -2103,20 +2220,20 @@ export default function Home() {
   ].join(":")).join("|"), [products]);
   const baseSpaceLayout = useMemo(() => {
     const key = `${xAxis}:${yAxis}:${Math.round(atlasViewport.width)}:${Math.round(atlasViewport.height)}:${imageMode}:${geometrySignature}`;
-    const cached = atlasLayoutCacheRef.current.get(key);
+    const cached = atlasLayoutCache.get(key);
     if (cached) return cached;
     const layout = atlasSpaceLayout(products, xAxis, yAxis, atlasViewport.width, atlasViewport.height, imageMode);
-    atlasLayoutCacheRef.current.set(key, layout);
-    while (atlasLayoutCacheRef.current.size > 12) {
-      const oldest = atlasLayoutCacheRef.current.keys().next().value;
+    atlasLayoutCache.set(key, layout);
+    while (atlasLayoutCache.size > 12) {
+      const oldest = atlasLayoutCache.keys().next().value;
       if (oldest === undefined) break;
-      atlasLayoutCacheRef.current.delete(oldest);
+      atlasLayoutCache.delete(oldest);
     }
     return layout;
   }, [atlasViewport.height, atlasViewport.width, geometrySignature, imageMode, products, xAxis, yAxis]);
   const spaceLayout = baseSpaceLayout;
   const renderedProducts = useMemo(() => {
-    if (mode === "grid") return products.slice(0, renderLimit);
+    if (mode === "grid" || products.length <= 120) return products.slice(0, renderLimit);
     const scale = Math.max(.001, zoom);
     const overscan = 320 / scale;
     const minimumX = atlasView.left / scale - overscan;
@@ -2150,14 +2267,35 @@ export default function Home() {
     atlasScrollTimerRef.current = window.setTimeout(() => {
       atlasScrollTimerRef.current = null;
       atlasLastCullAtRef.current = performance.now();
+      let zoomChanged = false;
       if (atlasPendingZoomCommitRef.current) {
         atlasPendingZoomCommitRef.current = false;
+        zoomChanged = true;
         setZoom(atlasZoomRef.current);
       }
       const next = { left: element.scrollLeft, top: element.scrollTop, width: element.clientWidth, height: element.clientHeight };
+      const previous = atlasViewRef.current;
+      const viewportChanged = previous.width !== next.width || previous.height !== next.height;
+      const movedEnough = Math.abs(previous.left - next.left) >= ATLAS_CULL_MOVEMENT_PX
+        || Math.abs(previous.top - next.top) >= ATLAS_CULL_MOVEMENT_PX;
+      if (!zoomChanged && !viewportChanged && !movedEnough) return;
       atlasViewRef.current = next;
       setAtlasView(next);
     }, Math.max(0, ATLAS_CULL_INTERVAL_MS - elapsed));
+  }, []);
+
+  const markAtlasInteraction = useCallback((atlas: HTMLDivElement, active = true) => {
+    if (atlasInteractionTimerRef.current !== null) window.clearTimeout(atlasInteractionTimerRef.current);
+    atlasInteractionTimerRef.current = null;
+    if (!active) {
+      atlas.classList.remove("isInteracting");
+      return;
+    }
+    atlas.classList.add("isInteracting");
+    atlasInteractionTimerRef.current = window.setTimeout(() => {
+      atlas.classList.remove("isInteracting");
+      atlasInteractionTimerRef.current = null;
+    }, 140);
   }, []);
 
   useEffect(() => {
@@ -2283,12 +2421,12 @@ export default function Home() {
       const result = await response.json() as { product?: AtlasApiProduct };
       if (!isWorkspaceOperationCurrent(operation)) return;
       if (result.product) updateProductLocally(action.productId, atlasApiToItem(result.product));
-      setToast("Dernière décision annulée");
+      setToast("Last decision undone");
     } catch {
       if (!isWorkspaceOperationCurrent(operation)) return;
       updateProductLocally(action.productId, { decision: action.nextDecision });
       setUndoStack((current) => [...current, action]);
-      setToast("Annulation impossible");
+      setToast("Undo failed");
     }
   }
 
@@ -2414,6 +2552,15 @@ export default function Home() {
     });
   }
 
+  function selectOrPreviewMosaicItem(item: AtlasItem) {
+    if (selectedIds.has(item.id)) {
+      cancelAtlasPreview();
+      setPreviewItem(item);
+      return;
+    }
+    toggleMosaicSelection(item.id);
+  }
+
   function persistMosaicCollections(collections: MosaicCollection[]) {
     try { window.localStorage.setItem(MOSAIC_COLLECTIONS_FALLBACK_KEY, JSON.stringify(collections)); }
     catch { /* Server state remains authoritative. */ }
@@ -2503,7 +2650,7 @@ export default function Home() {
       switchMosaicWorkspace(workspace.id);
       setNewWorkspaceName("");
       setToast(`Espace « ${workspace.name} » créé`);
-    } catch { if (isWorkspaceOperationCurrent(operation)) setToast("Création d’espace indisponible"); }
+    } catch { if (isWorkspaceOperationCurrent(operation)) setToast("Workspace creation is unavailable"); }
     finally { if (isWorkspaceOperationCurrent(operation)) setWorkspaceBusy(false); }
   }
 
@@ -2544,7 +2691,7 @@ export default function Home() {
       const normalized = mosaicNormalizeArtifact(saved);
       setMosaicArtifacts((current) => [normalized, ...current.filter((item) => item.id !== normalized.id)]);
       setArtifactsApiAvailable(true);
-      setToast("Brouillon Studio enregistré localement");
+      setToast("Studio draft saved locally");
     } catch {
       if (!isWorkspaceOperationCurrent(operation)) return;
       setMosaicArtifacts((current) => {
@@ -2569,8 +2716,8 @@ export default function Home() {
       setToast("Index visuel lancé · progression dans Activité");
     } catch {
       if (!isWorkspaceOperationCurrent(operation)) return;
-      setEmbeddingJob({ status: "failed", processed: 0, total: catalogItems.length, message: "Index visuel indisponible" });
-      setToast("Impossible de lancer l’index visuel local");
+      setEmbeddingJob({ status: "failed", processed: 0, total: catalogItems.length, message: "Visual index unavailable" });
+      setToast("Could not start the local visual index");
     }
   }
 
@@ -2591,7 +2738,7 @@ export default function Home() {
 
   function resetAtlasFilters() {
     setActiveFilter("Tout"); setSourceFilter("all"); setPriceFilter("all"); setFitFilter("all"); setMaterialFilter("all");
-    setSelectedSizes(["M", "L"]); setStockFilter("all"); setAttributeQuery(""); setMinPrice(""); setMaxPrice(""); setIncludeRejected(false);
+    setSelectedSizes([]); setStockFilter("all"); setAttributeQuery(""); setMinPrice(""); setMaxPrice(""); setIncludeRejected(false);
     setDynamicFacetSelections({}); setDynamicNumberFilters({}); setSelectedCollectionId(null);
   }
 
@@ -2640,6 +2787,7 @@ export default function Home() {
     if (!atlas || mode !== "space") return;
     const handleNativeWheel = (event: WheelEvent) => {
       event.preventDefault(); event.stopPropagation();
+      markAtlasInteraction(atlas);
       if (event.ctrlKey || event.metaKey) {
         const bounds = atlas.getBoundingClientRect();
         const intensity = event.deltaMode === 1 ? .09 : ATLAS_ZOOM_SENSITIVITY;
@@ -2651,7 +2799,7 @@ export default function Home() {
     };
     atlas.addEventListener("wheel", handleNativeWheel, { passive: false });
     return () => atlas.removeEventListener("wheel", handleNativeWheel);
-  }, [changeAtlasZoom, mode]);
+  }, [changeAtlasZoom, markAtlasInteraction, mode]);
 
   function navigateAtlasMinimap(event: ReactPointerEvent<HTMLCanvasElement>) {
     if (event.type === "pointermove" && event.buttons !== 1) return;
@@ -2675,7 +2823,7 @@ export default function Home() {
     if (mode !== "space" || event.button !== 0 || target.closest("button, input, select, textarea") || (target.closest("a") && !target.closest(".productLinkOverlay"))) return;
     if (atlasInertiaFrameRef.current !== null) cancelAnimationFrame(atlasInertiaFrameRef.current);
     atlasInertiaFrameRef.current = null;
-    atlasDragRef.current = { x: event.clientX, y: event.clientY, left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop, pointerId: event.pointerId, captured: false, lastX: event.clientX, lastY: event.clientY, lastAt: performance.now(), velocityX: 0, velocityY: 0 };
+    atlasDragRef.current = { x: event.clientX, y: event.clientY, left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop, pointerId: event.pointerId, captured: false, lastX: event.clientX, lastY: event.clientY, lastAt: event.timeStamp, velocityX: 0, velocityY: 0 };
     atlasSuppressClickRef.current = false;
   }
 
@@ -2691,9 +2839,10 @@ export default function Home() {
       }
     }
     if (!start.captured) return;
+    markAtlasInteraction(event.currentTarget);
     event.currentTarget.scrollLeft = start.left - (event.clientX - start.x);
     event.currentTarget.scrollTop = start.top - (event.clientY - start.y);
-    const now = performance.now();
+    const now = event.timeStamp;
     const elapsed = Math.max(8, now - start.lastAt);
     start.velocityX = (start.lastX - event.clientX) / elapsed * 16;
     start.velocityY = (start.lastY - event.clientY) / elapsed * 16;
@@ -2708,15 +2857,21 @@ export default function Home() {
     // Let the click generated by this pointer-up consume the drag suppression,
     // then clear it for the next genuine card click if the drag ended on empty space.
     if (drag.captured) window.setTimeout(() => { atlasSuppressClickRef.current = false; }, 0);
-    if (!drag.captured || Math.hypot(drag.velocityX, drag.velocityY) < .8) return;
+    if (!drag.captured || Math.hypot(drag.velocityX, drag.velocityY) < .8) {
+      markAtlasInteraction(event.currentTarget, false);
+      return;
+    }
     const atlas = event.currentTarget;
+    if (atlasInteractionTimerRef.current !== null) window.clearTimeout(atlasInteractionTimerRef.current);
+    atlasInteractionTimerRef.current = null;
+    atlas.classList.add("isInteracting");
     let velocityX = drag.velocityX;
     let velocityY = drag.velocityY;
     const coast = () => {
       atlas.scrollLeft += velocityX;
       atlas.scrollTop += velocityY;
       velocityX *= .92; velocityY *= .92;
-      if (Math.hypot(velocityX, velocityY) < .35) { atlasInertiaFrameRef.current = null; return; }
+      if (Math.hypot(velocityX, velocityY) < .35) { atlasInertiaFrameRef.current = null; atlas.classList.remove("isInteracting"); return; }
       atlasInertiaFrameRef.current = requestAnimationFrame(coast);
     };
     atlasInertiaFrameRef.current = requestAnimationFrame(coast);
@@ -2759,7 +2914,9 @@ export default function Home() {
     if (atlasHoverTimerRef.current !== null) window.clearTimeout(atlasHoverTimerRef.current);
     if (atlasZoomFrameRef.current !== null) cancelAnimationFrame(atlasZoomFrameRef.current);
     if (atlasScrollTimerRef.current !== null) window.clearTimeout(atlasScrollTimerRef.current);
+    if (atlasInteractionTimerRef.current !== null) window.clearTimeout(atlasInteractionTimerRef.current);
     if (atlasInertiaFrameRef.current !== null) cancelAnimationFrame(atlasInertiaFrameRef.current);
+    atlasElementRef.current?.classList.remove("isInteracting");
     discoveryMonitorRef.current += 1;
   }, []);
 
@@ -2780,7 +2937,7 @@ export default function Home() {
     if (event.key.toLocaleLowerCase() === "o") { event.preventDefault(); void setAtlasDecision(item, "owned"); }
     if (event.key.toLocaleLowerCase() === "c") { event.preventDefault(); toggleCompare(item.id); }
     if (event.key === " ") { event.preventDefault(); toggleMosaicSelection(item.id); }
-    if (event.key === "Enter" && item.url) window.open(item.url, "_blank", "noopener,noreferrer");
+    if (event.key === "Enter") { event.preventDefault(); selectOrPreviewMosaicItem(item); }
   }
 
   function addAtlasProductToPrompt(item: AtlasItem) {
@@ -2804,12 +2961,30 @@ export default function Home() {
     }
     if (!isWorkspaceOperationCurrent(operation)) return;
     if (job.status === "error") throw new Error(job.error ?? "visual selection failed");
-    setAiItems(atlasMergeItems(job.products, catalogItems));
+    const finalItems = atlasMergeItems(job.products, catalogItems);
+    setAiItems(finalItems);
+    if (finalItems.length <= 50) {
+      atlasZoomRef.current = 1;
+      atlasZoomScrollRef.current = null;
+      setZoom(1);
+      requestAnimationFrame(() => {
+        const atlas = atlasElementRef.current;
+        if (!atlas || !isWorkspaceOperationCurrent(operation)) return;
+        atlas.scrollLeft = 0;
+        atlas.scrollTop = 0;
+      });
+    }
     setAiStatus(`${job.message} · score > ${job.threshold.toFixed(2)}`);
   }
 
   async function askAtlasAssistant() {
     if ((!aiPrompt.trim() && !promptImages.length && !promptProductIds.length && !promptCollectionIds.length) || assistantBusy) return;
+    const submittedPrompt = aiPrompt;
+    const attachedProductIds = [...new Set([...promptProductIds, ...selectedIds])].slice(-40);
+    if (attachedProductIds.length !== promptProductIds.length) {
+      setPromptProductIds(attachedProductIds);
+      setSelectedIds(new Set());
+    }
     const operation = captureWorkspaceOperation();
     const presetRange = priceFilter === "under50" ? { max: 49.99 }
       : priceFilter === "50to100" ? { min: 50, max: 100 }
@@ -2830,8 +3005,8 @@ export default function Home() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          prompt: aiPrompt,
-          productIds: promptProductIds,
+          prompt: submittedPrompt,
+          productIds: attachedProductIds,
           collectionIds: promptCollectionIds.slice(0, 12),
           workspaceId: operation.workspaceId || undefined,
           images: promptImages.map(({ name, dataUrl }) => ({ name, dataUrl })),
@@ -2874,13 +3049,13 @@ export default function Home() {
       else if (payload.action === "discover" && payload.discoveryPlan && payload.jobs?.length) {
         setDiscoveryPlan(payload.discoveryPlan);
         persistAtlasDiscovery(payload.discoveryPlan, payload.jobs, operation);
-        setAiStatus(payload.plan?.message ?? "Recherche locale lancée");
+        setAiStatus(payload.plan?.message ?? "Local discovery started");
         await monitorAtlasDiscovery(payload.jobs, operation);
       } else if (payload.action === "outfit" && payload.boards) {
         if (showClothingFallback) {
           setOutfitBoards(payload.boards); setScope("outfits"); setDrawer("outfits");
           setAiStatus(`${payload.boards.length} planche${payload.boards.length > 1 ? "s" : ""} créée${payload.boards.length > 1 ? "s" : ""}`);
-        } else setAiStatus("Cette action n’est pas disponible dans ce profil");
+        } else setAiStatus("This action is not available for this workspace profile");
       } else if (payload.action === "artifact" && payload.artifact) {
         const artifact = mosaicNormalizeArtifact(payload.artifact);
         setMosaicArtifacts((current) => [artifact, ...current.filter((item) => item.id !== artifact.id)]);
@@ -2898,7 +3073,7 @@ export default function Home() {
             .then(() => reloadMosaicArtifactsAndRuns(operation))
             .catch(() => {
               if (isWorkspaceOperationCurrent(operation)) {
-                setToast("Le brouillon sera actualisé au prochain rechargement de Studio");
+                setToast("The draft will update the next time Studio opens");
               }
             });
         } else setAiStatus(payload.message ?? `Brouillon « ${artifact.name} » créé`);
@@ -2914,12 +3089,26 @@ export default function Home() {
           await monitorAtlasRefresh(enrichmentJob, operation);
         } else setAiStatus(payload.message ?? "Enrichissement préparé · ouvre Activité pour le suivi");
       } else if (payload.products) {
-        setAiItems(atlasMergeItems(payload.products, catalogItems)); setScope("catalogue"); setActiveFilter("Tout");
-        setAiStatus(mosaicSummaryText(payload.summary) ?? `${payload.plan?.title ?? "Luna"} · ${payload.products.length} résultat${payload.products.length > 1 ? "s" : ""}${payload.importErrors?.length ? ` · ${payload.importErrors.length} lien non lu` : ""}`);
-      } else setAiStatus(mosaicSummaryText(payload.summary) ?? payload.message ?? payload.plan?.message ?? "Demande traitée");
+        setScope("catalogue"); setActiveFilter("Tout");
+        if (payload.products.length === 0) {
+          setAiItems(null);
+          setAiStatus(`${payload.plan?.title ?? "Luna"} · no exact match — the full catalog stays visible`);
+        } else {
+          setAiItems(atlasMergeItems(payload.products, catalogItems));
+          setAiStatus(mosaicSummaryText(payload.summary) ?? `${payload.plan?.title ?? "Luna"} · ${payload.products.length} result${payload.products.length === 1 ? "" : "s"}${payload.importErrors?.length ? ` · ${payload.importErrors.length} unread link${payload.importErrors.length === 1 ? "" : "s"}` : ""}`);
+        }
+      } else setAiStatus(mosaicSummaryText(payload.summary) ?? payload.message ?? payload.plan?.message ?? "Request complete");
     } catch (error) {
       if (isWorkspaceOperationCurrent(operation)) setAiStatus(`Assistant indisponible — ${error instanceof Error ? error.message : "erreur locale"}`);
-    } finally { if (isWorkspaceOperationCurrent(operation)) setAssistantBusy(false); }
+    } finally {
+      if (isWorkspaceOperationCurrent(operation)) {
+        setAssistantBusy(false);
+        if (composerInputRef.current?.value === submittedPrompt) {
+          setComposerExpanded(false);
+          composerInputRef.current.blur();
+        }
+      }
+    }
   }
 
   function persistAtlasDiscovery(plan: AtlasDiscoveryPlan, jobs: AtlasDiscoveryJob[], operation = captureWorkspaceOperation()) {
@@ -2966,7 +3155,7 @@ export default function Home() {
       const cancelled = jobs.filter((job) => job.status === "cancelled").length;
       if (failed) setToast(`${discovered} nouveau${discovered > 1 ? "x" : ""} · ${failed} recherche${failed > 1 ? "s" : ""} à reprendre`);
       else if (cancelled) setToast(discovered ? `${discovered} article${discovered > 1 ? "s" : ""} ajouté${discovered > 1 ? "s" : ""} avant l’arrêt` : "Découverte arrêtée · relance Trouver pour recommencer");
-      else setToast(discovered ? `${discovered} ${discovered > 1 ? "nouveaux" : "nouvel"} article${discovered > 1 ? "s" : ""} ajouté${discovered > 1 ? "s" : ""}` : "Aucun nouvel article trouvé");
+      else setToast(discovered ? `${discovered} new item${discovered === 1 ? "" : "s"} added` : "No new items found");
     } finally {
       if (discoveryMonitorRef.current === monitorId && isWorkspaceOperationCurrent(operation)) setDiscoveryBusy(false);
     }
@@ -2992,7 +3181,7 @@ export default function Home() {
     } catch {
       if (!isWorkspaceOperationCurrent(operation)) return;
       setDiscoveryBusy(false);
-      setToast("Impossible d’arrêter toutes les recherches");
+      setToast("Could not stop every discovery job");
     }
   }
 
@@ -3019,7 +3208,7 @@ export default function Home() {
     } catch {
       if (!isWorkspaceOperationCurrent(operation)) return;
       setDiscoveryBusy(false);
-      setToast("Reprise de la découverte indisponible");
+      setToast("Discovery resume is unavailable");
     }
   }
 
@@ -3031,7 +3220,7 @@ export default function Home() {
       if (!next.length) return;
       setPromptImages((current) => [...current, ...next].slice(0, ATLAS_MAX_IMAGES));
       setAiStatus(`${next.length} image${next.length > 1 ? "s" : ""} ajoutée${next.length > 1 ? "s" : ""} au prochain prompt Vision`);
-    } catch (error) { if (isWorkspaceOperationCurrent(operation)) setAiStatus(error instanceof Error ? error.message : "Image impossible à ajouter"); }
+    } catch (error) { if (isWorkspaceOperationCurrent(operation)) setAiStatus(error instanceof Error ? error.message : "Could not add image"); }
   }
 
   async function addAtlasPersonalImages(files: File[]) {
@@ -3041,7 +3230,7 @@ export default function Home() {
       if (!isWorkspaceOperationCurrent(operation)) return;
       setPersonalImages((current) => [...current, ...next].slice(0, ATLAS_MAX_IMAGES));
     } catch (error) {
-      if (isWorkspaceOperationCurrent(operation)) setToast(error instanceof Error ? error.message : "Images invalides");
+      if (isWorkspaceOperationCurrent(operation)) setToast(error instanceof Error ? error.message : "Invalid images");
     }
   }
 
@@ -3083,8 +3272,8 @@ export default function Home() {
     if (!isWorkspaceOperationCurrent(operation)) return;
     if (["error", "blocked"].includes(job.status)) throw new Error(job.error ?? "refresh failed");
     if (job.status === "complete") {
-      setToast("Prix et stocks rafraîchis");
-    } else setToast((job.succeeded ?? 0) > 0 ? `${job.succeeded} fiche${job.succeeded === 1 ? "" : "s"} mise${job.succeeded === 1 ? "" : "s"} à jour avant l’arrêt` : "Rafraîchissement arrêté");
+      setToast("Prices and availability refreshed");
+    } else setToast((job.succeeded ?? 0) > 0 ? `${job.succeeded} page${job.succeeded === 1 ? "" : "s"} updated before stopping` : "Refresh stopped");
   }
 
   async function startAtlasRefresh(productIds: string[]) {
@@ -3123,7 +3312,7 @@ export default function Home() {
       if (!isWorkspaceOperationCurrent(operation)) return;
       setRefreshRecovered(false);
       await monitorAtlasRefresh(await response.json() as AtlasAcquisitionJob, operation);
-    } catch { if (isWorkspaceOperationCurrent(operation)) setToast("Reprise indisponible"); }
+    } catch { if (isWorkspaceOperationCurrent(operation)) setToast("Resume unavailable"); }
   }
 
   async function cancelAtlasRefresh() {
@@ -3135,7 +3324,7 @@ export default function Home() {
       if (!isWorkspaceOperationCurrent(operation)) return;
       setRefreshRecovered(false);
       await monitorAtlasRefresh(await response.json() as AtlasAcquisitionJob, operation);
-    } catch { if (isWorkspaceOperationCurrent(operation)) setToast("Impossible d’arrêter la vérification"); }
+    } catch { if (isWorkspaceOperationCurrent(operation)) setToast("Could not stop verification"); }
   }
 
   function currentAtlasView(): AtlasSavedView {
@@ -3161,15 +3350,15 @@ export default function Home() {
       if (!response.ok) throw new Error("save failed");
       const saved = atlasNormalizeView(await response.json() as AtlasSavedView);
       if (!isWorkspaceOperationCurrent(operation)) return;
-      setSavedViews((current) => [saved, ...current.filter((view) => view.id !== saved.id)]); setViewName(""); setToast("Vue sauvegardée");
-    } catch { if (isWorkspaceOperationCurrent(operation)) setToast("Impossible de sauvegarder cette vue"); }
+      setSavedViews((current) => [saved, ...current.filter((view) => view.id !== saved.id)]); setViewName(""); setToast("View saved");
+    } catch { if (isWorkspaceOperationCurrent(operation)) setToast("Could not save this view"); }
   }
 
   function applyAtlasView(view: AtlasSavedView) {
     const nextScope = showClothingFallback || ["catalogue", "saved", "reference"].includes(view.scope) ? view.scope : "catalogue";
     setScope(nextScope); setActiveFilter(showClothingFallback ? view.activeFilter : "Tout"); setSourceFilter(!showClothingFallback && view.sourceFilter === "owned" ? "all" : view.sourceFilter);
     setPriceFilter(showClothingFallback ? view.priceFilter : "all"); setFitFilter(showClothingFallback ? view.fitFilter : "all");
-    setMaterialFilter(showClothingFallback ? view.materialFilter : "all"); setSelectedSizes(showClothingFallback ? view.sizeFilters : ["M", "L"]); setStockFilter(showClothingFallback ? view.stockFilter : "all");
+    setMaterialFilter(showClothingFallback ? view.materialFilter : "all"); setSelectedSizes(showClothingFallback ? view.sizeFilters : []); setStockFilter(showClothingFallback ? view.stockFilter : "all");
     setAttributeQuery(view.attributeQuery); setMinPrice(view.minPrice); setMaxPrice(view.maxPrice); setIncludeRejected(view.includeRejected);
     setSelectedCollectionId(view.selectedCollectionId ?? null); setDynamicFacetSelections(view.dynamicFacetSelections ?? {}); setDynamicNumberFilters(view.dynamicNumberFilters ?? {});
     setXAxis(view.xAxis); setYAxis(view.yAxis); setMode(view.mode); setImageMode(view.imageMode); setDrawer(null); setToast(`Vue « ${view.name} » appliquée`);
@@ -3180,13 +3369,13 @@ export default function Home() {
     const previous = savedViews;
     setSavedViews((current) => current.filter((view) => view.id !== id));
     try { const response = await fetch(atlasWorkspaceApiUrl(`/views/${encodeURIComponent(id)}`, operation.workspaceId), { method: "DELETE", signal: operation.signal }); if (!response.ok) throw new Error("delete failed"); }
-    catch { if (isWorkspaceOperationCurrent(operation)) { setSavedViews(previous); setToast("Suppression impossible"); } }
+    catch { if (isWorkspaceOperationCurrent(operation)) { setSavedViews(previous); setToast("Delete failed"); } }
   }
 
   async function addAtlasPersonalItem(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const operation = captureWorkspaceOperation();
-    if ((personalKind !== "shop" && !personalImages.length) || personalBusy) { setToast("Ajoute au moins une image"); return; }
+    if ((personalKind !== "shop" && !personalImages.length) || personalBusy) { setToast("Add at least one image"); return; }
     const form = new FormData(event.currentTarget);
     setPersonalBusy(true);
     try {
@@ -3197,7 +3386,7 @@ export default function Home() {
         } : {
           kind: personalKind, name: String(form.get("name") ?? "").trim(), images: personalImages.map((image) => image.dataUrl),
           description: String(form.get("description") ?? "").trim() || undefined,
-          category: String(form.get("category") ?? "Autre"), color: String(form.get("color") ?? "Inconnue"),
+          category: String(form.get("category") ?? "Other"), color: String(form.get("color") ?? "Unknown"),
           fit: String(form.get("fit") ?? "unknown"), tags: String(form.get("tags") ?? "").split(",").map((tag) => tag.trim()).filter(Boolean),
           workspaceId: operation.workspaceId || undefined,
         }),
@@ -3211,7 +3400,7 @@ export default function Home() {
       if (!isWorkspaceOperationCurrent(operation)) return;
       setCatalogItems((current) => [created, ...current.filter((item) => item.id !== created.id)]);
       setPersonalImages([]); event.currentTarget.reset(); setDrawer(null); setScope(showClothingFallback && personalKind === "owned" ? "owned" : personalKind === "reference" ? "reference" : "catalogue");
-      setToast(personalKind === "owned" ? (showClothingFallback ? "Vêtement ajouté au dressing" : "Élément local ajouté au catalogue") : personalKind === "reference" ? "Référence ajoutée" : "Fiche produit importée");
+      setToast(personalKind === "owned" ? "Local item added to the catalog" : personalKind === "reference" ? "Reference added" : "Product page imported");
     } catch (error) { if (isWorkspaceOperationCurrent(operation)) setToast(error instanceof Error ? `Ajout impossible — ${error.message}` : "Ajout impossible — API locale indisponible"); }
     finally { if (isWorkspaceOperationCurrent(operation)) setPersonalBusy(false); }
   }
@@ -3220,15 +3409,15 @@ export default function Home() {
     event.preventDefault();
     const operation = captureWorkspaceOperation();
     const productIds = outfitDraftIds.size ? [...outfitDraftIds] : [...compareIds];
-    if (!productIds.length) { setToast("Ajoute d’abord quelques pièces à la tenue"); return; }
+    if (!productIds.length) { setToast("Add a few items to the outfit first"); return; }
     try {
       const response = await fetch(`${ATLAS_API}/outfit-boards`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: outfitName.trim() || `Tenue ${outfitBoards.length + 1}`, productIds, workspaceId: operation.workspaceId || undefined }), signal: operation.signal });
       if (!response.ok) throw new Error("create failed");
       const board = await response.json() as AtlasOutfitBoard;
       if (!isWorkspaceOperationCurrent(operation)) return;
       setOutfitBoards((current) => [board, ...current.filter((item) => item.id !== board.id)]);
-      setOutfitName(""); setOutfitDraftIds(new Set()); setSelectedOutfitBoardId(board.id); setScope("outfits"); setToast("Planche de tenue enregistrée");
-    } catch { if (isWorkspaceOperationCurrent(operation)) setToast("Impossible d’enregistrer cette tenue"); }
+      setOutfitName(""); setOutfitDraftIds(new Set()); setSelectedOutfitBoardId(board.id); setScope("outfits"); setToast("Outfit board saved");
+    } catch { if (isWorkspaceOperationCurrent(operation)) setToast("Could not save this outfit"); }
   }
 
   async function generateAtlasOutfits() {
@@ -3236,7 +3425,7 @@ export default function Home() {
     const anchor = outfitDraftItems.find((item) => item.kind === "shop")
       ?? compareItems.find((item) => item.kind === "shop")
       ?? catalogItems.find((item) => item.kind === "shop" && item.decision === "saved");
-    if (!anchor) { setToast("Sélectionne d’abord un achat potentiel"); return; }
+    if (!anchor) { setToast("Select a potential purchase first"); return; }
     setToast(`Luna compose autour de ${anchor.name}…`);
     try {
       const response = await fetch(`${ATLAS_API}/outfit-boards/generate`, {
@@ -3250,7 +3439,7 @@ export default function Home() {
       if (boards[0]) setSelectedOutfitBoardId(boards[0].id);
       setScope("outfits");
       setToast(`${boards.length} tenue${boards.length > 1 ? "s" : ""} proposée${boards.length > 1 ? "s" : ""}`);
-    } catch { if (isWorkspaceOperationCurrent(operation)) setToast("Luna n’a pas pu composer de tenue"); }
+    } catch { if (isWorkspaceOperationCurrent(operation)) setToast("Luna could not compose an outfit"); }
   }
 
   async function deleteAtlasOutfit(id: string) {
@@ -3259,7 +3448,7 @@ export default function Home() {
     setOutfitBoards((current) => current.filter((board) => board.id !== id));
     if (selectedOutfitBoardId === id) setSelectedOutfitBoardId(null);
     try { const response = await fetch(atlasWorkspaceApiUrl(`/outfit-boards/${encodeURIComponent(id)}`, operation.workspaceId), { method: "DELETE", signal: operation.signal }); if (!response.ok) throw new Error("delete failed"); }
-    catch { if (isWorkspaceOperationCurrent(operation)) { setOutfitBoards(previous); setToast("Suppression impossible"); } }
+    catch { if (isWorkspaceOperationCurrent(operation)) { setOutfitBoards(previous); setToast("Delete failed"); } }
   }
 
   function exportAtlasJson() {
@@ -3267,15 +3456,16 @@ export default function Home() {
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
     const link = document.createElement("a");
     link.href = url; link.download = `wardrobe-atlas-${new Date().toISOString().slice(0, 10)}.json`; link.click(); URL.revokeObjectURL(url);
-    setToast("Export JSON créé");
+    setToast("JSON export created");
   }
 
-  const scopeLabel = atlasScopes.find((item) => item.id === scope)?.label ?? "Catalogue";
+  const scopeLabel = scope === "catalogue" ? t("allItems") : scope === "saved" ? t("favorites")
+    : scope === "owned" ? t("wardrobe") : scope === "reference" ? t("references") : t("outfits");
   const progressDone = refreshJob?.completed ?? refreshJob?.processed ?? 0;
   const progressTotal = refreshJob?.total ?? 0;
   const refreshNeedsResume = refreshRecovered || ["error", "blocked"].includes(refreshJob?.status ?? "");
   const refreshCooldownAt = atlasCooldownTimestamp(refreshJob?.cooldownUntil);
-  const refreshCooldownActive = Boolean(refreshCooldownAt && Date.parse(refreshJob?.cooldownUntil ?? "") > Date.now());
+  const refreshCooldownActive = Boolean(refreshCooldownAt && atlasCooldownIsActive(refreshJob?.cooldownUntil));
   const discoveryTotal = discoveryJobs.reduce((sum, job) => sum + job.total, 0);
   const discoveryCompleted = discoveryJobs.reduce((sum, job) => sum + job.completed, 0);
   const discoveryProgress = discoveryTotal
@@ -3285,18 +3475,18 @@ export default function Home() {
   const discoveryDiscarded = discoveryJobs.reduce((sum, job) => sum + job.duplicates + job.filtered + job.invalid, 0);
   const discoverySources = [...new Set((discoveryPlan?.searches.map((search) => search.source) ?? discoveryJobs.map((job) => job.source))
     .map((source) => ATLAS_DISCOVERY_SOURCE_LABELS[source] ?? source))];
-  const discoverySizes = discoveryPlan?.sizes.length ? discoveryPlan.sizes.join(" ou ") : "M ou L";
+  const discoverySizes = discoveryPlan?.sizes.length ? discoveryPlan.sizes.join(" / ") : t("allSizes");
   const discoveryHasActive = discoveryJobs.some((job) => !ATLAS_TERMINAL_DISCOVERY_STATUSES.has(job.status));
   const discoveryCanResume = !discoveryBusy && discoveryJobs.some((job) => ["queued", "running", "failed", "blocked"].includes(job.status));
   const discoveryHasFailures = discoveryJobs.some((job) => ["failed", "blocked"].includes(job.status));
   const discoveryNeedsInteractive = discoveryJobs.some((job) => job.status === "blocked" && job.source === "zalando-ch");
   const discoveryWasCancelled = discoveryJobs.length > 0 && discoveryJobs.every((job) => ["succeeded", "cancelled"].includes(job.status))
     && discoveryJobs.some((job) => job.status === "cancelled");
-  const discoveryStatusText = discoveryRecovered ? "Session retrouvée · reprise manuelle"
-    : discoveryBusy && discoveryHasActive ? `${discoveryCompleted}/${discoveryTotal || "…"} listes explorées`
-      : discoveryHasFailures ? "Certaines recherches peuvent être reprises"
-        : discoveryWasCancelled ? "Arrêtée · relance Trouver pour recommencer"
-          : "Découverte terminée";
+  const discoveryStatusText = discoveryRecovered ? "Recovered session · resume manually"
+    : discoveryBusy && discoveryHasActive ? `${discoveryCompleted}/${discoveryTotal || "…"} lists explored`
+      : discoveryHasFailures ? "Some searches can be resumed"
+        : discoveryWasCancelled ? "Stopped · ask again to restart"
+          : "Discovery complete";
   const effectiveFocusedIndex = Math.min(focusedIndex, Math.max(0, renderedProducts.length - 1));
   const previewProduct = previewItem ? catalogItems.find((item) => item.id === previewItem.id) ?? previewItem : null;
   const activeWorkspace = mosaicWorkspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaceSchema?.workspace;
@@ -3307,19 +3497,7 @@ export default function Home() {
   const workspaceDisplayFields = (workspaceSchema?.fields ?? []).filter((field) => field.display !== false).slice(0, 24);
   const dynamicFilterCount = Object.values(dynamicFacetSelections).filter((values) => values.length).length
     + Object.values(dynamicNumberFilters).filter((range) => range.min || range.max).length;
-  const onboardingExamples = activeWorkspace?.profile === "clothing" ? [
-    "Trouve les pièces visuellement proches de mes références, en M ou L",
-    "Regroupe ce board par silhouettes et explique les zones",
-    "Compare ma sélection et dis-moi laquelle apporte le plus",
-  ] : activeWorkspace?.profile === "televisions" ? [
-    "Regroupe ces téléviseurs par diagonale et technologie de dalle",
-    "Trouve les téléviseurs proches de mes références sans doublons",
-    "Compare ma sélection sur dalle, fréquence, connectique et prix",
-  ] : [
-    "Regroupe ce board par familles visuelles et explique les zones",
-    "Trouve les éléments proches de mes références sans doublons",
-    "Compare ma sélection avec les critères importants de cet espace",
-  ];
+  const onboardingExamples = [t("exampleFindSimilar"), t("exampleGroupBoard"), t("exampleCompareSelection")];
   const activityAttentionCount = (refreshJob && ["error", "blocked"].includes(refreshJob.status) ? 1 : 0)
     + (discoveryHasFailures ? 1 : 0) + mosaicRuns.filter((run) => ["failed", "error", "blocked"].includes(run.status)).length;
   const advancedFilterCount = [Boolean(attributeQuery.trim()), Boolean(minPrice), Boolean(maxPrice), includeRejected,
@@ -3327,76 +3505,77 @@ export default function Home() {
   ].filter(Boolean).length + dynamicFilterCount;
   const filterBadgeCount = advancedFilterCount + (sourceFilter !== "all" ? 1 : 0)
     + (showClothingFallback ? selectedSizes.length + (activeFilter !== "Tout" ? 1 : 0) : 0);
+  const assistantHasContext = Boolean(aiPrompt.trim() || promptImages.length || promptProductIds.length || promptCollectionIds.length);
+  const assistantOpen = composerExpanded || (catalogStatus !== "loading…" && products.length === 0);
 
   return (
     <main className={`appShell atlasAppShell mosaicShell imageMode-${imageMode}`}>
-      <aside className="mosaicSidebar" aria-label="Navigation principale">
+      <MosaicCardIconSprite />
+      <aside className="mosaicSidebar" aria-label={t("navigation")}>
         <details className="mosaicWorkspaceSwitcher">
-          <summary className="mosaicIdentity"><span className="mosaicMark" aria-hidden="true">M</span><div><b>{activeWorkspace?.name ?? "Mosaic"}</b><small>{activeWorkspace?.profile ?? "Local visual research"}</small></div><i aria-hidden="true">⌄</i></summary>
+          <summary className="mosaicIdentity"><span className="mosaicMark" aria-hidden="true"><img src="/mosaic-mark.svg?v=neuchatech-d52a1d" alt="" /></span><div><b>{activeWorkspace?.name ?? "MosAIc"}</b><small>{activeWorkspace?.profile ?? t("localResearch")}</small></div><ChevronDown className="mosaicIcon mosaicChevron" aria-hidden="true" /></summary>
           <div className="mosaicWorkspaceMenu">
-            <span>Espaces</span>
-            <div>{mosaicWorkspaces.map((workspace) => <button type="button" className={workspace.id === activeWorkspaceId ? "active" : ""} key={workspace.id} onClick={(event) => { switchMosaicWorkspace(workspace.id); (event.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open"); }}><b>{workspace.name}</b><small>{workspace.profile ?? "generic"}</small>{workspace.id === activeWorkspaceId && <i>✓</i>}</button>)}</div>
-            <form onSubmit={(event) => void createMosaicWorkspace(event)}><input value={newWorkspaceName} onChange={(event) => setNewWorkspaceName(event.target.value)} placeholder="Nouvel espace" aria-label="Nom du nouvel espace" /><select value={newWorkspaceProfile} onChange={(event) => setNewWorkspaceProfile(event.target.value)} aria-label="Profil du nouvel espace"><option value="generic">Générique</option><option value="clothing">Vêtements</option><option value="televisions">Téléviseurs</option></select><button disabled={workspaceBusy || !newWorkspaceName.trim()}>{workspaceBusy ? "…" : "Créer"}</button></form>
+            <span>{t("workspaces")}</span>
+            <div>{mosaicWorkspaces.map((workspace) => <button type="button" className={workspace.id === activeWorkspaceId ? "active" : ""} key={workspace.id} onClick={(event) => { switchMosaicWorkspace(workspace.id); (event.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open"); }}><b>{workspace.name}</b><small>{workspace.profile ?? "generic"}</small>{workspace.id === activeWorkspaceId && <i><Check className="mosaicIcon" aria-hidden="true" /></i>}</button>)}</div>
+            <form onSubmit={(event) => void createMosaicWorkspace(event)}><input value={newWorkspaceName} onChange={(event) => setNewWorkspaceName(event.target.value)} placeholder={t("newWorkspace")} aria-label={t("workspaceName")} /><select value={newWorkspaceProfile} onChange={(event) => setNewWorkspaceProfile(event.target.value)} aria-label={t("workspaceProfile")}><option value="generic">{t("generic")}</option><option value="clothing">{t("clothing")}</option><option value="televisions">{t("televisions")}</option></select><button disabled={workspaceBusy || !newWorkspaceName.trim()}>{workspaceBusy ? "…" : t("create")}</button></form>
           </div>
         </details>
         <nav className="mosaicPrimaryNav">
-          <button className={drawer === null ? "active" : ""} onClick={() => { setDrawer(null); setSelectedCollectionId(null); }}>⌘ <span>Explorer</span></button>
-          <button className={drawer === "collections" ? "active" : ""} onClick={() => setDrawer("collections")}>▣ <span>Collections</span><b>{mosaicCollections.length}</b></button>
-          <button className={drawer === "activity" ? "active" : ""} onClick={() => setDrawer("activity")}>◷ <span>Activité</span>{activityAttentionCount > 0 && <b className="attention">{activityAttentionCount}</b>}</button>
-          <button className={drawer === "studio" ? "active" : ""} onClick={() => setDrawer("studio")}>◩ <span>Studio</span>{mosaicArtifacts.length > 0 && <b>{mosaicArtifacts.length}</b>}</button>
+          <button className={drawer === null ? "active" : ""} onClick={() => { setDrawer(null); setSelectedCollectionId(null); }}><Compass className="mosaicIcon" aria-hidden="true" /><span>{t("explore")}</span></button>
+          <button className={drawer === "collections" ? "active" : ""} onClick={() => setDrawer("collections")}><FolderHeart className="mosaicIcon" aria-hidden="true" /><span>{t("collections")}</span><b>{mosaicCollections.length}</b></button>
+          <button className={drawer === "activity" ? "active" : ""} onClick={() => setDrawer("activity")}><Clock3 className="mosaicIcon" aria-hidden="true" /><span>{t("activity")}</span>{activityAttentionCount > 0 && <b className="attention">{activityAttentionCount}</b>}</button>
+          <button className={drawer === "studio" ? "active" : ""} onClick={() => setDrawer("studio")}><Palette className="mosaicIcon" aria-hidden="true" /><span>{t("studio")}</span>{mosaicArtifacts.length > 0 && <b>{mosaicArtifacts.length}</b>}</button>
         </nav>
-        <div className="mosaicLibrary"><small>Bibliothèque</small>{atlasScopes.filter((item) => showClothingFallback || ["catalogue", "saved", "reference"].includes(item.id)).map((item) => <button key={item.id} className={scope === item.id ? "active" : ""} onClick={() => { setScope(item.id); setSelectedCollectionId(null); setDrawer(null); }}><span>{item.icon}</span>{item.id === "catalogue" ? "Tous les éléments" : item.id === "saved" ? "Favoris" : item.label}</button>)}</div>
-        <button className="mosaicAdd" onClick={() => setDrawer("add")}>＋ Ajouter</button>
+        <div className="mosaicLibrary"><small>{t("library")}</small>{atlasScopes.filter((item) => showClothingFallback || ["catalogue", "saved", "reference"].includes(item.id)).map((item) => <button key={item.id} className={scope === item.id ? "active" : ""} onClick={() => { setScope(item.id); setSelectedCollectionId(null); setDrawer(null); }}><span><MosaicScopeIcon scope={item.id} /></span>{item.id === "catalogue" ? t("allItems") : item.id === "saved" ? t("favorites") : item.id === "owned" ? t("wardrobe") : item.id === "reference" ? t("references") : t("outfits")}</button>)}</div>
+        <button className="mosaicAdd" onClick={() => setDrawer("add")}><Plus className="mosaicIcon" aria-hidden="true" /> {t("add")}</button>
+        <a className="mosaicCredit" href="https://www.neuchatech.ch" target="_blank" rel="noopener noreferrer">{t("craftedBy")} <ExternalLink className="mosaicIcon mosaicInlineIcon" aria-hidden="true" /></a>
       </aside>
 
       <section className="mosaicWorkspace">
         <header className="mosaicTopbar">
-          <div><span>{activeWorkspace?.profile === "clothing" ? "Garde-robe" : activeWorkspace?.profile === "televisions" ? "Téléviseurs" : "Espace de travail"} · {catalogStatus}</span><h1>{activeWorkspace?.name ?? "Mosaic"}</h1></div>
+          <div><span>{activeWorkspace?.profile === "clothing" ? t("clothing") : activeWorkspace?.profile === "televisions" ? t("televisions") : t("workspace")} · {catalogStatus}</span><h1>{activeWorkspace?.name ?? "MosAIc"}</h1></div>
           <div className="mosaicTopActions">
-            <button className={filterBadgeCount ? "hasBadge" : ""} data-count={filterBadgeCount || undefined} onClick={() => setDrawer("filters")}>☷ Filtres</button>
-            <details className="mosaicViewMenu"><summary>◫ Vue</summary><div>
-              <fieldset><legend>Disposition</legend><button className={mode === "space" ? "active" : ""} onClick={() => setMode("space")}>Espace</button><button className={mode === "grid" ? "active" : ""} onClick={() => setMode("grid")}>Grille</button></fieldset>
-              <fieldset><legend>Images</legend><button className={imageMode === "cropped" ? "active" : ""} onClick={() => setImageMode("cropped")}>Recadrées</button><button className={imageMode === "full" ? "active" : ""} onClick={() => setImageMode("full")}>Entières</button></fieldset>
-              <fieldset className="mosaicZoom"><legend>Zoom</legend><button disabled={mode !== "space" || zoom <= .25} onClick={() => changeAtlasZoom(atlasZoomRef.current - .5)}>−</button><button disabled={mode !== "space"} onClick={resetAtlasView}>{Math.round(zoom * 100)}%</button><button disabled={mode !== "space" || zoom >= ATLAS_MAX_ZOOM} onClick={() => changeAtlasZoom(atlasZoomRef.current + .5)}>＋</button></fieldset>
-              <details><summary>Avancé</summary><label>X <select value={xAxis} onChange={(event) => setXAxis(event.target.value as AxisField)}><option value="pca">Similarité</option><option value="price">Prix</option><option value="score">Score</option></select></label><label>Y <select value={yAxis} onChange={(event) => setYAxis(event.target.value as AxisField)}><option value="pca">Similarité</option><option value="price">Prix</option><option value="score">Score</option></select></label></details>
-              <button onClick={() => { setDrawer("views"); }}>Vues sauvegardées</button>
-            </div></details>
-            <button className="mosaicAddTop" onClick={() => setDrawer("add")}>＋ Ajouter</button>
+            <label className="mosaicLanguage"><span>{t("language")}</span><select value={locale} onChange={(event) => changeLocale(event.target.value as MosaicLocale)} aria-label={t("language")}>{mosaicLocales.map((code) => <option key={code} value={code}>{mosaicLocaleLabels[code]}</option>)}</select></label>
+            <button className={filterBadgeCount ? "hasBadge" : ""} data-count={filterBadgeCount || undefined} onClick={() => setDrawer("filters")}><SlidersHorizontal className="mosaicIcon" aria-hidden="true" /> {t("filters")}</button>
+            <button className="mosaicAddTop" onClick={() => setDrawer("add")}><Plus className="mosaicIcon" aria-hidden="true" /> {t("add")}</button>
           </div>
         </header>
 
         <section className="boardPanel atlasBoardPanel mosaicBoardPanel">
           <form
-            className={`mosaicComposer${composerExpanded ? " expanded" : " compact"}${assistantDropActive ? " dropActive" : ""}`}
+            className={`mosaicComposer${assistantOpen ? " expanded" : " compact"}${assistantDropActive ? " dropActive" : ""}`}
             onSubmit={(event) => { event.preventDefault(); setComposerExpanded(false); void askAtlasAssistant(); }}
             onDragEnter={(event) => { event.preventDefault(); setAssistantDropActive(true); }}
             onDragOver={(event) => event.preventDefault()}
             onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setAssistantDropActive(false); }}
             onDrop={(event) => void dropOnAtlasAssistant(event)}
             onFocus={() => setComposerExpanded(true)}
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null) && !assistantHasContext && !assistantBusy) setComposerExpanded(false);
+            }}
           >
-            {composerExpanded && <div className="mosaicComposerIntro"><span>Assistant visuel</span><h2>Qu’est-ce qu’on cherche aujourd’hui ?</h2><p>Décris une direction, colle des liens ou dépose un moodboard. Mosaic combine ton catalogue, tes références et tes collections.</p></div>}
-            {composerExpanded && onboardingVisible && <div className="mosaicOnboarding" role="note"><div><b>Essaie une demande concrète</b><span>Tu peux partir d’une intention, d’une URL ou d’images. Rien ne quitte cette machine sans action explicite.</span></div><div>{onboardingExamples.map((example) => <button type="button" key={example} onClick={() => { setAiPrompt(example); requestAnimationFrame(() => composerInputRef.current?.focus()); }}>{example}</button>)}</div><button type="button" className="mosaicOnboardingDismiss" onClick={() => { setOnboardingVisible(false); try { window.localStorage.setItem(MOSAIC_ONBOARDING_KEY, "1"); } catch { /* optional */ } }} aria-label="Masquer ces exemples">×</button></div>}
+            {assistantOpen && <div className="mosaicComposerIntro"><span>{t("visualAssistant")}</span><h2>{t("whatExplore")}</h2><p>{t("assistantIntro")}</p></div>}
             <div className="mosaicComposerInput">
-              <span className="mosaicSpark" aria-hidden="true">✦</span>
-              <textarea ref={composerInputRef} value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} onPaste={(event) => { const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/")); if (!images.length) return; event.preventDefault(); void addAtlasPromptImages(images); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); setComposerExpanded(false); void askAtlasAssistant(); } }} placeholder={activeWorkspace?.profile === "clothing" ? "Trouve-moi des vestes courtes brunes, texturées, disponibles en M ou L…" : "Décris ce que tu veux trouver, comparer, organiser ou comprendre…"} aria-label="Demander à l’assistant Mosaic" rows={composerExpanded ? 2 : 1} />
+              <Sparkles className="mosaicSpark" aria-hidden="true" />
+              <textarea ref={composerInputRef} value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} onPaste={(event) => { const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/")); if (!images.length) return; event.preventDefault(); void addAtlasPromptImages(images); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); setComposerExpanded(false); void askAtlasAssistant(); } }} placeholder={t("askPlaceholder")} aria-label={t("askAssistant")} rows={assistantOpen ? 2 : 1} />
               <input ref={atlasImageInputRef} className="hiddenImageInput" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => { void addAtlasPromptImages(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
-              <button className="mosaicAttach" type="button" onClick={() => atlasImageInputRef.current?.click()} aria-label="Ajouter des images">＋</button>
-              <button type="submit" className="mosaicSend" disabled={assistantBusy || (!aiPrompt.trim() && !promptImages.length && !promptProductIds.length && !promptCollectionIds.length)} aria-busy={assistantBusy}>{assistantBusy ? "…" : "↑"}<span>Demander</span></button>
+              <button className="mosaicAttach" type="button" onClick={() => atlasImageInputRef.current?.click()} aria-label={t("addImages")}><ImagePlus className="mosaicIcon" aria-hidden="true" /></button>
+              <button type="submit" className="mosaicSend" disabled={assistantBusy || (!aiPrompt.trim() && !promptImages.length && !promptProductIds.length && !promptCollectionIds.length)} aria-busy={assistantBusy}>{assistantBusy ? <LoaderCircle className="mosaicIcon mosaicSpinner" aria-hidden="true" /> : <ArrowUp className="mosaicIcon" aria-hidden="true" />}<span className="mosaicSrOnly">{t("ask")}</span></button>
             </div>
+            {assistantOpen && onboardingVisible && <div className="mosaicOnboarding" role="note"><div><b>{t("tryRequest")}</b><span>{t("privacyIntro")}</span></div><div>{onboardingExamples.map((example) => <button type="button" key={example} onClick={() => { setAiPrompt(example); requestAnimationFrame(() => composerInputRef.current?.focus()); }}><Sparkles className="mosaicIcon" aria-hidden="true" /><span>{example}</span></button>)}</div><button type="button" className="mosaicOnboardingDismiss" onClick={() => { setOnboardingVisible(false); try { window.localStorage.setItem(MOSAIC_ONBOARDING_KEY, "1"); } catch { /* optional */ } }} aria-label={t("dismissExamples")}><X className="mosaicIcon" aria-hidden="true" /></button></div>}
             {(promptImages.length > 0 || promptProducts.length > 0 || promptCollectionIds.length > 0 || aiStatus) && <div className="mosaicComposerContext">
               {promptProducts.map((item) => <span className="promptProduct" key={item.id}>{item.image ? <img src={item.image} alt="" /> : <i>✦</i>}<b>{item.name}</b><button type="button" onClick={() => setPromptProductIds((current) => current.filter((id) => id !== item.id))} aria-label={`Retirer ${item.name}`}>×</button></span>)}
               {promptImages.map((image) => <span className="promptImage" key={image.id}><img src={image.dataUrl} alt="" /><button type="button" onClick={() => setPromptImages((current) => current.filter((item) => item.id !== image.id))} aria-label={`Retirer ${image.name}`}>×</button></span>)}
               {promptCollectionIds.map((id) => { const collection = mosaicCollections.find((item) => item.id === id); return collection ? <span className="mosaicContextChip" key={id}>▣ {collection.name}<button type="button" onClick={() => setPromptCollectionIds((current) => current.filter((item) => item !== id))}>×</button></span> : null; })}
-              {promptImages.length > 0 && <span className="segmented analysisMode"><button type="button" className={visualMode === "sequential" ? "active" : ""} onClick={() => setVisualMode("sequential")}>1×1</button><button type="button" className={visualMode === "sheet" ? "active" : ""} onClick={() => setVisualMode("sheet")}>Planche</button></span>}
+              {promptImages.length > 0 && <span className="segmented analysisMode"><button type="button" className={visualMode === "sequential" ? "active" : ""} onClick={() => setVisualMode("sequential")}>1×1</button><button type="button" className={visualMode === "sheet" ? "active" : ""} onClick={() => setVisualMode("sheet")}>{t("board")}</button></span>}
               {aiStatus && <span className="aiStatus atlasAiStatus">{aiStatus}{aiItems && <button type="button" onClick={() => { setAiItems(null); setAiStatus(""); }}>×</button>}</span>}
             </div>}
-            {composerExpanded && <div className="mosaicComposerFooter"><span>Contraintes : {showClothingFallback ? `${selectedSizes.length ? selectedSizes.join(" ou ") : "toutes tailles"} · ` : ""}{sourceFilter === "all" ? "toutes sources" : sourceFilter.replace("source:", "")}{dynamicFilterCount ? ` · ${dynamicFilterCount} champs` : ""}</span><label>Réflexion <select value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as "low" | "medium")}><option value="low">Rapide</option><option value="medium">Approfondie</option></select></label></div>}
+            {assistantOpen && <div className="mosaicComposerFooter"><span>{t("constraints")}: {showClothingFallback ? `${selectedSizes.length ? selectedSizes.join(" / ") : t("allSizes")} · ` : ""}{sourceFilter === "all" ? t("allSources") : sourceFilter.replace("source:", "")}{dynamicFilterCount ? ` · ${dynamicFilterCount}` : ""}</span><label>{t("thinking")} <select value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as "low" | "medium")}><option value="low">{t("fast")}</option><option value="medium">{t("thorough")}</option></select></label></div>}
           </form>
 
           <div className="mosaicBoardBar">
-            <div><span className="eyebrow">{scopeLabel}</span><h2>{selectedCollectionId ? mosaicCollections.find((item) => item.id === selectedCollectionId)?.name : showClothingFallback ? "Automne · brun ténébreux" : "Exploration visuelle"}</h2></div>
-            <div className="mosaicActiveChips" aria-label="Filtres actifs">
+            <div><span className="eyebrow">{scopeLabel}</span><h2>{selectedCollectionId ? mosaicCollections.find((item) => item.id === selectedCollectionId)?.name : t("visualExploration")}</h2></div>
+            <div className="mosaicActiveChips" aria-label={t("activeFilters")}>
               {showClothingFallback && activeFilter !== "Tout" && <button onClick={() => setActiveFilter("Tout")}>{activeFilter} ×</button>}
               {sourceFilter !== "all" && <button onClick={() => setSourceFilter("all")}>{sourceFilter.replace("source:", "")} ×</button>}
               {showClothingFallback && selectedSizes.map((size) => <button key={size} onClick={() => toggleAtlasSize(size)}>Taille {size} ×</button>)}
@@ -3405,18 +3584,30 @@ export default function Home() {
               {selectedCollectionId && <button onClick={() => setSelectedCollectionId(null)}>▣ {mosaicCollections.find((item) => item.id === selectedCollectionId)?.name ?? "Collection"} ×</button>}
               {Object.entries(dynamicFacetSelections).flatMap(([key, values]) => values.length ? [<button key={key} onClick={() => setDynamicFacetSelections((current) => ({ ...current, [key]: [] }))}>{workspaceSchema?.fields.find((field) => field.key === key)?.label ?? key}: {values.join(" ∨ ")} ×</button>] : [])}
               {Object.entries(dynamicNumberFilters).flatMap(([key, range]) => range.min || range.max ? [<button key={key} onClick={() => setDynamicNumberFilters((current) => ({ ...current, [key]: { min: "", max: "" } }))}>{workspaceSchema?.fields.find((field) => field.key === key)?.label ?? key}: {range.min || "−∞"}–{range.max || "∞"} ×</button>] : [])}
-              <button className="mosaicFilterButton" onClick={() => setDrawer("filters")}>＋ Filtres</button>
+              <button className="mosaicFilterButton" onClick={() => setDrawer("filters")}><SlidersHorizontal className="mosaicIcon" aria-hidden="true" /> {t("filters")}</button>
             </div>
-            <div className="mosaicBoardMeta"><span>{products.length} éléments</span><button className="undoButton" disabled={!undoStack.length} onClick={() => void undoLastAction()} title="Annuler la dernière décision (⌘Z)">↶</button></div>
+            <div className="mosaicViewControls" aria-label={t("view")}>
+              <button type="button" onClick={() => setMode((current) => current === "space" ? "grid" : "space")} title={`${t("layout")}: ${mode === "space" ? t("space") : t("grid")}`} aria-label={`${t("layout")}: ${mode === "space" ? t("space") : t("grid")}`}>{mode === "space" ? <MapIcon className="mosaicIcon" aria-hidden="true" /> : <LayoutGrid className="mosaicIcon" aria-hidden="true" />}<span>{mode === "space" ? t("space") : t("grid")}</span></button>
+              <button type="button" onClick={() => setImageMode((current) => current === "cropped" ? "full" : "cropped")} title={`${t("images")}: ${imageMode === "cropped" ? t("cropped") : t("full")}`} aria-label={`${t("images")}: ${imageMode === "cropped" ? t("cropped") : t("full")}`}>{imageMode === "cropped" ? <Crop className="mosaicIcon" aria-hidden="true" /> : <Expand className="mosaicIcon" aria-hidden="true" />}<span>{imageMode === "cropped" ? t("cropped") : t("full")}</span></button>
+              <div className="mosaicZoomPill" aria-label={t("zoom")}>
+                <button type="button" disabled={mode !== "space" || zoom <= .25} onClick={() => changeAtlasZoom(atlasZoomRef.current - .5)} aria-label="Zoom out"><Minus className="mosaicIcon" aria-hidden="true" /></button>
+                <button type="button" disabled={mode !== "space"} onClick={resetAtlasView}>{Math.round(zoom * 100)}%</button>
+                <button type="button" disabled={mode !== "space" || zoom >= ATLAS_MAX_ZOOM} onClick={() => changeAtlasZoom(atlasZoomRef.current + .5)} aria-label="Zoom in"><Plus className="mosaicIcon" aria-hidden="true" /></button>
+              </div>
+              <label className="mosaicAxisPill"><span>X</span><select value={xAxis} onChange={(event) => setXAxis(event.target.value as AxisField)} aria-label="X axis"><option value="pca">{t("similarity")}</option><option value="price">{t("price")}</option><option value="score">{t("score")}</option></select></label>
+              <label className="mosaicAxisPill"><span>Y</span><select value={yAxis} onChange={(event) => setYAxis(event.target.value as AxisField)} aria-label="Y axis"><option value="pca">{t("similarity")}</option><option value="price">{t("price")}</option><option value="score">{t("score")}</option></select></label>
+              <button type="button" className="mosaicSavedViewsButton" onClick={() => setDrawer("views")} title={t("savedViews")} aria-label={t("savedViews")}><Bookmark className="mosaicIcon" aria-hidden="true" /></button>
+            </div>
+            <div className="mosaicBoardMeta"><span>{products.length} {t("items")}</span><button className="undoButton" disabled={!undoStack.length} onClick={() => void undoLastAction()} aria-label="Undo"><Undo2 className="mosaicIcon" aria-hidden="true" /></button></div>
           </div>
 
         <div className="operationStack">
-          {refreshJob && !(refreshJob.terminal ?? ATLAS_TERMINAL_REFRESH_STATUSES.includes(refreshJob.status)) && <div className="jobProgress" role="status"><span style={{ width: progressTotal ? `${Math.min(100, progressDone / progressTotal * 100)}%` : "18%" }} /><b>{refreshCooldownActive ? `Pause Zalando · reprise automatique à ${refreshCooldownAt} (heure suisse)` : refreshJob.message ?? "Fiches en cours de vérification"}</b><em>{progressTotal ? `${progressDone}/${progressTotal}` : refreshJob.status}</em><button onClick={() => void cancelAtlasRefresh()}>Arrêter</button></div>}
+          {refreshJob && !(refreshJob.terminal ?? ATLAS_TERMINAL_REFRESH_STATUSES.includes(refreshJob.status)) && <div className="jobProgress" role="status"><span style={{ width: progressTotal ? `${Math.min(100, progressDone / progressTotal * 100)}%` : "18%" }} /><b>{refreshCooldownActive ? `Shop cooldown · automatic resume at ${refreshCooldownAt}` : refreshJob.message ?? "Verifying product pages"}</b><em>{progressTotal ? `${progressDone}/${progressTotal}` : refreshJob.status}</em><button onClick={() => void cancelAtlasRefresh()}>Stop</button></div>}
           {discoveryBusy && discoveryHasActive && <div className="discoveryProgress" role="status" aria-live="polite" title={discoveryPlan?.description}>
             <span className="discoveryFill" style={{ width: `${Math.round(discoveryProgress * 100)}%` }} />
-            <div className="discoveryPlanInfo"><b>{discoveryPlan?.name ?? "Découverte agentique"}</b><small>{showClothingFallback ? `Tailles ${discoverySizes} · ` : ""}{discoverySources.join(" + ") || "sources locales"}{discoveryPlan?.targetCount ? ` · cible ${discoveryPlan.targetCount}` : ""} · {discoveryStatusText}</small></div>
-            <em><b>{discoveryDiscovered}</b> nouveau{discoveryDiscovered > 1 ? "x" : ""}{discoveryDiscarded > 0 ? ` · ${discoveryDiscarded} écartés` : ""}</em>
-            <div className="discoveryActions">{discoveryBusy && discoveryHasActive && <button type="button" onClick={() => void cancelAtlasDiscovery()}>Arrêter</button>}{discoveryCanResume && <button type="button" title={discoveryNeedsInteractive ? "Ouvre un Chrome visible local, sans login ni contournement" : undefined} onClick={() => void resumeAtlasDiscovery()}>{discoveryNeedsInteractive ? "Reprendre dans Chrome" : "Reprendre"}</button>}</div>
+            <div className="discoveryPlanInfo"><b>{discoveryPlan?.name ?? "Agent discovery"}</b><small>{showClothingFallback ? `${t("sizes")} ${discoverySizes} · ` : ""}{discoverySources.join(" + ") || "local sources"}{discoveryPlan?.targetCount ? ` · target ${discoveryPlan.targetCount}` : ""} · {discoveryStatusText}</small></div>
+            <em><b>{discoveryDiscovered}</b> new{discoveryDiscarded > 0 ? ` · ${discoveryDiscarded} skipped` : ""}</em>
+            <div className="discoveryActions">{discoveryBusy && discoveryHasActive && <button type="button" onClick={() => void cancelAtlasDiscovery()}>Stop</button>}{discoveryCanResume && <button type="button" title={discoveryNeedsInteractive ? "Open a visible local Chrome session without login or bypass" : undefined} onClick={() => void resumeAtlasDiscovery()}>{discoveryNeedsInteractive ? "Resume in Chrome" : "Resume"}</button>}</div>
           </div>}
         </div>
 
@@ -3426,70 +3617,74 @@ export default function Home() {
             {renderedProducts.map((item, index) => (
               <article
                 className={`productCard ${item.kind === "reference" ? "referenceCard" : ""} decision-${item.decision}${selectedIds.has(item.id) ? " mosaicSelected" : ""}${compareIds.has(item.id) ? " comparing" : ""}${outfitDraftIds.has(item.id) ? " inOutfit" : ""}`}
-                key={item.id} style={mode === "space" ? atlasSpaceCardStyle(item, spaceLayout) : undefined} title={item.reason}
+                key={item.id} style={({ ...(mode === "space" ? atlasSpaceCardStyle(item, spaceLayout) : {}), "--source-color": mosaicSourceColor(item.kind === "shop" ? item.source : item.kind) }) as CSSProperties} title={item.reason}
                 data-card-index={index} data-product-id={item.id} data-source={item.kind === "shop" ? item.source : undefined} tabIndex={index === effectiveFocusedIndex ? 0 : -1}
                 aria-label={`${mosaicBrandLabel(item, showClothingFallback)}, ${item.name}, ${atlasDecisionLabel(item.decision)}`} data-selected={selectedIds.has(item.id) || undefined}
                 onFocus={() => setFocusedIndex(index)} onKeyDown={(event) => handleAtlasCardKey(event, item, index)} onPointerEnter={prepareAtlasPreview}
                 onPointerLeave={(event) => cancelAtlasPreview(event.currentTarget)}
               >
-                <button type="button" tabIndex={index === effectiveFocusedIndex ? 0 : -1} className="mosaicSelectButton" aria-label={selectedIds.has(item.id) ? `Retirer ${item.name} de la sélection` : `Sélectionner ${item.name}`} aria-pressed={selectedIds.has(item.id)} onClick={(event) => { event.stopPropagation(); toggleMosaicSelection(item.id); }}>{selectedIds.has(item.id) ? "✓" : ""}</button>
                 <div className="cardActions">
-                  <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={item.decision === "saved" ? "active" : ""} onClick={() => void setAtlasDecision(item, "saved")} aria-label={item.decision === "saved" ? `Retirer ${item.name} des gardés` : `Garder ${item.name}`} title="Garder (S)">{item.decision === "saved" ? "♥" : "♡"}</button>
-                  <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={compareIds.has(item.id) ? "active" : ""} onClick={() => toggleCompare(item.id)} aria-label={`Comparer ${item.name}`} title="Comparer (C)">⇄</button>
-                  <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} draggable onDragStart={(event) => { event.dataTransfer.setData("application/x-wardrobe-product", item.id); event.dataTransfer.effectAllowed = "copy"; }} onClick={() => addAtlasProductToPrompt(item)} aria-label={`Utiliser ${item.name} avec Luna`} title="Utiliser avec l’IA ou glisser dans le prompt">✦</button>
-                  {showClothingFallback && <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={outfitDraftIds.has(item.id) ? "active" : ""} onClick={() => toggleOutfitDraft(item.id)} aria-label={`Ajouter ${item.name} à une tenue`} title="Ajouter à une tenue">＋</button>}
-                  <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={item.decision === "owned" ? "active" : ""} onClick={() => void setAtlasDecision(item, "owned")} aria-label={`Marquer ${item.name} comme possédé`} title="Possédé (O)">◆</button>
-                  <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={item.decision === "rejected" ? "active reject" : "reject"} onClick={() => void setAtlasDecision(item, "rejected")} aria-label={`Rejeter ${item.name}`} title="Rejeter (R)">×</button>
+                  <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={item.decision === "saved" ? "active" : ""} onClick={() => void setAtlasDecision(item, "saved")} aria-label={item.decision === "saved" ? `Remove ${item.name} from favorites` : `Save ${item.name}`} title="Save (S)"><MosaicCardActionIcon kind="save" /></button>
+                  <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={compareIds.has(item.id) ? "active" : ""} onClick={() => toggleCompare(item.id)} aria-label={`Compare ${item.name}`} title="Compare (C)"><MosaicCardActionIcon kind="compare" /></button>
+                  <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} draggable onDragStart={(event) => { event.dataTransfer.setData("application/x-wardrobe-product", item.id); event.dataTransfer.effectAllowed = "copy"; }} onClick={() => addAtlasProductToPrompt(item)} aria-label={`Use ${item.name} with Luna`} title="Use with AI or drag into the prompt"><MosaicCardActionIcon kind="assistant" /></button>
+                  {showClothingFallback && <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={outfitDraftIds.has(item.id) ? "active" : ""} onClick={() => toggleOutfitDraft(item.id)} aria-label={`Ajouter ${item.name} à une tenue`} title="Ajouter à une tenue"><MosaicCardActionIcon kind="outfit" /></button>}
+                  <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={item.decision === "owned" ? "active" : ""} onClick={() => void setAtlasDecision(item, "owned")} aria-label={`Mark ${item.name} as owned`} title="Owned (O)"><MosaicCardActionIcon kind="owned" /></button>
+                  <button tabIndex={index === effectiveFocusedIndex ? 0 : -1} className={item.decision === "rejected" ? "active reject" : "reject"} onClick={() => void setAtlasDecision(item, "rejected")} aria-label={`Reject ${item.name}`} title="Reject (R)"><MosaicCardActionIcon kind="reject" /></button>
                 </div>
-                {item.url && item.kind === "shop" && <a tabIndex={index === effectiveFocusedIndex ? 0 : -1} className="productLinkOverlay" href={item.url} target="_blank" rel="noopener noreferrer" aria-label={`Prévisualiser ${item.brand} — ${item.name}`} onClick={(event) => {
+                {item.url && item.kind === "shop" && <a tabIndex={index === effectiveFocusedIndex ? 0 : -1} className="productLinkOverlay" href={item.url} target="_blank" rel="noopener noreferrer" aria-label={selectedIds.has(item.id) ? `Preview ${item.brand} — ${item.name}` : `Select ${item.brand} — ${item.name}`} onClick={(event) => {
                   if (atlasSuppressClickRef.current) { event.preventDefault(); atlasSuppressClickRef.current = false; return; }
                   if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-                  event.preventDefault(); cancelAtlasPreview(event.currentTarget.closest<HTMLElement>(".productCard") ?? undefined); setPreviewItem(item);
+                  event.preventDefault(); cancelAtlasPreview(event.currentTarget.closest<HTMLElement>(".productCard") ?? undefined); selectOrPreviewMosaicItem(item);
                 }} />}
-                {(!item.url || item.kind !== "shop") && <button type="button" tabIndex={index === effectiveFocusedIndex ? 0 : -1} className="productLinkOverlay" aria-label={`Inspecter ${item.brand} — ${item.name}`} onClick={() => { cancelAtlasPreview(); setPreviewItem(item); }} />}
+                {(!item.url || item.kind !== "shop") && <button type="button" tabIndex={index === effectiveFocusedIndex ? 0 : -1} className="productLinkOverlay" aria-label={selectedIds.has(item.id) ? `Preview ${item.brand} — ${item.name}` : `Select ${item.brand} — ${item.name}`} onClick={() => selectOrPreviewMosaicItem(item)} />}
                 <div className={`productImage${item.image ? " hasImage" : ""}`} style={{ backgroundPosition: item.crop }}>{item.image && <img src={item.image} alt="" loading="lazy" decoding="async" onLoad={(event) => {
                   const card = event.currentTarget.closest<HTMLElement>(".productCard");
                   if (mode === "space" && card && atlasHoverCardRef.current === card && card.matches(":hover") && card.style.getPropertyValue("--hover-scale")) applyNaturalPreviewGeometry(card);
                 }} />}</div>
                 <div className="productMeta">
-                  <div className="scoreRow"><span>{mosaicBrandLabel(item, showClothingFallback)}</span><b>{item.score}</b></div>
+                  <div className="mosaicCardSummary"><span className="mosaicCardBrand">{mosaicBrandLabel(item, showClothingFallback)}</span><b className="mosaicCardPrice">{mosaicCardPriceContent(item, t("references"), t("owned"))}</b></div>
                   <h3>{item.name}</h3><p>{item.reason ?? (showClothingFallback ? `${item.color} · ${item.fit}` : `${item.category} · ${item.source}`)}</p>
-                  <strong>{item.kind === "reference" ? (showClothingFallback ? "Ancre de style" : "Référence") : item.kind === "owned" ? (showClothingFallback ? "Dans mon dressing" : "Possédé") : item.price == null ? "Prix inconnu" : `${item.currency} ${item.price.toFixed(2)}`}{showClothingFallback && item.kind === "shop" && item.sizeAvailabilityKnown && <em className="sizeSummary"> · {item.sizes.length ? item.sizes.slice(0, 5).join(" ") : "épuisé"}</em>}</strong>
-                  {item.kind === "shop" && <small className={atlasIsStale(item.stockCheckedAt) ? "freshness stale" : "freshness"} title={showClothingFallback ? `Stock ${atlasTimestamp(item.stockCheckedAt)} · prix ${atlasTimestamp(item.priceCheckedAt)} · tailles ${atlasTimestamp(item.sizesCheckedAt)}` : `Disponibilité ${atlasTimestamp(item.stockCheckedAt)} · prix ${atlasTimestamp(item.priceCheckedAt)}`}>{atlasIsStale(item.stockCheckedAt) ? "◷ à vérifier" : `● stock ${atlasTimestamp(item.stockCheckedAt)}`}</small>}
+                  {item.kind === "shop" && <small className={atlasIsStale(item.stockCheckedAt) ? "freshness stale" : "freshness"} title={`${t("stock")} ${atlasTimestamp(item.stockCheckedAt, locale)} · ${t("price")} ${atlasTimestamp(item.priceCheckedAt, locale)}`}>{atlasIsStale(item.stockCheckedAt) ? `◷ ${t("verify")}` : `● ${t("stock")} ${atlasTimestamp(item.stockCheckedAt, locale)}`}</small>}
                 </div>
-                {item.kind !== "shop" && <span className="kindBadge">{item.kind === "reference" ? "RÉF" : "MOI"}</span>}
-                {item.decision === "owned" && item.kind === "shop" && <span className="kindBadge">MOI</span>}
+                {item.kind !== "shop" && <span className="kindBadge">{item.kind === "reference" ? "REF" : "OWNED"}</span>}
+                {item.decision === "owned" && item.kind === "shop" && <span className="kindBadge">OWNED</span>}
+                {item.decision === "saved" && <span className="cardSavedMark" aria-hidden="true"><MosaicCardActionIcon kind="save" /></span>}
               </article>
             ))}
             {products.length === 0 && (
               <div className="emptyBoard">
-                <strong>{catalogStatus === "chargement…" ? "Chargement de l’espace…" : showClothingFallback && scope === "owned" ? "Ton dressing attend sa première pièce" : showClothingFallback && scope === "outfits" ? "Aucune planche de tenue ici" : showClothingFallback ? `Aucun article${selectedSizes.length ? ` confirmé en ${selectedSizes.join(" ou ")}` : ""}` : "Cet espace attend ses premiers éléments"}</strong>
-                <span>{catalogStatus === "chargement…" ? "Mosaic prépare les champs, collections et positions du board." : showClothingFallback && scope === "owned" ? "Ajoute une photo et quelques métadonnées : Luna pourra ensuite évaluer les vrais ajouts à ta garde-robe." : showClothingFallback && scope === "outfits" ? "Sélectionne ＋ sur quelques cartes, puis ouvre Tenues pour les assembler." : showClothingFallback ? "Les tailles inconnues et les rejetés restent exclus par défaut." : "Ajoute une image, colle une URL ou demande à l’assistant de démarrer une recherche."}</span>
-                {(showClothingFallback && scope === "owned" || scope === "reference") && <button className="primaryButton" onClick={() => setDrawer("add")}>＋ Ajouter {showClothingFallback ? "une pièce" : "un élément"}</button>}
-                {catalogStatus.includes("indisponible") && <button className="primaryButton" onClick={() => void retryAtlasCatalog()}>Réessayer</button>}
+                <strong>{catalogStatus === "loading…" ? t("loading") : t("noItemsTitle")}</strong>
+                <span>{catalogStatus === "loading…" ? t("loading") : t("noItemsBody")}</span>
+                {(showClothingFallback && scope === "owned" || scope === "reference") && <button className="primaryButton" onClick={() => setDrawer("add")}>＋ {t("add")}</button>}
+                {catalogStatus.includes("unavailable") && <button className="primaryButton" onClick={() => void retryAtlasCatalog()}>{t("retry")}</button>}
               </div>
             )}
-            {mode === "grid" && renderLimit < products.length && <button ref={loadMoreRef} className="loadMore" onClick={() => setRenderWindow((current) => ({ signature: renderSignature, limit: Math.min((current.signature === renderSignature ? current.limit : ATLAS_PAGE_SIZE) + ATLAS_PAGE_SIZE, products.length) }))}>Afficher {Math.min(ATLAS_PAGE_SIZE, products.length - renderLimit)} de plus</button>}
+            {mode === "grid" && renderLimit < products.length && <button ref={loadMoreRef} className="loadMore" onClick={() => setRenderWindow((current) => ({ signature: renderSignature, limit: Math.min((current.signature === renderSignature ? current.limit : ATLAS_PAGE_SIZE) + ATLAS_PAGE_SIZE, products.length) }))}>{t("loadMore")}</button>}
             </div>
           </div>
         </div>
         {mode === "space" && <canvas ref={atlasMinimapRef} className="atlasMinimap" width={360} height={220} aria-label="Minimap du board" onPointerDown={navigateAtlasMinimap} onPointerMove={navigateAtlasMinimap} />}
 
-        <footer className="boardFooter atlasBoardFooter"><span><b>{products.length}</b> éléments · {renderedProducts.length} rendus{staleCount ? ` · ${staleCount} à vérifier` : ""}</span><span>Flèches naviguent · Espace sélectionne · S garde · R rejette · ⌘Z annule</span><span>Placement X/Y · voisinage visuel</span></footer>
+        <footer className="boardFooter atlasBoardFooter"><span><b>{products.length}</b> {t("items")} · {renderedProducts.length} {t("rendered")}{staleCount ? ` · ${staleCount} ${t("check")}` : ""}</span><span>←↑↓→ · Space · S · R · ⌘Z</span><span>X/Y · visual neighborhood</span></footer>
       </section>
       </section>
 
       {selectedItems.length > 0 && (
         <aside className="mosaicSelectionTray" aria-label={`${selectedItems.length} élément${selectedItems.length > 1 ? "s" : ""} sélectionné${selectedItems.length > 1 ? "s" : ""}`}>
-          <div className="mosaicSelectionThumbs" aria-hidden="true">{selectedItems.slice(0, 5).map((item) => item.image ? <img src={item.image} alt="" key={item.id} /> : <span key={item.id}>{item.brand.slice(0, 1)}</span>)}</div>
-          <strong>{selectedItems.length} sélectionné{selectedItems.length > 1 ? "s" : ""}</strong>
+          <div className="mosaicSelectionThumbs">{selectedItems.map((item) => <span className="mosaicSelectionThumb" key={item.id}>
+            <button type="button" className="mosaicSelectionPreview" aria-label={`Preview ${item.brand} — ${item.name}`} title={item.name} onClick={() => { cancelAtlasPreview(); setPreviewItem(item); }}>
+              {item.image ? <img src={item.image} alt="" /> : <i aria-hidden="true">{item.brand.slice(0, 1)}</i>}
+            </button>
+            <button type="button" className="mosaicSelectionRemove" aria-label={`Remove ${item.name} from selection`} title="Remove from selection" onClick={() => toggleMosaicSelection(item.id)}><X className="mosaicIcon" aria-hidden="true" /></button>
+          </span>)}</div>
+          <strong>{selectedItems.length} {t("selected")}</strong>
           <div className="mosaicTrayActions">
-            <button onClick={() => setDrawer("collections")}>▣ Collection</button>
-            <button onClick={() => { setPromptProductIds((current) => [...new Set([...current, ...selectedItems.map((item) => item.id)])].slice(-12)); setSelectedIds(new Set()); setComposerExpanded(true); requestAnimationFrame(() => composerInputRef.current?.focus()); }}>✦ Demander à l’IA</button>
-            <button onClick={() => { setCompareIds(new Set(selectedItems.slice(0, 4).map((item) => item.id))); setDrawer("compare"); }}>⇄ Comparer</button>
-            <button onClick={() => setDrawer("studio")}>◩ Studio</button>
+            <button onClick={() => setDrawer("collections")}><FolderHeart className="mosaicIcon" aria-hidden="true" /> {t("collection")}</button>
+            <button onClick={() => { setPromptProductIds((current) => [...new Set([...current, ...selectedItems.map((item) => item.id)])].slice(-12)); setSelectedIds(new Set()); setComposerExpanded(true); requestAnimationFrame(() => composerInputRef.current?.focus()); }}><Sparkles className="mosaicIcon" aria-hidden="true" /> {t("askAi")}</button>
+            <button onClick={() => { setCompareIds(new Set(selectedItems.slice(0, 4).map((item) => item.id))); setDrawer("compare"); }}><GitCompareArrows className="mosaicIcon" aria-hidden="true" /> {t("compare")}</button>
+            <button onClick={() => setDrawer("studio")}><Palette className="mosaicIcon" aria-hidden="true" /> {t("studio")}</button>
           </div>
-          <button className="mosaicTrayClear" onClick={() => setSelectedIds(new Set())} aria-label="Vider la sélection">×</button>
+          <button className="mosaicTrayClear" onClick={() => setSelectedIds(new Set())} aria-label={t("clearSelection")}><X className="mosaicIcon" aria-hidden="true" /></button>
         </aside>
       )}
 
@@ -3500,20 +3695,20 @@ export default function Home() {
               ? <img key={item.id} src={item.image} alt="" />
               : <span key={item.id}>{item.brand.slice(0, 1)}</span>)}
           </div>
-          <button className="compareDockOpen" onClick={() => setDrawer("compare")}>Comparer ({compareItems.length}/4)</button>
-          <button className="compareDockClear" onClick={() => setCompareIds(new Set())}>Vider</button>
+          <button className="compareDockOpen" onClick={() => setDrawer("compare")}>{t("compare")} ({compareItems.length}/4)</button>
+          <button className="compareDockClear" onClick={() => setCompareIds(new Set())}>×</button>
         </aside>
       )}
 
       {drawer && (
         <div className="drawerBackdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) setDrawer(null); }}>
           <aside ref={drawerRef} tabIndex={-1} className={`drawer drawer-${drawer}`} role="dialog" aria-modal="true" aria-labelledby="drawer-title">
-            <header><div><span className="eyebrow">Mosaic</span><h2 id="drawer-title">{drawer === "filters" ? "Filtres" : drawer === "view" ? "Vue" : drawer === "compare" ? "Comparer" : drawer === "views" ? "Vues sauvegardées" : drawer === "collections" ? "Collections" : drawer === "activity" ? "Activité" : drawer === "studio" ? "Studio" : drawer === "add" ? "Ajouter au catalogue" : showClothingFallback ? "Planches de tenues" : "Détails"}</h2></div><button ref={drawerCloseRef} className="drawerClose" onClick={() => setDrawer(null)} aria-label="Fermer">×</button></header>
+            <header><div><span className="eyebrow">MosAIc</span><h2 id="drawer-title">{drawer === "filters" ? t("filters") : drawer === "view" ? t("view") : drawer === "compare" ? t("compare") : drawer === "views" ? t("savedViews") : drawer === "collections" ? t("collections") : drawer === "activity" ? t("activity") : drawer === "studio" ? t("studio") : drawer === "add" ? t("addToCatalog") : showClothingFallback ? t("outfits") : t("details")}</h2></div><button ref={drawerCloseRef} className="drawerClose" onClick={() => setDrawer(null)} aria-label={t("closePreview")}><X className="mosaicIcon" aria-hidden="true" /></button></header>
 
             {drawer === "filters" && (
               <div className="drawerBody mosaicFiltersDrawer">
-                {showClothingFallback && <div className="mosaicFilterSection"><header><div><span>Catégorie</span><small>{products.length} résultats</small></div></header><div className="mosaicChoiceGrid">{atlasCategories.map((filter) => <button type="button" key={filter} className={activeFilter === filter ? "active" : ""} onClick={() => setActiveFilter(filter)}><span>{filter}</span><b>{categoryCounts[filter] ?? 0}</b></button>)}</div></div>}
-                <div className="mosaicFilterSection"><header><span>Source</span></header><label><span>Origine</span><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">Toutes les sources</option><option value="shop">Tous les shops</option><option value="zalando">Zalando</option><option value="aboutyou">About You</option><option value="aliexpress">AliExpress</option>{extraShopSources.map((source) => <option key={source} value={`source:${source}`}>{source}</option>)}{showClothingFallback && <option value="owned">Dressing</option>}<option value="reference">Références</option></select></label></div>
+                {showClothingFallback && <div className="mosaicFilterSection"><header><div><span>{t("category")}</span><small>{products.length} {t("items")}</small></div></header><div className="mosaicChoiceGrid">{atlasCategories.map((filter) => <button type="button" key={filter} className={activeFilter === filter ? "active" : ""} onClick={() => setActiveFilter(filter)}><span>{filter}</span><b>{categoryCounts[filter] ?? 0}</b></button>)}</div></div>}
+                <div className="mosaicFilterSection"><header><span>{t("source")}</span></header><label><span>{t("source")}</span><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">{t("allSources")}</option><option value="shop">Shops</option><option value="zalando">Zalando</option><option value="aboutyou">About You</option><option value="aliexpress">AliExpress</option>{extraShopSources.map((source) => <option key={source} value={`source:${source}`}>{source}</option>)}{showClothingFallback && <option value="owned">{t("wardrobe")}</option>}<option value="reference">{t("references")}</option></select></label></div>
                 {dynamicFilterFields.length > 0 && <div className="mosaicDynamicFilters"><div className="mosaicDrawerHeading"><span>Champs de l’espace</span><small>{dynamicFilterFields.length} disponibles</small></div>{dynamicFilterFields.map((field) => {
                   const selected = dynamicFacetSelections[field.key] ?? [];
                   const configured = (field.options ?? []).map((option) => typeof option === "string" ? { value: option, label: option, count: 0 } : { value: option.value, label: option.label ?? option.value, count: 0 });
@@ -3526,16 +3721,16 @@ export default function Home() {
                   if (facets.length) return <div className="mosaicFilterSection" key={field.key}><header><div><span>{field.label}</span><small>{field.cardinality ? `${field.cardinality} valeurs` : `${facets.length} options`}</small></div></header><div className="mosaicChoiceGrid">{facets.slice(0, 24).map((facet) => <button type="button" key={facet.value} className={selected.includes(facet.value) ? "active" : ""} onClick={() => setDynamicFacetSelections((current) => ({ ...current, [field.key]: selected.includes(facet.value) ? selected.filter((value) => value !== facet.value) : [...selected, facet.value] }))}><span>{facet.label ?? facet.value}</span><b>{facet.count || ""}</b></button>)}</div></div>;
                   return <div className="mosaicFilterSection" key={field.key}><label><span>{field.label}</span><input type={field.type === "date" ? "date" : "text"} value={selected[0] ?? ""} onChange={(event) => setDynamicFacetSelections((current) => ({ ...current, [field.key]: event.target.value ? [event.target.value] : [] }))} placeholder={`Filtrer ${field.label.toLocaleLowerCase()}…`} /></label></div>;
                 })}</div>}
-                {showClothingFallback && <div className="mosaicFilterSection"><header><div><span>Tailles</span><small>{selectedSizes.length ? `${selectedSizeMatchCount} correspondances` : `${knownSizeCount} fiches fraîches en stock`}</small></div></header><div className="mosaicChoiceGrid mosaicSizeGrid">{sizeOptions.map((size) => <button type="button" key={size} className={selectedSizes.includes(size) ? "active" : ""} aria-pressed={selectedSizes.includes(size)} onClick={() => toggleAtlasSize(size)}><span>{size}</span><b>{sizeCounts[size] ?? 0}</b></button>)}</div><p>OU entre les tailles · disponibilité connue, en stock et vérifiée sous 48 h.</p>{uncheckedGarmentItems.length > 0 && <button className="mosaicRefresh" disabled={Boolean(refreshJob && !(refreshJob.terminal ?? ATLAS_TERMINAL_REFRESH_STATUSES.includes(refreshJob.status)))} onClick={() => void startAtlasUnknownSizeRefresh()}>↻ Vérifier {uncheckedGarmentItems.length} fiches Zalando</button>}</div>}
+                {showClothingFallback && <div className="mosaicFilterSection"><header><div><span>{t("sizes")}</span><small>{selectedSizes.length ? `${selectedSizeMatchCount} ${t("items")}` : `${knownSizeCount} ${t("inStock")}`}</small></div></header><div className="mosaicChoiceGrid mosaicSizeGrid">{sizeOptions.map((size) => <button type="button" key={size} className={selectedSizes.includes(size) ? "active" : ""} aria-pressed={selectedSizes.includes(size)} onClick={() => toggleAtlasSize(size)}><span>{size}</span><b>{sizeCounts[size] ?? 0}</b></button>)}</div>{uncheckedGarmentItems.length > 0 && <button className="mosaicRefresh" disabled={Boolean(refreshJob && !(refreshJob.terminal ?? ATLAS_TERMINAL_REFRESH_STATUSES.includes(refreshJob.status)))} onClick={() => void startAtlasUnknownSizeRefresh()}>↻ {t("verify")} {uncheckedGarmentItems.length}</button>}</div>}
                 {showClothingFallback && <div className="mosaicFilterSection mosaicFilterColumns"><label><span>Prix</span><select value={priceFilter} onChange={(event) => setPriceFilter(event.target.value)}><option value="all">Tous</option><option value="under50">&lt; 50 CHF</option><option value="50to100">50–100 CHF</option><option value="100to180">100–180 CHF</option><option value="over180">&gt; 180 CHF</option></select></label><label><span>Coupe</span><select value={fitFilter} onChange={(event) => setFitFilter(event.target.value)}><option value="all">Toutes</option><option value="large">Large</option><option value="courte">Courte</option><option value="court">Court</option><option value="droite">Droite</option><option value="relax">Relax</option><option value="unknown">Inconnue</option></select></label><label><span>Matière</span><select value={materialFilter} onChange={(event) => setMaterialFilter(event.target.value)}><option value="all">Toutes</option><option value="knit">Maille / laine</option><option value="linen">Lin</option><option value="cotton">Coton</option><option value="leather">Cuir</option><option value="denim">Denim</option></select></label><label><span>Fraîcheur</span><select value={stockFilter} onChange={(event) => setStockFilter(event.target.value)}><option value="all">Toutes</option><option value="available">En stock</option><option value="fresh">Vérifié &lt; 48 h</option><option value="stale">À rafraîchir</option></select></label></div>}
                 <div className="mosaicFilterSection"><label><span>Recherche dans les attributs</span><input value={attributeQuery} onChange={(event) => setAttributeQuery(event.target.value)} placeholder={showClothingFallback ? "olive, texturé, sans logo…" : activeWorkspace?.profile === "televisions" ? "OLED, 120 Hz, HDMI 2.1…" : "mot-clé, valeur ou attribut…"} /></label><div className="priceRange"><label><span>Prix minimum</span><input inputMode="numeric" value={minPrice} onChange={(event) => setMinPrice(event.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" /></label><label><span>Prix maximum</span><input inputMode="numeric" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value.replace(/[^0-9.]/g, ""))} placeholder="180" /></label></div><label className="checkboxLine"><input type="checkbox" checked={includeRejected} onChange={(event) => setIncludeRejected(event.target.checked)} /> Inclure les éléments rejetés</label></div>
-                <div className="drawerFooter mosaicStickyFooter"><button type="button" onClick={resetAtlasFilters}>{showClothingFallback ? "Réinitialiser · M ou L" : "Réinitialiser les filtres"}</button><button className="primaryButton" type="button" onClick={() => setDrawer(null)}>Voir {products.length} résultats</button></div>
+                <div className="drawerFooter mosaicStickyFooter"><button type="button" onClick={resetAtlasFilters}>{t("resetFilters")}</button><button className="primaryButton" type="button" onClick={() => setDrawer(null)}>{t("seeResults")} · {products.length}</button></div>
               </div>
             )}
 
             {drawer === "collections" && (
               <div className="drawerBody mosaicCollectionsDrawer">
-                <form className="mosaicCollectionCreate" onSubmit={(event) => void createMosaicCollection(event)}><input value={collectionName} onChange={(event) => setCollectionName(event.target.value)} placeholder="Nouvelle collection" aria-label="Nom de la collection" /><button className="primaryButton" disabled={!collectionName.trim()}>Créer{selectedIds.size ? ` avec ${selectedIds.size}` : ""}</button></form>
+                <form className="mosaicCollectionCreate" onSubmit={(event) => void createMosaicCollection(event)}><input value={collectionName} onChange={(event) => setCollectionName(event.target.value)} placeholder={t("newCollection")} aria-label={t("newCollection")} /><button className="primaryButton" disabled={!collectionName.trim()}>{t("create")}{selectedIds.size ? ` · ${selectedIds.size}` : ""}</button></form>
                 <p className="drawerHint">Une collection peut guider l’assistant, filtrer le board ou recevoir la sélection courante.</p>
                 <div className="mosaicSystemCollections">
                   <button onClick={() => { if (selectedItems.length) { selectedItems.filter((item) => item.decision !== "saved").forEach((item) => { void setAtlasDecision(item, "saved"); }); setSelectedIds(new Set()); setToast(`${selectedItems.length} élément${selectedItems.length > 1 ? "s" : ""} ajouté${selectedItems.length > 1 ? "s" : ""} aux favoris`); } else { setScope("saved"); setSelectedCollectionId(null); setDrawer(null); } }}><span className="mosaicCollectionIcon coral">♥</span><div><strong>Favoris</strong><small>{catalogItems.filter((item) => item.decision === "saved").length} éléments</small></div><i>{selectedItems.length ? `＋ ${selectedItems.length}` : "Vue système"}</i></button>
@@ -3546,7 +3741,7 @@ export default function Home() {
                 <div className="mosaicCollectionList">{mosaicCollections.map((collection) => {
                   const items = collection.itemIds.map((id) => catalogItems.find((item) => item.id === id)).filter(Boolean) as AtlasItem[];
                   return <article key={collection.id}><button className="mosaicCollectionMain" onClick={() => { setSelectedCollectionId(collection.id); setScope("catalogue"); setDrawer(null); }}><span className="mosaicCollectionMosaic">{items.slice(0, 4).map((item) => item.image ? <img key={item.id} src={item.image} alt="" /> : <i key={item.id} />)}{!items.length && <b>▣</b>}</span><span><strong>{collection.name}</strong><small>{collection.itemIds.length} élément{collection.itemIds.length > 1 ? "s" : ""}</small></span></button><div>{selectedIds.size > 0 && <button onClick={() => void addSelectionToMosaicCollection(collection)}>＋ {selectedIds.size}</button>}<button className={promptCollectionIds.includes(collection.id) ? "active" : ""} onClick={() => { setPromptCollectionIds((current) => current.includes(collection.id) ? current.filter((id) => id !== collection.id) : [...current, collection.id].slice(-12)); setComposerExpanded(true); setDrawer(null); window.setTimeout(() => composerInputRef.current?.focus(), 0); }}>✦ IA</button></div></article>;
-                })}{mosaicCollections.length === 0 && <div className="drawerEmpty"><strong>Crée ta première collection</strong><span>Sélectionne des éléments sur le board, puis rassemble-les ici sans modifier leur statut.</span></div>}</div>
+                })}{mosaicCollections.length === 0 && <div className="drawerEmpty"><strong>{t("noCollections")}</strong><span>{t("noCollectionsBody")}</span></div>}</div>
               </div>
             )}
 
@@ -3557,7 +3752,7 @@ export default function Home() {
                   {embeddingJob && <article className={embeddingJob.status === "failed" ? "failed" : ""}><span className="mosaicRunIcon">◎</span><div><strong>Placement visuel local</strong><small>{embeddingJob.message ?? (embeddingJob.status === "idle" ? "Optionnel · rapproche les images qui se ressemblent" : embeddingJob.status)}{embeddingJob.summary ? ` · ${embeddingJob.summary.embedded} images` : ""}</small>{embeddingJob.status === "running" && <progress max={Math.max(1, embeddingJob.total)} value={embeddingJob.processed} />}</div>{embeddingJob.status !== "running" && <button onClick={() => void startMosaicEmbedding()}>{embeddingJob.status === "succeeded" ? "Actualiser" : embeddingJob.status === "failed" ? "Réessayer" : "Améliorer"}</button>}</article>}
                   {refreshJob && <article className={["error", "blocked"].includes(refreshJob.status) ? "failed" : ""}><span className="mosaicRunIcon">↻</span><div><strong>{refreshJob.message ?? "Actualisation des fiches"}</strong><small>{progressTotal ? `${progressDone}/${progressTotal}` : refreshJob.status}{refreshJob.error ? ` · ${mosaicCompactRunError(refreshJob.error)}` : ""}</small>{progressTotal > 0 && <progress max={progressTotal} value={progressDone} />}</div>{refreshNeedsResume ? refreshJob.canResume !== false && <button onClick={() => void retryAtlasRefresh()}>Reprendre</button> : !(refreshJob.terminal ?? ATLAS_TERMINAL_REFRESH_STATUSES.includes(refreshJob.status)) && <button onClick={() => void cancelAtlasRefresh()}>Arrêter</button>}</article>}
                   {discoveryJobs.length > 0 && <article className={discoveryHasFailures ? "failed" : ""}><span className="mosaicRunIcon">⌕</span><div><strong>{discoveryPlan?.name ?? "Découverte agentique"}</strong><small>{discoveryStatusText} · {discoveryDiscovered} nouveaux · {discoverySources.join(" + ")}</small><progress max={1} value={discoveryProgress} /></div>{discoveryBusy && discoveryHasActive ? <button onClick={() => void cancelAtlasDiscovery()}>Arrêter</button> : discoveryCanResume ? <button onClick={() => void resumeAtlasDiscovery()}>Reprendre</button> : null}</article>}
-                  {mosaicRuns.map((run) => { const kind = run.kind ?? run.type; return <article className={["failed", "error", "blocked"].includes(run.status) ? "failed" : ""} key={run.id}><span className="mosaicRunIcon">{kind === "assistant" ? "✦" : kind === "import" ? "↓" : kind === "artifact" ? "◩" : "◷"}</span><div><strong>{run.title ?? run.label ?? run.message ?? kind ?? "Tâche Mosaic"}</strong><small>{run.status}{run.source ? ` · ${run.source}` : ""}{run.error ? ` · ${mosaicCompactRunError(run.error)}` : ""}{run.updatedAt || run.createdAt ? ` · ${atlasTimestamp(run.updatedAt ?? run.createdAt)}` : ""}</small>{(run.total ?? 0) > 0 && <progress max={run.total} value={run.completed ?? Math.round((run.progress ?? 0) * (run.total ?? 1))} />}</div></article>; })}
+                  {mosaicRuns.map((run) => { const kind = run.kind ?? run.type; return <article className={["failed", "error", "blocked"].includes(run.status) ? "failed" : ""} key={run.id}><span className="mosaicRunIcon">{kind === "assistant" ? "✦" : kind === "import" ? "↓" : kind === "artifact" ? "◩" : "◷"}</span><div><strong>{run.title ?? run.label ?? run.message ?? kind ?? "MosAIc task"}</strong><small>{run.status}{run.source ? ` · ${run.source}` : ""}{run.error ? ` · ${mosaicCompactRunError(run.error)}` : ""}{run.updatedAt || run.createdAt ? ` · ${atlasTimestamp(run.updatedAt ?? run.createdAt, locale)}` : ""}</small>{(run.total ?? 0) > 0 && <progress max={run.total} value={run.completed ?? Math.round((run.progress ?? 0) * (run.total ?? 1))} />}</div></article>; })}
                   {!embeddingJob && !refreshJob && !discoveryJobs.length && !mosaicRuns.length && <div className="drawerEmpty"><strong>Aucune activité récente</strong><span>Les imports, analyses et actualisations apparaîtront ici avec leur progression.</span></div>}
                 </div>
               </div>
@@ -3581,9 +3776,9 @@ export default function Home() {
                     <b className="compareLabel">Prix</b>{compareItems.map((item) => <span key={item.id}>{item.price == null ? "—" : `${item.currency} ${item.price.toFixed(2)}`}{item.originalPrice ? <del>{item.originalPrice.toFixed(2)}</del> : null}</span>)}
                     {showClothingFallback && <><b className="compareLabel">Tailles</b>{compareItems.map((item) => <span key={item.id}>{item.sizeAvailabilityKnown ? item.sizes.join(" · ") || "Épuisé" : "Inconnues"}</span>)}<b className="compareLabel">Matière</b>{compareItems.map((item) => <span key={item.id}>{item.materials.join(", ") || "Non renseignée"}</span>)}</>}
                     <b className="compareLabel">Retours</b>{compareItems.map((item) => <span key={item.id}>{item.returnsLabel ?? (item.returnsWindowDays ? `${item.returnsWindowDays} jours` : "Inconnus")}</span>)}
-                    <b className="compareLabel">Stock</b>{compareItems.map((item) => <span className={atlasIsStale(item.stockCheckedAt) ? "staleText" : ""} key={item.id}>{atlasTimestamp(item.stockCheckedAt)}</span>)}
-                    <b className="compareLabel">Prix vérifié</b>{compareItems.map((item) => <span className={atlasIsStale(item.priceCheckedAt) ? "staleText" : ""} key={item.id}>{atlasTimestamp(item.priceCheckedAt)}</span>)}
-                    {showClothingFallback && <><b className="compareLabel">Tailles vérifiées</b>{compareItems.map((item) => <span className={atlasIsStale(item.sizesCheckedAt) ? "staleText" : ""} key={item.id}>{atlasTimestamp(item.sizesCheckedAt)}</span>)}</>}
+                    <b className="compareLabel">{t("stock")}</b>{compareItems.map((item) => <span className={atlasIsStale(item.stockCheckedAt) ? "staleText" : ""} key={item.id}>{atlasTimestamp(item.stockCheckedAt, locale)}</span>)}
+                    <b className="compareLabel">{t("checkedPrice")}</b>{compareItems.map((item) => <span className={atlasIsStale(item.priceCheckedAt) ? "staleText" : ""} key={item.id}>{atlasTimestamp(item.priceCheckedAt, locale)}</span>)}
+                    {showClothingFallback && <><b className="compareLabel">{t("checkedSizes")}</b>{compareItems.map((item) => <span className={atlasIsStale(item.sizesCheckedAt) ? "staleText" : ""} key={item.id}>{atlasTimestamp(item.sizesCheckedAt, locale)}</span>)}</>}
                     {workspaceDisplayFields.flatMap((field) => {
                       if (["price", "materials", "sizes", "returnsLabel", "returnsWindowDays"].includes(field.key)) return [];
                       const values = compareItems.map((item) => mosaicFieldDisplayValue(item, field));
@@ -3648,32 +3843,32 @@ export default function Home() {
             <header>
               <div><span>{mosaicBrandLabel(previewProduct, showClothingFallback)}</span><h2 id="product-preview-title">{previewProduct.name}</h2></div>
               <div className="productPreviewActions">
-                <strong>{previewProduct.price == null ? "Prix inconnu" : `${previewProduct.currency} ${previewProduct.price.toFixed(2)}`}</strong>
-                <button className="productPreviewRefresh" type="button" disabled={Boolean(refreshJob && !(refreshJob.terminal ?? ATLAS_TERMINAL_REFRESH_STATUSES.includes(refreshJob.status)))} onClick={() => void startAtlasRefresh([previewProduct.id])}>↻ Actualiser</button>
-                {previewProduct.url && <a href={previewProduct.url} target="_blank" rel="noopener noreferrer">Ouvrir dans un onglet ↗</a>}
-                <button ref={previewCloseRef} type="button" onClick={() => setPreviewItem(null)} aria-label="Fermer la prévisualisation">×</button>
+                <strong>{previewProduct.price == null ? `${t("price")} —` : `${previewProduct.currency} ${previewProduct.price.toFixed(2)}`}</strong>
+                <button className="productPreviewRefresh" type="button" disabled={Boolean(refreshJob && !(refreshJob.terminal ?? ATLAS_TERMINAL_REFRESH_STATUSES.includes(refreshJob.status)))} onClick={() => void startAtlasRefresh([previewProduct.id])}>↻ {t("refresh")}</button>
+                {previewProduct.url && <a href={previewProduct.url} target="_blank" rel="noopener noreferrer">{t("openTab")} <ExternalLink className="mosaicIcon mosaicInlineIcon" aria-hidden="true" /></a>}
+                <button ref={previewCloseRef} type="button" onClick={() => setPreviewItem(null)} aria-label={t("closePreview")}><X className="mosaicIcon" aria-hidden="true" /></button>
               </div>
             </header>
             <div className="productQuickLook">
               <div className={`productPreviewGallery gallery-${Math.min(4, Math.max(1, previewProduct.images.length))}`}>
                 {(previewProduct.images.length ? previewProduct.images : previewProduct.image ? [previewProduct.image] : []).map((image, imageIndex) => <img key={`${previewProduct.id}-${imageIndex}`} src={image} alt={`${previewProduct.name} — vue ${imageIndex + 1}`} />)}
-                {!previewProduct.images.length && !previewProduct.image && <div className="productPreviewNoImage">Aucune image capturée</div>}
+                {!previewProduct.images.length && !previewProduct.image && <div className="productPreviewNoImage">{t("noImage")}</div>}
               </div>
               <aside className="productPreviewFacts">
-                <section className="productPreviewTools" data-testid="product-preview-actions"><span>Actions</span><div>
-                  <button type="button" className={previewProduct.decision === "saved" ? "active" : ""} onClick={() => void setAtlasDecision(previewProduct, "saved")}>{previewProduct.decision === "saved" ? "♥ Gardé" : "♡ Garder"}</button>
-                  <button type="button" className={compareIds.has(previewProduct.id) ? "active" : ""} onClick={() => toggleCompare(previewProduct.id)}>⇄ Comparer</button>
-                  <button type="button" onClick={() => { addAtlasProductToPrompt(previewProduct); setPreviewItem(null); }}>✦ Utiliser avec l’IA</button>
-                  {showClothingFallback && <button type="button" className={outfitDraftIds.has(previewProduct.id) ? "active" : ""} onClick={() => toggleOutfitDraft(previewProduct.id)}>＋ Tenue</button>}
-                  <button type="button" className={previewProduct.decision === "owned" ? "active" : ""} onClick={() => void setAtlasDecision(previewProduct, "owned")}>◆ Possédé</button>
-                  <button type="button" className={previewProduct.decision === "rejected" ? "active reject" : "reject"} onClick={() => void setAtlasDecision(previewProduct, "rejected")}>× Rejeter</button>
+                <section className="productPreviewTools" data-testid="product-preview-actions"><span>{t("actions")}</span><div>
+                  <button type="button" className={previewProduct.decision === "saved" ? "active" : ""} onClick={() => void setAtlasDecision(previewProduct, "saved")}><Heart className="mosaicIcon" fill={previewProduct.decision === "saved" ? "currentColor" : "none"} aria-hidden="true" /> {previewProduct.decision === "saved" ? t("saved") : t("save")}</button>
+                  <button type="button" className={compareIds.has(previewProduct.id) ? "active" : ""} onClick={() => toggleCompare(previewProduct.id)}><GitCompareArrows className="mosaicIcon" aria-hidden="true" /> {t("compare")}</button>
+                  <button type="button" onClick={() => { addAtlasProductToPrompt(previewProduct); setPreviewItem(null); }}><Sparkles className="mosaicIcon" aria-hidden="true" /> {t("useWithAi")}</button>
+                  {showClothingFallback && <button type="button" className={outfitDraftIds.has(previewProduct.id) ? "active" : ""} onClick={() => toggleOutfitDraft(previewProduct.id)}><Plus className="mosaicIcon" aria-hidden="true" /> Tenue</button>}
+                  <button type="button" className={previewProduct.decision === "owned" ? "active" : ""} onClick={() => void setAtlasDecision(previewProduct, "owned")}><Gem className="mosaicIcon" aria-hidden="true" /> {t("owned")}</button>
+                  <button type="button" className={previewProduct.decision === "rejected" ? "active reject" : "reject"} onClick={() => void setAtlasDecision(previewProduct, "rejected")}><X className="mosaicIcon" aria-hidden="true" /> {t("reject")}</button>
                 </div></section>
-                <section><span>Prix</span><strong>{previewProduct.price == null ? "Inconnu" : <>{previewProduct.currency} {previewProduct.price.toFixed(2)}{previewProduct.originalPrice && previewProduct.originalPrice > previewProduct.price ? <del>{previewProduct.currency} {previewProduct.originalPrice.toFixed(2)}</del> : null}</>}</strong><small>Prix {atlasTimestamp(previewProduct.priceCheckedAt)}</small></section>
-                <section><span>Disponibilité</span><strong>{previewProduct.stockStatus === "in_stock" ? "En stock" : previewProduct.stockStatus === "out_of_stock" ? "Épuisé" : "À vérifier"}</strong><small>Stock {atlasTimestamp(previewProduct.stockCheckedAt)}</small></section>
-                {showClothingFallback && <section><span>Tailles</span><div className="productPreviewSizes">{previewProduct.sizeAvailabilityKnown ? previewProduct.sizes.length ? previewProduct.sizes.map((size) => <b key={size}>{size}</b>) : <em>Épuisé</em> : <em>Pas encore vérifiées</em>}</div><small>Tailles {atlasTimestamp(previewProduct.sizesCheckedAt)}</small></section>}
+                <section><span>{t("price")}</span><strong>{previewProduct.price == null ? t("unknown") : <>{previewProduct.currency} {previewProduct.price.toFixed(2)}{previewProduct.originalPrice && previewProduct.originalPrice > previewProduct.price ? <del>{previewProduct.currency} {previewProduct.originalPrice.toFixed(2)}</del> : null}</>}</strong><small>{atlasTimestamp(previewProduct.priceCheckedAt, locale)}</small></section>
+                <section><span>{t("availability")}</span><strong>{previewProduct.stockStatus === "in_stock" ? t("inStock") : previewProduct.stockStatus === "out_of_stock" ? t("outOfStock") : t("verify")}</strong><small>{atlasTimestamp(previewProduct.stockCheckedAt, locale)}</small></section>
+                {showClothingFallback && <section><span>{t("sizes")}</span><div className="productPreviewSizes">{previewProduct.sizeAvailabilityKnown ? previewProduct.sizes.length ? previewProduct.sizes.map((size) => <b key={size}>{size}</b>) : <em>{t("outOfStock")}</em> : <em>{t("verify")}</em>}</div><small>{atlasTimestamp(previewProduct.sizesCheckedAt, locale)}</small></section>}
                 <section><span>Détails</span><dl>{showClothingFallback ? <><div><dt>Catégorie</dt><dd>{previewProduct.category}</dd></div><div><dt>Couleur</dt><dd>{previewProduct.color}</dd></div><div><dt>Coupe</dt><dd>{previewProduct.fit}</dd></div><div><dt>Matière</dt><dd>{previewProduct.materials.join(", ") || "Inconnue"}</dd></div><div><dt>Retours</dt><dd>{previewProduct.returnsLabel ?? (previewProduct.returnsWindowDays ? `${previewProduct.returnsWindowDays} jours` : "Inconnus")}</dd></div></> : <><div><dt>Catégorie</dt><dd>{previewProduct.category || "Non renseignée"}</dd></div><div><dt>Source</dt><dd>{previewProduct.source}</dd></div>{workspaceDisplayFields.flatMap((field) => { const value = mosaicFieldDisplayValue(previewProduct, field); return value && !["category", "source", "price"].includes(field.key) ? [<div key={field.key}><dt>{field.label}</dt><dd>{value}</dd></div>] : []; })}</>}</dl></section>
                 {previewProduct.reason && <section><span>Vision Luna</span><p>{previewProduct.reason}</p></section>}
-                <p className="productPreviewNote">Aperçu local fiable. Les shops bloquent généralement leur intégration en iframe ; ouvre l’onglet pour la fiche complète.</p>
+                <p className="productPreviewNote">{t("previewNote")}</p>
               </aside>
             </div>
           </section>

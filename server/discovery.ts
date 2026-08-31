@@ -9,8 +9,7 @@ import {
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Browser, BrowserContext } from "playwright";
-import { chromium } from "playwright";
+import type { BrowserContext } from "playwright";
 import { adapterFor, discoveryAdapterFor } from "../collector/registry";
 import type {
   DiscoveryFilterApplication,
@@ -18,8 +17,13 @@ import type {
   DiscoveryListingTarget,
   RawProduct,
 } from "../collector/types";
-import { classifyAccessBlock } from "./acquisition";
-import { fetchPublicHtml } from "./public-html";
+import { classifyAccessBlock, shopRequestKey } from "./acquisition";
+import { fetchPublicHtml, parseRetryAfter } from "./public-html";
+import {
+  preferBrowserForShop,
+  sharedShopBrowser,
+  shopPrefersBrowser,
+} from "./shop-browser";
 
 export type DiscoveryStatus =
   | "queued"
@@ -67,6 +71,7 @@ export type DiscoveryJobSnapshot = {
   finishedAt?: string;
   updatedAt: string;
   error?: string;
+  cooldownUntil?: string;
 };
 
 export type DiscoveryFetchRequest = {
@@ -170,9 +175,14 @@ export type DiscoveryServiceOptions = {
   fetcher?: DiscoveryFetcher;
   store?: DiscoveryJobStore;
   sameDomainDelayMs?: number;
+  sameDomainJitterMs?: number;
+  rateLimitCooldownMs?: number;
+  maxRateLimitRetries?: number;
   maxRetries?: number;
   now?: () => Date;
   sleep?: (milliseconds: number) => Promise<void>;
+  random?: () => number;
+  onRequestStart?: (url: string, observedAt: number) => void;
   idFactory?: () => string;
   /** Catalog-level deduplication hook, in addition to per-job deduplication. */
   isKnownProduct?: (
@@ -195,6 +205,10 @@ type MutableDiscoveryJob = DiscoveryJobSnapshot & {
 
 export class DiscoveryBlockedError extends Error {
   override readonly name = "DiscoveryBlockedError";
+
+  constructor(message: string, readonly retryAfterMs?: number) {
+    super(message);
+  }
 }
 
 export class DiscoveryCancelledError extends Error {
@@ -449,10 +463,15 @@ export class DiscoveryService {
   private readonly fetcher: DiscoveryFetcher;
   private readonly store?: DiscoveryJobStore;
   private readonly sameDomainDelayMs: number;
+  private readonly sameDomainJitterMs: number;
+  private readonly rateLimitCooldownMs: number;
+  private readonly maxRateLimitRetries: number;
   private readonly maxRetries: number;
   private readonly now: () => Date;
   private readonly sleep: (milliseconds: number) => Promise<void>;
+  private readonly random: () => number;
   private readonly idFactory: () => string;
+  private readonly onRequestStart?: DiscoveryServiceOptions["onRequestStart"];
   private readonly isKnownProduct?: DiscoveryServiceOptions["isKnownProduct"];
   private readonly onProducts?: DiscoveryServiceOptions["onProducts"];
   private readonly jobs = new Map<string, MutableDiscoveryJob>();
@@ -460,16 +479,25 @@ export class DiscoveryService {
   private readonly runs = new Map<string, Promise<void>>();
   private readonly activeRuns = new Set<string>();
   private readonly lastRequestAt = new Map<string, number>();
+  private readonly blockedHostsUntil = new Map<string, number>();
   private queue: Promise<void> = Promise.resolve();
 
   constructor(options: DiscoveryServiceOptions = {}) {
     this.fetcher = options.fetcher ?? new PlaywrightDiscoveryFetcher();
     this.store = options.store;
-    this.sameDomainDelayMs = Math.max(0, options.sameDomainDelayMs ?? 1_500);
+    this.sameDomainDelayMs = Math.max(0, options.sameDomainDelayMs ?? 5_000);
+    this.sameDomainJitterMs = Math.max(
+      0,
+      options.sameDomainJitterMs ?? (options.sameDomainDelayMs === undefined ? 3_000 : 0),
+    );
+    this.rateLimitCooldownMs = Math.max(0, options.rateLimitCooldownMs ?? 60_000);
+    this.maxRateLimitRetries = Math.max(0, options.maxRateLimitRetries ?? 6);
     this.maxRetries = Math.min(2, Math.max(0, options.maxRetries ?? 2));
     this.now = options.now ?? (() => new Date());
     this.sleep = options.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+    this.random = options.random ?? Math.random;
     this.idFactory = options.idFactory ?? randomUUID;
+    this.onRequestStart = options.onRequestStart;
     this.isKnownProduct = options.isKnownProduct;
     this.onProducts = options.onProducts;
   }
@@ -722,13 +750,14 @@ export class DiscoveryService {
     item.startedAt = this.now().toISOString();
     this.emit(job);
     let retries = 0;
+    let rateLimitRetries = 0;
     while (retries <= this.maxRetries) {
       if (job.cancelRequested) {
         this.cancelRunningItem(job, item);
         return;
       }
       try {
-        await this.throttle(item.url);
+        await this.throttle(item.url, job.abortController.signal);
         item.attempts += 1;
         const remaining = Math.max(1, job.intent.maxItems - job.results.length);
         const products = await this.fetcher.fetch({
@@ -809,6 +838,27 @@ export class DiscoveryService {
           return;
         }
         if (error instanceof DiscoveryBlockedError) {
+          if (/HTTP 429/i.test(error.message) && rateLimitRetries < this.maxRateLimitRetries) {
+            const host = shopRequestKey(item.url);
+            const exponential = this.rateLimitCooldownMs * (2 ** rateLimitRetries);
+            const cooldownMs = Math.min(30 * 60_000, Math.max(0, error.retryAfterMs ?? exponential));
+            const blockedUntil = this.now().getTime() + cooldownMs;
+            this.blockedHostsUntil.set(host, blockedUntil);
+            rateLimitRetries += 1;
+            item.error = `${error.message} Paused until ${new Date(blockedUntil).toISOString()}.`;
+            job.error = item.error;
+            job.cooldownUntil = new Date(blockedUntil).toISOString();
+            this.emit(job);
+            try {
+              await this.waitUntil(blockedUntil, job.abortController.signal);
+            } catch {
+              this.cancelRunningItem(job, item);
+              return;
+            }
+            delete job.cooldownUntil;
+            delete job.error;
+            continue;
+          }
           item.status = "blocked";
           item.error = error.message;
           item.finishedAt = this.now().toISOString();
@@ -839,15 +889,43 @@ export class DiscoveryService {
     this.emit(job);
   }
 
-  private async throttle(url: string): Promise<void> {
-    const host = new URL(url).hostname;
+  private async throttle(url: string, signal: AbortSignal): Promise<void> {
+    const host = shopRequestKey(url);
+    const blockedUntil = this.blockedHostsUntil.get(host) ?? 0;
+    if (blockedUntil > this.now().getTime()) await this.waitUntil(blockedUntil, signal);
+    if (blockedUntil && blockedUntil <= this.now().getTime()) this.blockedHostsUntil.delete(host);
     const current = this.now().getTime();
     const last = this.lastRequestAt.get(host);
     if (last !== undefined) {
-      const remaining = this.sameDomainDelayMs - (current - last);
-      if (remaining > 0) await this.sleep(remaining);
+      const jitter = Math.round(this.random() * this.sameDomainJitterMs);
+      const remaining = this.sameDomainDelayMs + jitter - (current - last);
+      if (remaining > 0) await this.waitDelay(remaining, signal);
     }
-    this.lastRequestAt.set(host, this.now().getTime());
+    const observedAt = this.now().getTime();
+    this.lastRequestAt.set(host, observedAt);
+    this.onRequestStart?.(url, observedAt);
+  }
+
+  private async waitUntil(deadline: number, signal: AbortSignal): Promise<void> {
+    while (deadline > this.now().getTime()) {
+      await this.waitDelay(deadline - this.now().getTime(), signal);
+    }
+  }
+
+  private async waitDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+    if (milliseconds <= 0) return;
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        callback();
+      };
+      const onAbort = () => finish(() => reject(new DiscoveryCancelledError("Discovery cancelled during shop cooldown.")));
+      signal.addEventListener("abort", onAbort, { once: true });
+      void this.sleep(milliseconds).then(() => finish(resolve), (error) => finish(() => reject(error)));
+    });
   }
 
   private recount(job: MutableDiscoveryJob): void {
@@ -910,13 +988,14 @@ async function discoveryAccessBlockReason(
 }
 
 export class PlaywrightDiscoveryFetcher implements DiscoveryFetcher {
-  private browser: Browser | null = null;
+  private readonly browserSession;
   private readonly headed: boolean;
   private readonly maxScrolls: number;
 
   constructor(options: { headed?: boolean; maxScrolls?: number } = {}) {
     this.headed = options.headed ?? false;
     this.maxScrolls = Math.min(5, Math.max(0, options.maxScrolls ?? 2));
+    this.browserSession = sharedShopBrowser(this.headed);
   }
 
   async fetch(request: DiscoveryFetchRequest, context: DiscoveryFetchContext): Promise<RawProduct[]> {
@@ -925,7 +1004,7 @@ export class PlaywrightDiscoveryFetcher implements DiscoveryFetcher {
     if (requestedAdapter.id !== request.source) {
       throw new DiscoveryFetchError(`Listing target does not match the ${request.source} adapter.`);
     }
-    if (requestedAdapter.extractListingHtml) {
+    if (requestedAdapter.extractListingHtml && !shopPrefersBrowser(request.target.url)) {
       const response = await fetchPublicHtml(request.target.url, {
         signal: context.signal,
         allowedHost: (hostname) => requestedAdapter.allowedHosts.includes(hostname),
@@ -944,7 +1023,12 @@ export class PlaywrightDiscoveryFetcher implements DiscoveryFetcher {
         status: response.status,
         bodyText: plainText,
       }) ?? classifyAccessBlock({ pageUrl: finalUrl.href, status: response.status, bodyText: plainText });
-      if (block) throw new DiscoveryBlockedError(block);
+      if (block && (response.status === 403 || response.status === 429)) {
+        preferBrowserForShop(request.target.url);
+        if (response.status === 429) throw new DiscoveryBlockedError(block, response.retryAfterMs);
+        throw new DiscoveryFetchError("The stateless reader received HTTP 403; retrying once with the persistent browser session.");
+      }
+      if (block) throw new DiscoveryBlockedError(block, response.retryAfterMs);
       if (response.status < 200 || response.status >= 300) {
         throw new DiscoveryFetchError(`Shop listing returned HTTP ${response.status}.`);
       }
@@ -958,12 +1042,8 @@ export class PlaywrightDiscoveryFetcher implements DiscoveryFetcher {
       // A healthy but unstructured response may still be hydrated client-side.
       // Only then do we pay for an isolated Playwright navigation.
     }
-    const browser = await this.getBrowser();
-    const browserContext = await browser.newContext({ locale: "fr-CH", timezoneId: "Europe/Zurich" });
-    const closeOnAbort = () => { void browserContext.close().catch(() => undefined); };
-    context.signal.addEventListener("abort", closeOnAbort, { once: true });
-    try {
-      const page = await browserContext.newPage();
+    return this.browserSession.withPage(context.signal, async (page, browserContext) => {
+      try {
       const response = await page.goto(request.target.url, {
         waitUntil: "domcontentloaded",
         timeout: 45_000,
@@ -975,7 +1055,13 @@ export class PlaywrightDiscoveryFetcher implements DiscoveryFetcher {
         request.source,
         response?.status(),
       );
-      if (firstBlock) throw new DiscoveryBlockedError(firstBlock);
+      if (firstBlock) {
+        preferBrowserForShop(request.target.url);
+        throw new DiscoveryBlockedError(
+          firstBlock,
+          parseRetryAfter(response?.headers()["retry-after"] ?? null),
+        );
+      }
 
       const selector = request.source === "zalando-ch"
         ? 'article a[href*=".html"]'
@@ -998,20 +1084,14 @@ export class PlaywrightDiscoveryFetcher implements DiscoveryFetcher {
       // A small over-read gives local price/catalog deduplication room while
       // remaining firmly bounded and never following pagination automatically.
       return products.slice(0, Math.min(600, Math.max(request.limit, request.limit * 3)));
-    } finally {
-      context.signal.removeEventListener("abort", closeOnAbort);
-      await browserContext.close().catch(() => undefined);
-    }
+      } catch (error) {
+        if (context.signal.aborted) throw new DiscoveryCancelledError("Discovery cancelled.");
+        throw error;
+      }
+    });
   }
 
   async close(): Promise<void> {
-    await this.browser?.close().catch(() => undefined);
-    this.browser = null;
-  }
-
-  private async getBrowser(): Promise<Browser> {
-    if (this.browser?.isConnected()) return this.browser;
-    this.browser = await chromium.launch({ headless: !this.headed, channel: "chrome" });
-    return this.browser;
+    await this.browserSession.close();
   }
 }

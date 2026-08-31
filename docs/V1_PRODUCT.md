@@ -1,6 +1,6 @@
-# Mosaic V1 product contract
+# Neuchatech MosAIc V1 product contract
 
-Mosaic is a private, local-first visual research canvas. A user describes what
+Neuchatech MosAIc is a private, local-first visual research canvas. A user describes what
 they want to explore, pastes links, or drops images; Mosaic collects structured
 items, arranges them visually, and lets the user reuse selections with AI.
 

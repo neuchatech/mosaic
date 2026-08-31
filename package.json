@@ -1,7 +1,11 @@
 {
-  "name": "wardrobe-atlas",
+  "name": "neuchatech-mosaic",
   "version": "1.0.0",
-  "private": true,
+  "private": false,
+  "description": "A local-first AI visual research canvas by Neuchatech.",
+  "license": "MIT",
+  "author": "Neuchatech",
+  "homepage": "https://www.neuchatech.ch",
   "engines": {
     "node": ">=22.13.0"
   },
@@ -17,7 +21,6 @@
     "test": "npm run typecheck && npm run build && node --import tsx --test tests/*.test.ts tests/*.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
-    "db:seed": "tsx scripts/seed.ts",
     "project": "tsx scripts/project.ts",
     "catalog:normalize": "tsx scripts/normalize-catalog.ts",
     "catalog:embed": "tsx scripts/embed-catalog.ts",
@@ -25,6 +28,7 @@
     "mcp": "tsx mcp/index.ts"
   },
   "dependencies": {
+    "@fortawesome/free-solid-svg-icons": "^7.3.1",
     "@hono/node-server": "^2.1.1",
     "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -34,6 +38,7 @@
     "crawlee": "^3.18.1",
     "drizzle-orm": "0.45.2",
     "hono": "^4.13.5",
+    "lucide-react": "^1.37.0",
     "ml-pca": "^4.1.1",
     "playwright": "^1.62.1",
     "react": "19.2.6",

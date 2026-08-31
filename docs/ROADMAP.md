@@ -1,83 +1,34 @@
-# Mosaic — sprints livrés
+# Neuchatech MosAIc — delivered roadmap
 
-La roadmap suit le vrai parcours d’achat : éliminer d’abord les pièces impossibles à acheter, puis rendre la comparaison et la découverte progressivement plus utiles. Les six incréments ci-dessous sont intégrés dans l’application locale au 28 août 2026.
+The current release covers the complete local visual-research loop.
 
-## Sprint 1 — Achetable dans ma taille
+## Foundation
 
-- [x] Capturer les tailles actuellement disponibles sur les fiches produit, pas toutes les variantes théoriques.
-- [x] Distinguer une disponibilité connue, inconnue ou épuisée.
-- [x] Filtrer le board compact sur une taille exacte disponible.
-- [x] Afficher les tailles connues directement sur les cartes sans ouvrir le shop.
-- [x] Enrichir le catalogue existant avec les fiches détaillées et indiquer la couverture.
+- Exact availability and freshness for price, stock, and domain-specific variants.
+- Persistent save, reject, and owned decisions with undo.
+- Targeted refresh, durable acquisition jobs, explicit retry, cancel, and recovery.
+- Compact comparison, saved views, exports, keyboard navigation, touch support, and reduced motion.
 
-Critère de sortie : choisir `M`, `L`, `48` ou une autre taille enregistrée ne laisse que les produits actuellement commandables dans cette taille ; les articles inconnus ne sont jamais présentés comme des correspondances confirmées.
+## Agentic research
 
-## Sprint 2 — Shortlist et comparaison
+- One assistant composer for public URL import, supported-shop discovery, enrichment, filters, similarity, visual scoring, collections, comparisons, and artifact drafts.
+- Hard constraints are applied before visual scoring; rejected items remain excluded unless explicitly requested.
+- Text, images, selected items, and collections can be reused as bounded agent context.
+- Local CLIP embeddings improve visual placement while metadata remains a reliable offline fallback.
 
-- [x] Persister les décisions « gardé », « rejeté » et « possédé » depuis le board.
-- [x] Ajouter un board réservé à la shortlist et une comparaison compacte côte à côte.
-- [x] Montrer prix, tailles disponibles, matière, retours et raison de la sélection visuelle.
-- [x] Empêcher les produits rejetés de réapparaître dans les recherches Codex sauf demande explicite.
+## MosAIc V1
 
-Critère de sortie : une session de navigation peut se terminer par une petite shortlist d’achat durable.
+- Assistant-first, board-first experience with contextual onboarding.
+- Isolated clothing, television, and generic workspaces.
+- Dynamic field definitions and facets inferred from actual workspace data.
+- Collections, reusable multi-selection, unified activity, and local Studio drafts.
+- Spatial hashing, viewport culling, minimap, and stable cached layouts for large catalogs.
+- Project acquisition skill and documented optional Chrome recovery workflow.
+- Guarded public imports, contained local media, and read-only scoped Vision agents.
+- English, French, German, Italian, and Spanish UI with automatic locale detection.
 
-## Sprint 3 — Acquisition fiable et fraîcheur
+## Next directions
 
-- [x] Ajouter une file d’enrichissement des fiches existantes avec progression, annulation et reprises.
-- [x] Enregistrer séparément les dernières vérifications du prix, du stock et des tailles, puis signaler les données périmées.
-- [x] Rafraîchir à la demande seulement la shortlist ou les produits visibles.
-- [x] Isoler chaque shop dans un adaptateur ; Zalando Suisse est livré et l’import JSON-LD prudent permet d’amorcer un autre shop explicitement choisi avec `--generic`.
+The generative try-on and visual-composition plan lives in [GENERATIVE_TRYON.md](./GENERATIVE_TRYON.md). It preserves local drafts and requires explicit consent before any personal photo is sent to a configured remote provider.
 
-Critère de sortie : chaque disponibilité a une date de capture visible et peut être rafraîchie sans rescanner tout le catalogue.
-
-## Sprint 4 — Boucle de styliste agentique
-
-- [x] Permettre à Luna de combiner texte, mood boards, favoris, rejets, références et vêtements possédés.
-- [x] Diffuser les articles inspectés et les raisons concises pendant le travail de l’agent.
-- [x] Appliquer taille, budget, source et catégorie comme contraintes dures avant le scoring visuel.
-- [x] Réinjecter les décisions garder/rejeter dans la sélection suivante.
-
-Critère de sortie : une requête agentique produit une sélection pertinente et achetable, avec une raison pour chaque survivant.
-
-## Sprint 5 — Dressing personnel et planches de tenues
-
-- [x] Importer vêtements possédés et références avec images stockées localement et métadonnées.
-- [x] Générer des planches de tenues autour d’un achat potentiel.
-- [x] Évaluer la nouveauté et la compatibilité avec ce qui est déjà possédé.
-- [x] Identifier les manques du dressing au lieu de classer seulement des pièces isolées.
-
-Critère de sortie : l’app peut dire si un achat ajoute réellement des tenues utiles au dressing.
-
-## Sprint 6 — Échelle et finition
-
-- [x] Rendre progressivement les grands boards et mettre en cache projections, images et planches-contact.
-- [x] Ajouter vues sauvegardées, exports locaux, navigation clavier et annulation.
-- [x] Couvrir clavier, tactile/mobile, mouvement réduit, erreurs, reprise et données inconnues.
-- [x] Ajouter des tests de régression hors ligne pour les tailles Zalando, la file d’acquisition, le catalogue, les médias et le MCP Vision borné.
-
-Critère de sortie : plusieurs milliers de produits restent fluides et les parcours principaux sont robustes.
-
-## Sprint 7 — Composer IA unifié
-
-- [x] Une seule entrée route automatiquement filtre, voisins CLIP, Vision, découverte, import de liens ou tenue.
-- [x] Tailles, boutiques et budget de l’interface deviennent des défauts que le texte peut remplacer.
-- [x] Plusieurs fiches publiques d’une nouvelle boutique peuvent être importées en une demande lorsqu’elles exposent `Product` JSON-LD.
-- [x] Les cartes peuvent servir de références du prompt par clic ou glisser-déposer.
-
-## Sprint 8 — Mosaic V1
-
-- [x] Remplacer l’interface technique par une expérience assistant-first et board-first avec onboarding contextuel.
-- [x] Généraliser le catalogue en espaces isolés (`clothing`, `televisions`, `generic`) et facettes dynamiques.
-- [x] Ajouter collections, sélection multiple réutilisable, activité unifiée et brouillons Studio locaux.
-- [x] Exécuter des plans bornés import/découverte/filtre/similarité/Vision/collection/comparaison/artefact sans faux succès vide.
-- [x] Ajouter l’index visuel CLIP local incrémental, sa progression et son fallback métadonnées.
-- [x] Livrer un skill d’acquisition projet et documenter le recours interactif optionnel à Chrome.
-- [x] Isoler toutes les données par espace et durcir les imports publics, médias et planches-contact contre les chemins locaux et réseaux privés.
-
-Critère de sortie : une personne non technique peut créer un espace, demander ou importer une exploration visuelle, organiser sa sélection et retrouver son activité sans voir le vocabulaire d’implémentation par défaut.
-
-## Prochaine extension — Studio d’essayage
-
-Le plan détaillé se trouve dans [GENERATIVE_TRYON.md](./GENERATIVE_TRYON.md). Il prévoit un tiroir Studio, un historique latéral persistant et virtualisé, des variantes/comparaisons, un stockage média privé local et un consentement explicite avant tout fournisseur génératif distant.
-
-Le prochain adaptateur suisse reste un choix produit : sélectionner le shop cible, enregistrer ses fixtures HTML, puis implémenter ses sélecteurs dans `collector/adapters/` sans modifier la file, le catalogue ou l’interface.
+New shops should be added through recorded offline fixtures and an adapter under `collector/adapters/`. The collector core, catalog, and UI should not gain shop-specific selectors.

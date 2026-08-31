@@ -15,8 +15,8 @@ import { projectCompactCached } from "../server/projection-cache";
 import { CatalogRepository } from "../server/repository";
 import { findSimilarProducts } from "../server/similarity";
 import { filterVisualCandidates } from "../server/visual-constraints";
-import { visualCodexArgs } from "../server/visual-selection";
-import { seedProducts } from "../src/catalog/seed";
+import { createVisualAssessmentEventConsumer, rankVisualCandidates, visualCodexArgs } from "../server/visual-selection";
+import { seedProducts } from "./fixtures/products";
 import { productSchema, type Product } from "../src/domain/catalog";
 
 const checkedAt = "2026-08-28T10:00:00.000Z";
@@ -107,6 +107,38 @@ test("Vision launches Codex with a read-only sandbox and approvals disabled", ()
   assert.deepEqual(args.slice(-3), ["--image", "/tmp/mood.jpg", "-"]);
 });
 
+test("the read-only visual runner persists only proposals made after a successful inspection", () => {
+  const recorded: unknown[] = [];
+  const consume = createVisualAssessmentEventConsumer("job-test", {
+    recordVisualAssessment(input) { recorded.push(input); return {} as never; },
+  });
+  const event = (tool: string, args: object, error: unknown = null) => JSON.stringify({
+    type: "item.completed",
+    item: { type: "mcp_tool_call", server: "wardrobe_atlas", tool, arguments: args, result: {}, error, status: error ? "failed" : "completed" },
+  });
+  const assessment = { jobId: "job-test", productId: "item-1", score: 0.82, rejected: false, reason: "Strong silhouette match", signals: ["wide", "brown"] };
+  assert.equal(consume(event("propose_visual_assessment", assessment)), null);
+  assert.equal(consume(event("inspect_visual_candidate", { jobId: "job-test", productId: "item-1" }, { message: "failed" })), null);
+  assert.equal(consume(event("inspect_visual_candidate", { jobId: "job-test", productId: "item-1" })), "presented");
+  assert.equal(consume(event("propose_visual_assessment", assessment)), "recorded");
+  assert.equal(consume(event("inspect_visual_candidate", { jobId: "job-test", productId: "item-2" })), "presented");
+  assert.equal(consume(event("propose_visual_assessment", {
+    jobId: "job-test",
+    productId: "item-2",
+    score: 0.64,
+    reason: "Useful texture match",
+    signals: ["cable knit"],
+  })), "recorded");
+  assert.deepEqual(recorded, [assessment, {
+    jobId: "job-test",
+    productId: "item-2",
+    score: 0.64,
+    rejected: false,
+    reason: "Useful texture match",
+    signals: ["cable knit"],
+  }]);
+});
+
 test("personal catalog media stays inside its dedicated local directory", () => {
   assert.match(catalogMediaPath("owned_abc-123", "1.webp"), /data\/media\/owned_abc-123\/1\.webp$/);
   assert.equal(catalogMediaType("1.webp"), "image/webp");
@@ -136,6 +168,8 @@ test("scoped visual MCP does not expose global catalog enumeration tools", async
   await client.connect(transport);
   const names = new Set((await client.listTools()).tools.map((tool) => tool.name));
   assert.ok(names.has("get_visual_job_context"));
+  assert.ok(names.has("propose_visual_assessment"));
+  assert.ok(!names.has("record_visual_assessment"));
   assert.ok(!names.has("catalog_stats"));
   assert.ok(!names.has("search_products"));
   assert.ok(!names.has("find_similar_products"));
@@ -264,4 +298,31 @@ test("similar products use catalog coordinates when a CLIP vector is not cached"
   const similar = await findSimilarProducts({ productIds: ["anchor-local"], limit: 2 }, repository);
   assert.deepEqual(similar.map((item) => item.id), ["nearest-local", "far-local"]);
   assert.match(String(similar[0]?.attributes.selectionReason), /projection locale/);
+});
+
+test("visual candidate preselection ranks by local CLIP similarity and stays bounded", () => {
+  const products = [
+    productSchema.parse({ ...seedProducts[0], id: "visual-near", sourceId: "visual-near" }),
+    productSchema.parse({ ...seedProducts[1], id: "visual-far", sourceId: "visual-far" }),
+    productSchema.parse({ ...seedProducts[2], id: "visual-missing", sourceId: "visual-missing" }),
+  ];
+  const ranked = rankVisualCandidates(products, new Map([
+    ["visual-near", [1, 0]],
+    ["visual-far", [0, 1]],
+  ]), [[1, 0]], 2);
+  assert.deepEqual(ranked.map(({ id }) => id), ["visual-near", "visual-far"]);
+});
+
+test("visual preselection round-robins multiple reference views instead of letting one crop dominate", () => {
+  const products = [
+    productSchema.parse({ ...seedProducts[0], id: "whole-first", sourceId: "whole-first" }),
+    productSchema.parse({ ...seedProducts[1], id: "crop-first", sourceId: "crop-first" }),
+    productSchema.parse({ ...seedProducts[2], id: "whole-second", sourceId: "whole-second" }),
+  ];
+  const ranked = rankVisualCandidates(products, new Map([
+    ["whole-first", [1, 0]],
+    ["crop-first", [0, 1]],
+    ["whole-second", [.8, .2]],
+  ]), [[1, 0], [0, 1]], 2);
+  assert.deepEqual(ranked.map(({ id }) => id), ["whole-first", "crop-first"]);
 });

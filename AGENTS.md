@@ -1,8 +1,8 @@
-# Mosaic V1 agent guide
+# Neuchatech MosAIc agent guide
 
 ## Product contract
 
-- Mosaic is a private, local-first visual research canvas. Wardrobe Atlas is its first domain profile and all MVP clothing behavior must remain compatible.
+- Neuchatech MosAIc is a private, local-first visual research canvas. The legacy Wardrobe Atlas clothing profile remains compatible.
 - Workspaces may contain shop products, owned objects, visual references, or generic visual items. References are context anchors and are never purchasable.
 - Read `docs/V1_PRODUCT.md` before changing product behavior, public contracts, the data model, assistant routing, or the main UX. Treat `docs/design/mosaic-gold-standard.png` as the approved visual direction.
 - Keep universal item fields small. Put profile-specific values in typed workspace field definitions and item attributes; do not add TV- or clothing-specific columns for each new domain.

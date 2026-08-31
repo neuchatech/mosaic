@@ -66,8 +66,8 @@ function migrateProductIdentityScope(db: Database.Database): void {
         kind TEXT NOT NULL DEFAULT 'shop', source TEXT NOT NULL, source_id TEXT NOT NULL,
         url TEXT NOT NULL, brand TEXT NOT NULL, name TEXT NOT NULL,
         description TEXT NOT NULL DEFAULT '', price REAL, original_price REAL,
-        currency TEXT NOT NULL DEFAULT 'CHF', category TEXT NOT NULL DEFAULT 'Autre',
-        color TEXT NOT NULL DEFAULT 'Inconnue', color_family TEXT NOT NULL DEFAULT 'unknown',
+        currency TEXT NOT NULL DEFAULT 'XXX', category TEXT NOT NULL DEFAULT 'Other',
+        color TEXT NOT NULL DEFAULT 'Unknown', color_family TEXT NOT NULL DEFAULT 'unknown',
         fit TEXT NOT NULL DEFAULT 'unknown', attributes_json TEXT NOT NULL DEFAULT '{}',
         materials_json TEXT NOT NULL DEFAULT '[]', tags_json TEXT NOT NULL DEFAULT '[]',
         annotations_json TEXT NOT NULL DEFAULT '{}', sizes_json TEXT NOT NULL DEFAULT '[]',
@@ -255,11 +255,11 @@ export function migrateWorkspaceSchema(db: Database.Database): void {
   db.prepare(`
     INSERT INTO workspaces (
       id, name, description, profile, schema_version, settings_json, created_at, updated_at
-    ) VALUES (?, 'Wardrobe', 'Migrated Wardrobe Atlas catalog', 'clothing', 1, ?, ?, ?)
+    ) VALUES (?, 'My workspace', 'Default Neuchatech MosAIc workspace', 'clothing', 1, ?, ?, ?)
     ON CONFLICT(id) DO NOTHING
   `).run(
     DEFAULT_CLOTHING_WORKSPACE_ID,
-    JSON.stringify({ currency: "CHF", locale: "fr-CH" }),
+    JSON.stringify({}),
     now,
     now,
   );

@@ -72,8 +72,8 @@ export const visualScoreAssistantStepSchema = z.object({
   ...scopedStepBase,
   type: z.literal("visual_score"),
   prompt: z.string().trim().min(1).max(2_000),
-  candidateLimit: z.number().int().min(1).max(160),
-  topN: z.number().int().min(1).max(60),
+  candidateLimit: z.number().int().min(1).max(50),
+  topN: z.number().int().min(1).max(24),
   threshold: z.number().min(0).max(1),
 }).strict();
 
@@ -247,6 +247,19 @@ function explicitShops(prompt: string): string[] {
   return uniqueTrimmed(shops, (value) => value.trim().toLocaleLowerCase());
 }
 
+export function requestsRemoteAcquisition(prompt: string, shops = explicitShops(prompt)) {
+  if (!shops.length) return false;
+  // The named source already provides the remote context. Keep the verb list
+  // deliberately explicit so "show the About You socks I already have" stays
+  // a local filter, while natural conjugations in every shipped UI language
+  // reliably start discovery.
+  const normalized = prompt
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLocaleLowerCase();
+  return /(?:^|[^\p{L}])(?:ajoute(?:s|z|r)?|importe(?:s|z|r)?|scrape(?:s|z|r)?|scanne(?:s|z|r)?|cherche(?:s|z|r)?|trouve(?:s|z|r)?|recupere(?:s|z|r)?|ramene(?:s|z|r)?|add|import|scrape|scan|find|fetch|discover|retrieve|get|fuge|hinzufugen|importiere(?:n)?|suche(?:n)?|finde(?:n)?|hole(?:n)?|scrapen|scannen|aggiungi|aggiungere|importa(?:re)?|cerca(?:re)?|trova(?:re)?|recupera(?:re)?|scansiona(?:re)?|anade|anadir|agrega(?:r)?|busca(?:r)?|encuentra(?:r)?|recupera(?:r)?|escanea(?:r)?)(?=$|[^\p{L}])/u.test(normalized);
+}
+
 function explicitPrice(prompt: string) {
   const between = /(?:entre|between)\s*(?:chf|fr\.?|€|eur|usd|\$)?\s*(\d+(?:[.,]\d+)?)\s*(?:chf|fr\.?|€|eur|usd|\$)?\s*(?:et|and|à|to|-)\s*(?:chf|fr\.?|€|eur|usd|\$)?\s*(\d+(?:[.,]\d+)?)/i.exec(prompt);
   const maximum = /(?:moins de|sous|max(?:imum)?|jusqu['’]?à|under|below|budget(?: de)?|<)\s*(?:chf|fr\.?|€|eur|usd|\$)?\s*(\d+(?:[.,]\d+)?)/i.exec(prompt)
@@ -273,7 +286,7 @@ function requestsAllPrices(prompt: string) {
 }
 
 function requestedTargetCount(prompt: string) {
-  const match = /\b(\d{1,3})\s+(?:articles?|produits?|items?|résultats?|results?|tvs?|télévisions?|looks?|tenues?)\b/i.exec(prompt);
+  const match = /\b(\d{1,3})\s+(?:articles?|produits?|items?|résultats?|results?|tvs?|télévisions?|looks?|tenues?|pantalons?|jeans?|vestes?|manteaux?|chemises?|t-?shirts?|pulls?|mailles?|cardigans?|chaussures?|baskets?|accessoires?|colliers?|bonnets?)\b/i.exec(prompt);
   return match ? Math.min(300, Math.max(1, Number(match[1]))) : undefined;
 }
 
@@ -397,7 +410,7 @@ export function finalizeAssistantPlan(
       else if (step.type === "visual_score") normalizedStep = {
         ...step,
         topN: Math.min(60, targetCount),
-        candidateLimit: Math.min(160, Math.max(step.candidateLimit, targetCount)),
+      candidateLimit: Math.min(50, Math.max(step.candidateLimit, targetCount)),
       };
     }
     if (normalizedStep.type !== "discover_adapter") return normalizedStep;
@@ -455,11 +468,12 @@ export function heuristicAssistantPlan(input: AssistantPlannerInput): AssistantP
   const wantsArtifact = /\b(?:artefact|artifact|mood\s*board|planche|rapport|report|studio|génère? (?:une )?image|generate (?:an? )?image|brouillon|draft)\b/i.test(prompt);
   const wantsCollection = /\b(?:collection|favoris|favorites|shortlist)\b/i.test(prompt) && /\b(?:crée|create|ajoute|add|retire|remove|mets|save|sauve|update|renomme)\b/i.test(prompt);
   const wantsCompose = /\b(?:tenue|outfit|look|combine|composer?|porter avec|wear with|ensemble cohérent|set)\b/i.test(prompt);
-  const wantsVisual = input.imageCount > 0 || /\b(?:visuel|visually|image|mood|style exact|ressemble à la photo)\b/i.test(prompt);
+  const wantsVisual = input.imageCount > 0 || /\b(?:visuels?|visuelles?|visuellement|visually|images?|mood|style exact|ressemble à la photo)\b/i.test(prompt);
   const wantsSimilar = /\b(?:similaires?|semblables?|alternatives?|proches?|same|like (?:this|these)|du même genre)\b/i.test(prompt);
   const wantsEnrich = /\b(?:enrich(?:is|it|ir|issement)?|refresh|rafraîchis?|actualise|mets? à jour)\b/i.test(prompt)
     || /\b(?:vérifie|contrôle|check|récupère|extrais)\b.{0,60}\b(?:détails?|specs?|spécifications?|stock|disponibilit[ée]|tailles?|prix)\b/i.test(prompt);
-  const wantsDiscovery = /\b(?:nouveaux?|autres?)\s+(?:articles?|produits?|tvs?|télévisions?)|\b(?:cherche|chercher|trouve|trouver|explore|discover|scan)\b.*\b(?:en ligne|web|boutiques?|shops?|sites?|sources?|zalando|about\s*you|aliexpress|galaxus|digitec|amazon)\b/i.test(lower);
+  const wantsDiscovery = requestsRemoteAcquisition(prompt, shops)
+    || /\b(?:nouveaux?|autres?)\s+(?:articles?|produits?|tvs?|télévisions?)|\b(?:cherche|chercher|trouve|trouver|explore|discover|scan)\b.*\b(?:en ligne|web|boutiques?|shops?|sites?|sources?|zalando|about\s*you|aliexpress|galaxus|digitec|amazon)\b/i.test(lower);
   const unsupportedSources = shops.filter((shop) => !searchableAdapterIds.has(shop));
   const targetCount = targetFromPrompt ?? (wantsDiscovery ? 80 : wantsCompose ? 3 : hasLinks && !prompt ? input.links.length : 30);
   const steps: AssistantStep[] = [];
@@ -597,9 +611,9 @@ export function heuristicAssistantPlan(input: AssistantPlannerInput): AssistantP
       dependsOn: derivedDependency,
       ...scopeInputs,
       prompt: prompt || "Trouve les articles visuellement cohérents avec les images jointes.",
-      candidateLimit: Math.min(160, Math.max(36, targetCount * 3)),
-      topN: Math.min(60, targetCount),
-      threshold: 0.5,
+      candidateLimit: Math.min(50, Math.max(24, targetCount * 2)),
+      topN: Math.min(20, targetCount),
+      threshold: 0.55,
     });
   } else if (wantsSimilar || (hasItems && !primaryStep && !wantsEnrich)) {
     if (!hasItems && !hasCollections && !hasLinks && !primaryStep) {

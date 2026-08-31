@@ -25,7 +25,11 @@ import {
 } from "../src/domain/workspace";
 import { normalizeProduct } from "../collector/normalize";
 import type { DiscoveryIntent, RawProduct } from "../collector/types";
-import { AcquisitionService, acquisitionClientView } from "./acquisition";
+import {
+  AcquisitionService,
+  PlaywrightDetailFetcher,
+  acquisitionClientView,
+} from "./acquisition";
 import { catalogMediaPath, catalogMediaType, deleteCatalogMedia, persistCatalogImages } from "./media";
 import { generateOutfits } from "./outfit-generator";
 import { projectCompactCached } from "./projection-cache";
@@ -442,6 +446,9 @@ function createDiscoveryService(
   return new DiscoveryService({
     ...(options.headed ? { fetcher: new PlaywrightDiscoveryFetcher({ headed: true }) } : {}),
     store: new FileDiscoveryJobStore(),
+    onRequestStart(url, observedAt) {
+      acquisition.noteShopRequest(url, observedAt);
+    },
     isKnownProduct(raw: RawProduct, source, intent) {
       const workspaceId = intent.workspaceId ?? DEFAULT_CLOTHING_WORKSPACE_ID;
       return repository.listProducts({ workspaceId, limit: 10_000 }).some((product) => (
@@ -484,7 +491,14 @@ function createDiscoveryService(
 
 export function createApp(
   repository = new CatalogRepository(),
-  acquisition = new AcquisitionService(repository, { sameDomainDelayMs: 8_000, sameDomainJitterMs: 4_000 }),
+  acquisition = new AcquisitionService(repository, {
+    // Direct structured reads stay invisible; only a refused/client-rendered
+    // page opens the dedicated visible Chrome session. Headless Chrome is
+    // rejected by several supported shops even at a human request rate.
+    fetcher: new PlaywrightDetailFetcher({ headed: true }),
+    sameDomainDelayMs: 8_000,
+    sameDomainJitterMs: 4_000,
+  }),
   discovery = createDiscoveryService(repository, acquisition),
   options: { assistantPlanner?: typeof createAssistantPlanWithCodex } = {},
 ) {
@@ -951,9 +965,9 @@ export function createApp(
       description: input.description ?? "",
       price: null,
       originalPrice: null,
-      currency: "CHF",
+      currency: "XXX",
       category: input.category ?? "Référence",
-      color: input.color ?? "Inconnue",
+      color: input.color ?? "Unknown",
       colorFamily: input.colorFamily ?? "unknown",
       fit: input.fit ?? "unknown",
       attributes: input.attributes ?? {},
@@ -1044,9 +1058,9 @@ export function createApp(
       description: input.description ?? "",
       price: null,
       originalPrice: null,
-      currency: "CHF",
-      category: input.category ?? (input.kind === "reference" ? "Références" : "Autre"),
-      color: input.color ?? "Inconnue",
+      currency: "XXX",
+      category: input.category ?? (input.kind === "reference" ? "References" : "Other"),
+      color: input.color ?? "Unknown",
       colorFamily: input.colorFamily ?? "unknown",
       fit: input.fit ?? "unknown",
       attributes: {},
@@ -1576,7 +1590,7 @@ export function createApp(
         workspaceProfile: workspace.profile,
         links,
         defaults: {
-          sizes: workspace.profile === "clothing" ? body.constraints.sizes ?? ["M", "L"] : [],
+          sizes: workspace.profile === "clothing" ? body.constraints.sizes ?? [] : [],
           shops: body.constraints.shops?.length ? body.constraints.shops : ["zalando-ch", "aboutyou-ch", "aliexpress"],
           minPrice: body.constraints.minPrice,
           maxPrice: body.constraints.maxPrice,
@@ -1878,9 +1892,9 @@ export function createApp(
       if (plan.action === "visual") {
         const job = await startVisualSelection({
           prompt: plan.query || body.prompt || "Trouve des articles visuellement proches des références jointes.",
-          maxCandidates: Math.min(160, Math.max(36, plan.targetCount * 3)),
-          topN: Math.min(60, plan.targetCount),
-          threshold: .5,
+          maxCandidates: Math.min(50, Math.max(24, plan.targetCount * 2)),
+          topN: Math.min(20, plan.targetCount),
+          threshold: .55,
           analysisMode: body.analysisMode,
           reasoningEffort: body.reasoningEffort,
           constraints,

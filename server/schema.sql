@@ -12,8 +12,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
 INSERT OR IGNORE INTO workspaces (
   id, name, description, profile, schema_version, settings_json, created_at, updated_at
 ) VALUES (
-  'default-clothing', 'Wardrobe', 'Migrated Wardrobe Atlas catalog', 'clothing', 1,
-  '{"currency":"CHF","locale":"fr-CH"}',
+  'default-clothing', 'My workspace', 'Default Neuchatech MosAIc workspace', 'clothing', 1,
+  '{}',
   strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 );
 
@@ -29,9 +29,9 @@ CREATE TABLE IF NOT EXISTS products (
   description TEXT NOT NULL DEFAULT '',
   price REAL,
   original_price REAL,
-  currency TEXT NOT NULL DEFAULT 'CHF',
-  category TEXT NOT NULL DEFAULT 'Autre',
-  color TEXT NOT NULL DEFAULT 'Inconnue',
+  currency TEXT NOT NULL DEFAULT 'XXX',
+  category TEXT NOT NULL DEFAULT 'Other',
+  color TEXT NOT NULL DEFAULT 'Unknown',
   color_family TEXT NOT NULL DEFAULT 'unknown',
   fit TEXT NOT NULL DEFAULT 'unknown',
   attributes_json TEXT NOT NULL DEFAULT '{}',

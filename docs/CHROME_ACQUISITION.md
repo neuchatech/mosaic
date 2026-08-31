@@ -55,6 +55,11 @@ guidance. Browser permissions and safety confirmations still apply after setup.
 - Browser is unavailable in Codex CLI and the Codex IDE extension. Those
   surfaces can still use shell tools, adapters, direct imports, and configured
   MCP servers, but they cannot invoke the desktop app's built-in Browser.
+- A background `codex exec` process launched by Mosaic is a separate CLI
+  process. It does **not** inherit the desktop task's `@Chrome` connection or
+  permissions. Luna can plan the acquisition and use Mosaic's adapter/MCP
+  tools, but real-profile Chrome extraction must be initiated in a desktop
+  Codex task where the user explicitly selected `@Chrome`.
 
 See the official [Browser documentation](https://learn.chatgpt.com/docs/browser)
 for the current product boundaries. Do not add a project-level setting that
@@ -121,3 +126,44 @@ report partial success + explicit recovery action
 
 Chrome availability is not evidence that every website will work. If a site
 blocks access, stop that URL and preserve the rest of the run.
+
+## If Chrome does not appear in Codex
+
+1. Keep Chrome running and verify that the ChatGPT extension is enabled in the
+   same Chrome profile you are currently using.
+2. Open **Settings > Computer Use** in the desktop app. Chrome must show
+   **Manage**, and its toggle/server/skill must be enabled where those controls
+   are present.
+3. Start a fresh Codex task and explicitly mention `@Chrome`; an existing task
+   does not always acquire a newly installed capability.
+4. If the connection is still absent, restart Chrome and the desktop app. Then
+   remove and reinstall the extension from **Settings > Computer Use**, rather
+   than editing native-host files manually.
+5. Recheck the active Chrome profile and per-domain permission. Use **Allow
+   once** for the first retailer smoke test.
+
+The CLI can still run `npm run collect` with Mosaic's dedicated persistent
+Chrome profile, but it cannot drive the user's existing signed-in Chrome tabs.
+That separation is intentional.
+
+## What the optimized collector does on a block
+
+The installed code path is conservative and adaptive:
+
+1. Read public server-rendered HTML when an adapter can extract it cheaply.
+2. If that stateless reader receives `403`, remember the host and retry once
+   after the normal delay through a dedicated persistent real-Chrome profile.
+3. If either path receives `429`, honor `Retry-After` when present; otherwise
+   use bounded exponential backoff and resume the same job automatically.
+4. Reuse cookies/local storage and serialize pages in that profile. Do not
+   rotate identities or open parallel sessions to defeat the limit.
+5. Stop on login, CAPTCHA, verification, or repeated refusal and retain every
+   successful item already imported.
+
+The browser profile is app-owned under `data/browser-sessions/` and ignored by
+Git. It never silently attaches Playwright to the user's personal Chrome
+profile. This approach follows Playwright's
+[persistent-context model](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-persistent-context)
+and Crawlee's documented [session-management](https://crawlee.dev/js/docs/guides/session-management)
+principles without adopting stealth patches, residential proxies, CAPTCHA
+solvers, or fingerprint spoofing.

@@ -13,6 +13,9 @@ const ABOUT_YOU_MEN_CATEGORIES: Record<string, string> = {
   Accessoires: "/c/men/accessories-20211",
 };
 
+const ABOUT_YOU_MEN_SOCKS_PATH = "/c/maenner/bekleidung/waesche/socken-20294";
+const SOCKS_QUERY = /\b(?:chaussettes?|socks?|socken|calzini?|calze|calcetines?)\b/iu;
+
 type AboutYouListingCard = {
   url: string;
   brand?: string;
@@ -103,16 +106,30 @@ export function normalizeAboutYouListingCard(
 
 export function buildAboutYouDiscoveryTargets(intent: DiscoveryIntent): DiscoveryListingTarget[] {
   if (intent.source !== "aboutyou-ch") throw new Error("About You discovery requires source 'aboutyou-ch'.");
-  const categoryPath = ABOUT_YOU_MEN_CATEGORIES[intent.category ?? ""] ?? "/c/men/clothing-20290";
+  const normalizedQuery = intent.query?.toLocaleLowerCase("fr-CH") ?? "";
+  const queryCategoryPath = SOCKS_QUERY.test(normalizedQuery) ? ABOUT_YOU_MEN_SOCKS_PATH : undefined;
+  const categoryPath = queryCategoryPath ?? ABOUT_YOU_MEN_CATEGORIES[intent.category ?? ""] ?? "/c/men/clothing-20290";
   const url = intent.listingUrl
     ? new URL(intent.listingUrl)
     : new URL(categoryPath, "https://www.aboutyou.ch");
   if (!ABOUT_YOU_HOSTS.includes(url.hostname)) throw new Error("About You discovery only accepts Swiss public listings.");
+  const canApplyPantsFacets = !intent.listingUrl && intent.category === "Pantalons";
+  const appliedQueryFacets: string[] = [];
+  if (canApplyPantsFacets && /\b(?:baggy|wide[- ]?leg|oversize|ample|larges?)\b/i.test(normalizedQuery)) {
+    // About You's public men's pants facet for the Baggy cut.
+    url.searchParams.set("trousersCut", "216289");
+    appliedQueryFacets.push("baggy");
+  }
+  if (canApplyPantsFacets && /\b(?:lin|linen|l[eé]gers?|lightweight|respirant|summer|[eé]t[eé])\b/i.test(normalizedQuery)) {
+    // About You's public material facet for linen.
+    url.searchParams.set("materialStyle", "56687");
+    appliedQueryFacets.push("linen");
+  }
   return [{
     url: url.href,
     appliedFilters: {
-      query: "unsupported",
-      category: ABOUT_YOU_MEN_CATEGORIES[intent.category ?? ""] ? "listing" : "unsupported",
+      query: appliedQueryFacets.length || queryCategoryPath ? "listing" : "unsupported",
+      category: queryCategoryPath || ABOUT_YOU_MEN_CATEGORIES[intent.category ?? ""] ? "listing" : "unsupported",
       sizes: intent.sizes?.length ? "post_fetch" : "unsupported",
       price: intent.minPrice !== undefined || intent.maxPrice !== undefined ? "post_fetch" : "unsupported",
     },

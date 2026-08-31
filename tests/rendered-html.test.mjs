@@ -17,11 +17,13 @@ test("server-renders the Mosaic assistant-first product surface", async () => {
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
-  assert.match(html, /<title>Mosaic<\/title>/i);
-  assert.match(html, /Assistant visuel/);
-  assert.match(html, /Qu’est-ce qu’on cherche aujourd’hui/);
-  assert.match(html, /Ajouter des images/);
+  assert.match(html, /<title>Neuchatech MosAIc<\/title>/i);
+  assert.match(html, /Ask MosAIc/);
+  assert.match(html, /Add images/);
   assert.match(html, /Collections/);
-  assert.match(html, /Recadrées/);
+  assert.match(html, /Layout: Space/);
+  assert.match(html, /Images: Cropped/);
+  assert.match(html, /lucide-arrow-up/);
+  assert.match(html, /neuchatech\.ch/);
   assert.doesNotMatch(html, /codex-preview|Building your site|react-loading-skeleton/);
 });

@@ -156,10 +156,10 @@ export async function createDiscoveryPlanWithCodex(
   const jobsRoot = resolve(projectRoot, "data/codex-jobs");
   const outputPath = resolve(jobsRoot, `${id}-discovery.json`);
   await mkdir(jobsRoot, { recursive: true });
-  const requestedSizes = options.sizes === undefined ? ["M", "L"] : options.sizes;
+  const requestedSizes = options.sizes ?? [];
 
   const instruction = [
-    "Create one bounded product-discovery plan for the private, local-first Wardrobe Atlas app.",
+    "Create one bounded product-discovery plan for the private, local-first Neuchatech MosAIc app.",
     "Return only the object required by the supplied output schema.",
     "The plan is executed later by allowlisted local Playwright shop adapters. Do not browse, call tools, provide URLs, automate login, mention checkout, or suggest CAPTCHA/anti-bot bypasses.",
     "Each search query must be a concise retailer search phrase, not a natural-language paragraph.",

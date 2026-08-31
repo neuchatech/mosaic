@@ -17,6 +17,7 @@ export type PublicHtmlResponse = {
   status: number;
   contentType: string;
   html: string;
+  retryAfterMs?: number;
 };
 
 export type PublicBytesResponse = {
@@ -24,7 +25,16 @@ export type PublicBytesResponse = {
   status: number;
   contentType: string;
   body: Buffer;
+  retryAfterMs?: number;
 };
+
+export function parseRetryAfter(value: string | null, now = Date.now()): number | undefined {
+  if (!value?.trim()) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1_000);
+  const deadline = Date.parse(value);
+  return Number.isNaN(deadline) ? undefined : Math.max(0, deadline - now);
+}
 
 type TransportResponse = {
   status: number;
@@ -172,11 +182,13 @@ export async function fetchPublicBytes(
         throw new Error(`Public response is too large (${contentLength} bytes).`);
       }
       try {
+        const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
         return {
           url: current.href,
           status: response.status,
           contentType: response.headers.get("content-type") ?? "",
           body: await readLimitedBody(response.body, maxBytes),
+          ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
         };
       } catch (error) {
         response.cancel();
@@ -213,5 +225,6 @@ export async function fetchPublicHtml(
     status: response.status,
     contentType: response.contentType,
     html: response.body.toString("utf8"),
+    ...(response.retryAfterMs !== undefined ? { retryAfterMs: response.retryAfterMs } : {}),
   };
 }

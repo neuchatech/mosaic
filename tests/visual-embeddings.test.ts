@@ -6,7 +6,7 @@ import test from "node:test";
 import { catalogMediaPath, persistCatalogImages } from "../server/media";
 import { setPublicNetworkTestHooksForTests } from "../server/public-html";
 import { embedCatalogProducts } from "../server/visual-embeddings";
-import { seedProducts } from "../src/catalog/seed";
+import { seedProducts } from "./fixtures/products";
 import {
   VisualEmbeddingCache,
   buildHybridVector,
