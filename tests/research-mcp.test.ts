@@ -175,6 +175,7 @@ test("research MCP exposes only scoped tools and preserves manifest constraints"
   const names = new Set(tools.map(({ name }) => name));
   for (const expected of [
     "get_research_context",
+    "validate_research_result",
     "query_workspace_items",
     "sample_workspace_items",
     "get_source_capabilities",
@@ -216,6 +217,35 @@ test("research MCP exposes only scoped tools and preserves manifest constraints"
   assert.deepEqual(context.manifest.constraints.map(({ field }) => field), [
     "price", "attributes.texture", "category",
   ]);
+
+  const invalidResult = {
+    version: 1,
+    outcome: "completed",
+    title: "Draft",
+    message: "A draft result.",
+    itemIds: ["b-secret"],
+    collectionIds: [],
+    artifactIds: [],
+    filters: [],
+    evidence: [],
+    warnings: [],
+    followUps: [],
+    metrics: { toolCalls: 1, itemsRead: 1, imagesInspected: 0, acquiredItems: 0 },
+  };
+  const invalidValidation = dataFrom(await client.callTool({
+    name: "validate_research_result",
+    arguments: { resultJson: JSON.stringify(invalidResult) },
+  })) as { valid: boolean; attempt: number; errors: string[] };
+  assert.equal(invalidValidation.valid, false);
+  assert.equal(invalidValidation.attempt, 1);
+  assert.match(invalidValidation.errors.join(" "), /b-secret/);
+  const validValidation = dataFrom(await client.callTool({
+    name: "validate_research_result",
+    arguments: { resultJson: JSON.stringify({ ...invalidResult, itemIds: ["a-one"] }) },
+  })) as { valid: boolean; attempt: number; errors: string[] };
+  assert.equal(validValidation.valid, true);
+  assert.equal(validValidation.attempt, 2);
+  assert.deepEqual(validValidation.errors, []);
 
   const artifactResult = await client.callTool({
     name: "create_workspace_artifact_draft",

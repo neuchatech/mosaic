@@ -22,6 +22,7 @@ import { stableWorkspaceProductId } from "../src/domain/ids";
 import {
   DEFAULT_RESEARCH_BUDGET,
   mergeResearchHardConstraints,
+  researchAgentResultSchema,
   researchBudgetSchema,
   researchHardConstraintFilter,
   type ResearchBudget,
@@ -557,6 +558,7 @@ export function registerResearchTools(
     run.request.budget,
     researchBudgetFromEnvironment(),
   ));
+  let resultValidationAttempts = 0;
   const scopedResult = (value: unknown) => textResult({ data: value, budget: meter.snapshot() });
   const recordChildJobs = (kind: "discovery" | "acquisition", ids: string[]) => {
     const childJobs = [...new Set(ids)].filter(Boolean).map((id) => ({ kind, id }));
@@ -618,6 +620,49 @@ export function registerResearchTools(
         contactSheetItems: MAX_CONTACT_SHEET_ITEMS,
         browserObservations: MAX_BROWSER_OBSERVATIONS,
       },
+    });
+  });
+
+  server.registerTool("validate_research_result", {
+    title: "Validate the proposed research result",
+    description: "Before returning your final structured answer, validate it against the output contract, active workspace, and hard constraints. If errors are returned, revise the result and validate again. At most three validation attempts are allowed for this run.",
+    inputSchema: {
+      resultJson: z.string().min(2).max(200_000),
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+  }, async ({ resultJson }) => {
+    meter.consume();
+    resultValidationAttempts += 1;
+    if (resultValidationAttempts > 3) {
+      throw new Error("Research result validation stopped after 3 failed attempts. Return a truthful partial or needs_input result using only ids already confirmed by Mosaic tools.");
+    }
+    const errors: string[] = [];
+    let parsed: ReturnType<typeof researchAgentResultSchema.parse> | null = null;
+    try {
+      parsed = researchAgentResultSchema.parse(JSON.parse(resultJson));
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+    if (parsed) {
+      for (const id of parsed.itemIds) {
+        try { researchProductOrThrow(id); }
+        catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+      }
+      for (const id of parsed.collectionIds) {
+        if (!repository.getCollection(id, scope.workspaceId)) errors.push(`Collection ${id} does not exist in the active workspace.`);
+      }
+      for (const id of parsed.artifactIds) {
+        if (!repository.getArtifact(id, scope.workspaceId)) errors.push(`Artifact ${id} does not exist in the active workspace.`);
+      }
+    }
+    return scopedResult({
+      valid: errors.length === 0,
+      attempt: resultValidationAttempts,
+      remainingAttempts: Math.max(0, 3 - resultValidationAttempts),
+      errors: [...new Set(errors)].slice(0, 40),
+      instruction: errors.length
+        ? "Correct only the reported problems, then call validate_research_result again. Do not invent replacement ids."
+        : "The result is valid. Return this exact validated content as the final structured answer.",
     });
   });
 
