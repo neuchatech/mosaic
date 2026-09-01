@@ -224,6 +224,42 @@ test("OpenAI-compatible agent executes scoped MCP tools and returns validated JS
   assert.equal(secondMessages.at(-1)?.tool_call_id, "call-one");
 });
 
+test("OpenAI-compatible agent uses one tool-free final turn after exhausting its tool budget", async () => {
+  const requests: Array<Record<string, unknown>> = [];
+  const requestFetch: typeof fetch = async (_input, init) => {
+    requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    const body = requests.length === 1
+      ? { choices: [{ message: { content: null, tool_calls: [{
+        id: "context-one",
+        type: "function",
+        function: { name: "get_research_context", arguments: "{}" },
+      }] } }] }
+      : { choices: [{ message: { content: JSON.stringify({ ...result(), outcome: "partial", message: "Best confirmed partial result." }) } }] };
+    return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const limitedRun = run();
+  limitedRun.request.budget.maxToolCalls = 1;
+  const output = await runOpenAiCompatibleResearchAgent({
+    run: limitedRun,
+    signal: new AbortController().signal,
+    onEvent: () => undefined,
+  }, {
+    provider: { id: "local", model: "local-model", baseUrl: "http://127.0.0.1:1234/v1" },
+    instruction: "Research this workspace.",
+    fetch: requestFetch,
+    createToolClient: async () => ({
+      async listTools() { return { tools: [{ name: "get_research_context", inputSchema: { type: "object" } }] }; },
+      async callTool() { return { structuredContent: { workspaceId: "workspace-one" } }; },
+      async close() {},
+    }),
+  });
+  assert.equal(output.outcome, "partial");
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1]?.tools, undefined);
+  assert.equal(requests[1]?.tool_choice, undefined);
+  assert.match(JSON.stringify(requests[1]?.messages), /no more tool calls are allowed/);
+});
+
 test("OpenAI-compatible agent returns immediately after MCP validates the result", async () => {
   const requests: Array<Record<string, unknown>> = [];
   const proposed = result();

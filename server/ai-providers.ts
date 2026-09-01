@@ -184,6 +184,34 @@ export type OpenAiCompatibleAgentOptions = {
   readMedia?: (itemId: string, fileName: string, maxBytes: number) => Promise<Buffer>;
 };
 
+const IMAGE_RESEARCH_TOOLS = new Set([
+  "rank_workspace_by_visual_references",
+  "inspect_workspace_item",
+  "build_workspace_contact_sheet",
+]);
+const ACQUISITION_RESEARCH_TOOLS = new Set([
+  "import_workspace_links",
+  "import_browser_observations",
+  "start_source_discovery",
+  "get_source_discovery",
+  "control_source_discovery",
+  "refresh_workspace_items",
+  "get_item_refresh",
+  "control_item_refresh",
+]);
+const COLLECTION_WRITE_RESEARCH_TOOLS = new Set([
+  "create_workspace_collection",
+  "add_workspace_items_to_collection",
+]);
+
+function researchToolAllowed(run: ResearchRun, toolName: string, supportsImages: boolean): boolean {
+  if (!supportsImages && (toolName === "inspect_workspace_item" || toolName === "build_workspace_contact_sheet")) return false;
+  if (run.request.budget.maxImageInspections === 0 && IMAGE_RESEARCH_TOOLS.has(toolName)) return false;
+  if (run.request.budget.maxAcquisitionJobs === 0 && ACQUISITION_RESEARCH_TOOLS.has(toolName)) return false;
+  if (run.request.budget.maxCollectionWrites === 0 && COLLECTION_WRITE_RESEARCH_TOOLS.has(toolName)) return false;
+  return true;
+}
+
 type ChatMessage = {
   role: "system" | "user" | "assistant" | "tool";
   content: string | ChatContentPart[] | null;
@@ -327,12 +355,9 @@ export async function runOpenAiCompatibleResearchAgent(
   options: OpenAiCompatibleAgentOptions,
 ): Promise<ResearchAgentResult> {
   const requestFetch = options.fetch ?? fetch;
-  const timeoutSignal = AbortSignal.timeout(input.run.request.budget.maxDurationMs);
-  const requestSignal = AbortSignal.any([input.signal, timeoutSignal]);
   const toolClient = await (options.createToolClient ?? createScopedToolClient)(input.run);
-  const nativeImageTools = new Set(["inspect_workspace_item", "build_workspace_contact_sheet"]);
   const tools = (await toolClient.listTools()).tools
-    .filter((tool) => options.provider.supportsImages || !nativeImageTools.has(tool.name))
+    .filter((tool) => researchToolAllowed(input.run, tool.name, options.provider.supportsImages === true))
     .map((tool) => ({
     type: "function",
     function: {
@@ -359,14 +384,36 @@ export async function runOpenAiCompatibleResearchAgent(
   ];
   let toolCalls = 0;
   let validationAttempts = 0;
+  let forceFinalAnswer = false;
+  let finalAnswerAttempted = false;
   const maxRounds = Math.min(164, input.run.request.budget.maxToolCalls + 8);
+  const startedAt = Date.now();
+  const hardDeadline = startedAt + input.run.request.budget.maxDurationMs;
+  const finalizationReserveMs = Math.min(30_000, Math.max(10_000, Math.floor(input.run.request.budget.maxDurationMs * .15)));
+  const researchDeadline = hardDeadline - finalizationReserveMs;
   try {
     for (let round = 0; round < maxRounds; round += 1) {
-      if (requestSignal.aborted) {
-        if (input.signal.aborted) throw new DOMException("Research run cancelled", "AbortError");
-        throw new Error(`Research reached its ${Math.round(input.run.request.budget.maxDurationMs / 1_000)} second budget.`);
+      if (input.signal.aborted) throw new DOMException("Research run cancelled", "AbortError");
+      const finalOnly = forceFinalAnswer
+        || toolCalls >= input.run.request.budget.maxToolCalls
+        || round === maxRounds - 1
+        || Date.now() >= researchDeadline;
+      if (finalOnly) {
+        if (finalAnswerAttempted) throw new Error("The AI provider did not produce a usable final result within the research budget.");
+        finalAnswerAttempted = true;
+        messages.push({
+          role: "user",
+          content: "The research phase is over and no more tool calls are allowed. Return the best truthful research-result JSON now using only confirmed evidence. A partial or needs_input outcome is preferable to inventing facts. Do not call a tool and do not include Markdown.",
+        });
+        input.onEvent({ type: "progress", message: "Tool budget reached; preparing the final answer" });
       }
-      const response = await requestFetch(`${options.provider.baseUrl}/chat/completions`, {
+      const requestDeadline = finalOnly ? hardDeadline : researchDeadline;
+      const remainingMs = requestDeadline - Date.now();
+      if (remainingMs <= 0) throw new Error(`Research reached its ${Math.round(input.run.request.budget.maxDurationMs / 1_000)} second budget.`);
+      const turnSignal = AbortSignal.any([input.signal, AbortSignal.timeout(remainingMs)]);
+      let response: Response;
+      try {
+        response = await requestFetch(`${options.provider.baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -376,16 +423,25 @@ export async function runOpenAiCompatibleResearchAgent(
         body: JSON.stringify({
           model: options.provider.model,
           messages,
-          tools,
-          tool_choice: round === 0 ? "required" : "auto",
+          ...(!finalOnly ? { tools, tool_choice: round === 0 ? "required" : "auto" } : {}),
           temperature: 0.2,
-          max_tokens: round === 0
+          max_tokens: finalOnly
+            ? input.run.request.reasoningEffort === "low" ? 1_024 : 4_096
+            : round === 0
             ? 512
             : input.run.request.reasoningEffort === "low" ? 1_024 : 4_096,
         }),
-        signal: requestSignal,
+        signal: turnSignal,
         redirect: options.provider.id === "local" ? "error" : "follow",
-      });
+        });
+      } catch (error) {
+        if (!finalOnly && !input.signal.aborted && turnSignal.aborted) {
+          forceFinalAnswer = true;
+          input.onEvent({ type: "progress", message: "Research time reached; preparing the final answer" });
+          continue;
+        }
+        throw error;
+      }
       const completion = await response.json() as ChatCompletion;
       if (!response.ok) throw new Error(completion.error?.message || `${options.provider.id} returned HTTP ${response.status}.`);
       const message = completion.choices?.[0]?.message;
@@ -397,7 +453,13 @@ export async function runOpenAiCompatibleResearchAgent(
         const visualEvidence: ChatContentPart[] = [];
         for (const call of calls) {
           if (toolCalls >= input.run.request.budget.maxToolCalls) {
-            throw new Error(`Research reached its ${input.run.request.budget.maxToolCalls} tool-call budget.`);
+            messages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: `Tool-call budget exhausted at ${input.run.request.budget.maxToolCalls}. No tool was executed; return the best truthful final JSON from confirmed evidence.`,
+            });
+            forceFinalAnswer = true;
+            continue;
           }
           let args: Record<string, unknown> | null = null;
           try { args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>; }
@@ -453,7 +515,7 @@ export async function runOpenAiCompatibleResearchAgent(
           };
         } catch (error) {
           validationAttempts += 1;
-          if (validationAttempts >= 3) throw error;
+          if (finalOnly || validationAttempts >= 3) throw error;
           messages.push({
             role: "user",
             content: `Your final answer was not valid research-result JSON: ${error instanceof Error ? error.message : String(error)}. Correct it, call validate_research_result if needed, and return only the corrected JSON.`,

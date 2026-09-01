@@ -1222,6 +1222,21 @@ const MOSAIC_ACTIVE_WORKSPACE_KEY = "mosaic:workspace:active:v1";
 const MOSAIC_ARTIFACTS_FALLBACK_KEY = "mosaic:artifacts:fallback:v1";
 const MOSAIC_LOCALE_KEY = "mosaic:locale:v1";
 const MOSAIC_AI_PROVIDER_KEY = "mosaic:ai:provider:v1";
+const MOSAIC_RESEARCH_BUDGET_KEY = "mosaic:research-budget:v1";
+type MosaicResearchBudgetPreset = "quick" | "balanced" | "deep";
+const MOSAIC_RESEARCH_BUDGETS = {
+  quick: { maxDurationMs: 90_000, maxToolCalls: 20, maxItemsRead: 250, maxImageInspections: 10, maxAcquisitionJobs: 2, maxAcquiredItems: 80, maxCollectionWrites: 2 },
+  balanced: { maxDurationMs: 180_000, maxToolCalls: 48, maxItemsRead: 600, maxImageInspections: 30, maxAcquisitionJobs: 4, maxAcquiredItems: 160, maxCollectionWrites: 4 },
+  deep: { maxDurationMs: 600_000, maxToolCalls: 96, maxItemsRead: 1_500, maxImageInspections: 60, maxAcquisitionJobs: 8, maxAcquiredItems: 400, maxCollectionWrites: 8 },
+} as const satisfies Record<MosaicResearchBudgetPreset, {
+  maxDurationMs: number;
+  maxToolCalls: number;
+  maxItemsRead: number;
+  maxImageInspections: number;
+  maxAcquisitionJobs: number;
+  maxAcquiredItems: number;
+  maxCollectionWrites: number;
+}>;
 const ATLAS_TERMINAL_DISCOVERY_STATUSES = new Set<AtlasDiscoveryStatus>(["succeeded", "failed", "blocked", "cancelled"]);
 const ATLAS_DISCOVERY_SOURCE_LABELS: Record<string, string> = { "zalando-ch": "Zalando CH", "aboutyou-ch": "About You CH", aliexpress: "AliExpress" };
 const MOSAIC_TERMINAL_RESEARCH_STATUSES = new Set<MosaicResearchRun["status"]>([
@@ -1918,6 +1933,7 @@ export default function Home() {
   const [catalogStatus, setCatalogStatus] = useState("loading…");
   const [visualMode, setVisualMode] = useState<"sequential" | "sheet">("sheet");
   const [reasoningEffort, setReasoningEffort] = useState<"low" | "medium">("low");
+  const [researchBudgetPreset, setResearchBudgetPreset] = useState<MosaicResearchBudgetPreset>("balanced");
   const [aiProvider, setAiProvider] = useState<MosaicAiProviderId>("auto");
   const [aiProviders, setAiProviders] = useState<MosaicAiProviderCatalog | null>(null);
   const [openRouterModels, setOpenRouterModels] = useState<MosaicOpenRouterModel[]>([]);
@@ -2009,6 +2025,15 @@ export default function Home() {
     queueMicrotask(() => setLocale(next));
   }, []);
 
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(MOSAIC_RESEARCH_BUDGET_KEY);
+      if (stored === "quick" || stored === "balanced" || stored === "deep") {
+        queueMicrotask(() => setResearchBudgetPreset(stored));
+      }
+    } catch { /* optional */ }
+  }, []);
+
   const changeLocale = useCallback((next: MosaicLocale) => {
     setLocale(next);
     document.documentElement.lang = next;
@@ -2043,6 +2068,11 @@ export default function Home() {
   const changeAiProvider = useCallback((provider: MosaicAiProviderId) => {
     setAiProvider(provider);
     try { window.localStorage.setItem(MOSAIC_AI_PROVIDER_KEY, provider); } catch { /* optional */ }
+  }, []);
+
+  const changeResearchBudgetPreset = useCallback((preset: MosaicResearchBudgetPreset) => {
+    setResearchBudgetPreset(preset);
+    try { window.localStorage.setItem(MOSAIC_RESEARCH_BUDGET_KEY, preset); } catch { /* optional */ }
   }, []);
 
   const refreshAiProviderCatalog = useCallback(async () => {
@@ -3759,9 +3789,7 @@ export default function Home() {
       ...(selectedCollectionId ? [selectedCollectionId] : []),
     ])].slice(-24);
     const operation = captureWorkspaceOperation();
-    const budget = reasoningEffort === "low"
-      ? { maxDurationMs: 120_000, maxToolCalls: 32, maxItemsRead: 400, maxImageInspections: 18, maxAcquisitionJobs: 3, maxAcquiredItems: 120, maxCollectionWrites: 3 }
-      : { maxDurationMs: 180_000, maxToolCalls: 48, maxItemsRead: 600, maxImageInspections: 30, maxAcquisitionJobs: 4, maxAcquiredItems: 160, maxCollectionWrites: 4 };
+    const budget = MOSAIC_RESEARCH_BUDGETS[researchBudgetPreset];
     setAssistantBusy(true);
     setActiveResearchRun(null);
     setResearchEvents([]);
@@ -4463,6 +4491,8 @@ export default function Home() {
               </select></label>
               <button type="button" className="mosaicAiSettingsButton" onClick={openAiProviderSettings} title={t("aiSettings")} aria-label={t("aiSettings")}><Settings2 className="mosaicIcon" aria-hidden="true" /></button>
               <label>{t("thinking")} <select value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as "low" | "medium")}><option value="low">{t("fast")}</option><option value="medium">{t("thorough")}</option></select></label>
+              <label>{t("budget")} <select value={researchBudgetPreset} onChange={(event) => changeResearchBudgetPreset(event.target.value as MosaicResearchBudgetPreset)}><option value="quick">{t("quick")}</option><option value="balanced">{t("balanced")}</option><option value="deep">{t("deep")}</option></select></label>
+              <small className="mosaicBudgetSummary" title={`${MOSAIC_RESEARCH_BUDGETS[researchBudgetPreset].maxImageInspections} images · ${MOSAIC_RESEARCH_BUDGETS[researchBudgetPreset].maxAcquisitionJobs} acquisition jobs`}>{Math.round(MOSAIC_RESEARCH_BUDGETS[researchBudgetPreset].maxDurationMs / 60_000)} min · {MOSAIC_RESEARCH_BUDGETS[researchBudgetPreset].maxToolCalls} {t("tools")} · {MOSAIC_RESEARCH_BUDGETS[researchBudgetPreset].maxItemsRead} {t("items")}</small>
             </div>}
           </form>
 
