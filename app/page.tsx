@@ -41,7 +41,8 @@ import {
   Shirt,
   SlidersHorizontal,
   Sparkles,
-  Undo2,
+  Settings2,
+  RotateCcw,
   X,
 } from "lucide-react";
 import {
@@ -797,7 +798,7 @@ export function LegacyHome() {
 type AtlasDecision = "unseen" | "saved" | "rejected" | "owned";
 type AtlasKind = "shop" | "reference" | "owned";
 type AtlasScope = "catalogue" | "saved" | "owned" | "reference" | "outfits";
-type AtlasDrawer = "filters" | "view" | "compare" | "views" | "collections" | "activity" | "studio" | "add" | "outfits" | null;
+type AtlasDrawer = "filters" | "view" | "compare" | "views" | "collections" | "activity" | "studio" | "add" | "outfits" | "ai" | null;
 type AtlasImageMode = "cropped" | "full";
 
 type AtlasItem = {
@@ -1089,6 +1090,8 @@ type MosaicResearchRun = {
     prompt: string;
     conversationId: string | null;
     budget: { maxToolCalls: number };
+    provider?: "codex" | "local" | "openrouter";
+    model?: string | null;
   };
   result: MosaicResearchResult | null;
   message: string;
@@ -1136,6 +1139,31 @@ type MosaicEmbeddingJob = {
   summary?: { embedded: number; metadataOnly: number; cacheHits: number; errors: number };
 };
 type AtlasSimilarityMode = "hybrid" | "visual" | "metadata";
+type MosaicAiProviderId = "auto" | "codex" | "local" | "openrouter";
+type MosaicAiProviderCatalog = {
+  defaultProvider: Exclude<MosaicAiProviderId, "auto">;
+  providers: Array<{
+    id: Exclude<MosaicAiProviderId, "auto">;
+    label: string;
+    configured: boolean;
+    local: boolean;
+    model: string | null;
+    detail: string;
+    connected: boolean;
+    managedBy: "environment" | "local" | "none";
+    imageWorkflow: "native" | "local-clip";
+  }>;
+};
+type MosaicOpenRouterModel = {
+  id: string;
+  name: string;
+  contextLength: number | null;
+  promptPrice: string | null;
+  completionPrice: string | null;
+  supportedParameters: string[];
+  inputModalities: string[];
+  supportsImages: boolean;
+};
 type MosaicWorkspace = { id: string; name: string; profile?: string; description?: string };
 type MosaicWorkspaceOperation = { workspaceId: string; epoch: number; signal: AbortSignal };
 type MosaicArtifact = {
@@ -1162,6 +1190,7 @@ type AtlasDiscoverySession = { plan: AtlasDiscoveryPlan; jobIds: string[]; works
 // directly to the API process started alongside it by `npm start`.
 const ATLAS_API = process.env.NODE_ENV === "production" ? "http://127.0.0.1:8788/api" : "/api";
 const ATLAS_ORIGIN = ATLAS_API.slice(0, -4);
+const MOSAIC_STUDIO_ENABLED = false;
 const ATLAS_PAGE_SIZE = 240;
 const ATLAS_DEFAULT_ZOOM = 2;
 const MOSAIC_SOURCE_COLORS = [
@@ -1192,6 +1221,22 @@ const MOSAIC_ONBOARDING_KEY = "mosaic:onboarding:dismissed:v1";
 const MOSAIC_ACTIVE_WORKSPACE_KEY = "mosaic:workspace:active:v1";
 const MOSAIC_ARTIFACTS_FALLBACK_KEY = "mosaic:artifacts:fallback:v1";
 const MOSAIC_LOCALE_KEY = "mosaic:locale:v1";
+const MOSAIC_AI_PROVIDER_KEY = "mosaic:ai:provider:v1";
+const MOSAIC_RESEARCH_BUDGET_KEY = "mosaic:research-budget:v1";
+type MosaicResearchBudgetPreset = "quick" | "balanced" | "deep";
+const MOSAIC_RESEARCH_BUDGETS = {
+  quick: { maxDurationMs: 90_000, maxToolCalls: 20, maxItemsRead: 250, maxImageInspections: 10, maxAcquisitionJobs: 2, maxAcquiredItems: 80, maxCollectionWrites: 2 },
+  balanced: { maxDurationMs: 180_000, maxToolCalls: 48, maxItemsRead: 600, maxImageInspections: 30, maxAcquisitionJobs: 4, maxAcquiredItems: 160, maxCollectionWrites: 4 },
+  deep: { maxDurationMs: 600_000, maxToolCalls: 96, maxItemsRead: 1_500, maxImageInspections: 60, maxAcquisitionJobs: 8, maxAcquiredItems: 400, maxCollectionWrites: 8 },
+} as const satisfies Record<MosaicResearchBudgetPreset, {
+  maxDurationMs: number;
+  maxToolCalls: number;
+  maxItemsRead: number;
+  maxImageInspections: number;
+  maxAcquisitionJobs: number;
+  maxAcquiredItems: number;
+  maxCollectionWrites: number;
+}>;
 const ATLAS_TERMINAL_DISCOVERY_STATUSES = new Set<AtlasDiscoveryStatus>(["succeeded", "failed", "blocked", "cancelled"]);
 const ATLAS_DISCOVERY_SOURCE_LABELS: Record<string, string> = { "zalando-ch": "Zalando CH", "aboutyou-ch": "About You CH", aliexpress: "AliExpress" };
 const MOSAIC_TERMINAL_RESEARCH_STATUSES = new Set<MosaicResearchRun["status"]>([
@@ -1234,7 +1279,7 @@ function mosaicResearchAsRun(run: MosaicResearchRun, latestMessage?: string): Mo
     progress: terminal ? 1 : Math.min(.95, run.eventCount / total),
     completed: Math.min(run.eventCount, total),
     total,
-    source: run.model,
+    source: `${run.request.provider ?? "codex"} · ${run.model}`,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     error: run.error ?? undefined,
@@ -1888,6 +1933,12 @@ export default function Home() {
   const [catalogStatus, setCatalogStatus] = useState("loading…");
   const [visualMode, setVisualMode] = useState<"sequential" | "sheet">("sheet");
   const [reasoningEffort, setReasoningEffort] = useState<"low" | "medium">("low");
+  const [researchBudgetPreset, setResearchBudgetPreset] = useState<MosaicResearchBudgetPreset>("balanced");
+  const [aiProvider, setAiProvider] = useState<MosaicAiProviderId>("auto");
+  const [aiProviders, setAiProviders] = useState<MosaicAiProviderCatalog | null>(null);
+  const [openRouterModels, setOpenRouterModels] = useState<MosaicOpenRouterModel[]>([]);
+  const [openRouterBusy, setOpenRouterBusy] = useState(false);
+  const [openRouterError, setOpenRouterError] = useState("");
   const [promptImages, setPromptImages] = useState<AtlasPromptImage[]>([]);
   const [promptProductIds, setPromptProductIds] = useState<string[]>([]);
   const [promptCollectionIds, setPromptCollectionIds] = useState<string[]>([]);
@@ -1974,17 +2025,164 @@ export default function Home() {
     queueMicrotask(() => setLocale(next));
   }, []);
 
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(MOSAIC_RESEARCH_BUDGET_KEY);
+      if (stored === "quick" || stored === "balanced" || stored === "deep") {
+        queueMicrotask(() => setResearchBudgetPreset(stored));
+      }
+    } catch { /* optional */ }
+  }, []);
+
   const changeLocale = useCallback((next: MosaicLocale) => {
     setLocale(next);
     document.documentElement.lang = next;
     try { window.localStorage.setItem(MOSAIC_LOCALE_KEY, next); } catch { /* optional */ }
   }, []);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(`${ATLAS_API}/ai/providers`, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("provider catalog unavailable");
+        return response.json() as Promise<MosaicAiProviderCatalog>;
+      })
+      .then((catalog) => {
+        setAiProviders(catalog);
+        let stored: MosaicAiProviderId | null = null;
+        try {
+          const value = window.localStorage.getItem(MOSAIC_AI_PROVIDER_KEY);
+          if (value === "auto" || value === "codex" || value === "local" || value === "openrouter") stored = value;
+        } catch { /* optional */ }
+        const storedAvailable = stored === "auto" || catalog.providers.some((provider) => provider.id === stored && provider.configured);
+        setAiProvider(stored && storedAvailable ? stored : catalog.defaultProvider);
+      })
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setAiProviders(null);
+        setAiProvider("codex");
+      });
+    return () => controller.abort();
+  }, []);
+
+  const changeAiProvider = useCallback((provider: MosaicAiProviderId) => {
+    setAiProvider(provider);
+    try { window.localStorage.setItem(MOSAIC_AI_PROVIDER_KEY, provider); } catch { /* optional */ }
+  }, []);
+
+  const changeResearchBudgetPreset = useCallback((preset: MosaicResearchBudgetPreset) => {
+    setResearchBudgetPreset(preset);
+    try { window.localStorage.setItem(MOSAIC_RESEARCH_BUDGET_KEY, preset); } catch { /* optional */ }
+  }, []);
+
+  const refreshAiProviderCatalog = useCallback(async () => {
+    const response = await fetch(`${ATLAS_API}/ai/providers`);
+    if (!response.ok) throw new Error("provider catalog unavailable");
+    const catalog = await response.json() as MosaicAiProviderCatalog;
+    setAiProviders(catalog);
+    setAiProvider((current) => {
+      if (current === "auto" || catalog.providers.some((provider) => provider.id === current && provider.configured)) return current;
+      return catalog.defaultProvider;
+    });
+    return catalog;
+  }, []);
+
+  const loadOpenRouterModels = useCallback(async () => {
+    setOpenRouterBusy(true);
+    setOpenRouterError("");
+    try {
+      const response = await fetch(`${ATLAS_API}/ai/openrouter/models`);
+      const payload = await response.json() as { models?: MosaicOpenRouterModel[]; error?: string };
+      if (!response.ok) throw new Error(payload.error || "OpenRouter models unavailable");
+      setOpenRouterModels(payload.models ?? []);
+    } catch (error) {
+      setOpenRouterError(error instanceof Error ? error.message : "OpenRouter models unavailable");
+    } finally {
+      setOpenRouterBusy(false);
+    }
+  }, []);
+
+  const openAiProviderSettings = useCallback(() => {
+    setDrawer("ai");
+    const openRouter = aiProviders?.providers.find((provider) => provider.id === "openrouter");
+    if (openRouter?.connected) void loadOpenRouterModels();
+  }, [aiProviders, loadOpenRouterModels]);
+
+  const connectOpenRouter = useCallback(async () => {
+    setOpenRouterBusy(true);
+    setOpenRouterError("");
+    try {
+      const response = await fetch(`${ATLAS_API}/ai/openrouter/connect`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ callbackUrl: `${window.location.origin}/auth/openrouter` }),
+      });
+      const payload = await response.json() as { authorizationUrl?: string; state?: string; error?: string };
+      if (!response.ok || !payload.authorizationUrl || !payload.state) throw new Error(payload.error || "OpenRouter connection could not start");
+      window.localStorage.setItem("mosaic:openrouter:pkce-state", payload.state);
+      const popup = window.open(payload.authorizationUrl, "mosaic-openrouter", "popup,width=620,height=760");
+      if (!popup) window.location.assign(payload.authorizationUrl);
+      else setOpenRouterBusy(false);
+    } catch (error) {
+      setOpenRouterError(error instanceof Error ? error.message : "OpenRouter connection could not start");
+      setOpenRouterBusy(false);
+    }
+  }, []);
+
+  const selectOpenRouterModel = useCallback(async (model: string) => {
+    setOpenRouterBusy(true);
+    setOpenRouterError("");
+    try {
+      const response = await fetch(`${ATLAS_API}/ai/openrouter/settings`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model }),
+      });
+      const payload = await response.json() as { providers?: MosaicAiProviderCatalog; error?: string };
+      if (!response.ok || !payload.providers) throw new Error(payload.error || "OpenRouter model could not be saved");
+      setAiProviders(payload.providers);
+      changeAiProvider("openrouter");
+    } catch (error) {
+      setOpenRouterError(error instanceof Error ? error.message : "OpenRouter model could not be saved");
+    } finally {
+      setOpenRouterBusy(false);
+    }
+  }, [changeAiProvider]);
+
+  const disconnectOpenRouter = useCallback(async () => {
+    setOpenRouterBusy(true);
+    setOpenRouterError("");
+    try {
+      const response = await fetch(`${ATLAS_API}/ai/openrouter/connection`, { method: "DELETE" });
+      const payload = await response.json() as { providers?: MosaicAiProviderCatalog; error?: string };
+      if (!response.ok || !payload.providers) throw new Error(payload.error || "OpenRouter could not disconnect");
+      setAiProviders(payload.providers);
+      setOpenRouterModels([]);
+      changeAiProvider(payload.providers.defaultProvider);
+    } catch (error) {
+      setOpenRouterError(error instanceof Error ? error.message : "OpenRouter could not disconnect");
+    } finally {
+      setOpenRouterBusy(false);
+    }
+  }, [changeAiProvider]);
+
+  useEffect(() => {
+    const connected = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || event.data?.type !== "mosaic:openrouter-connected") return;
+      void refreshAiProviderCatalog().then(() => loadOpenRouterModels()).catch((error) => {
+        setOpenRouterError(error instanceof Error ? error.message : "OpenRouter connection could not be refreshed");
+      }).finally(() => setOpenRouterBusy(false));
+    };
+    window.addEventListener("message", connected);
+    return () => window.removeEventListener("message", connected);
+  }, [loadOpenRouterModels, refreshAiProviderCatalog]);
+
   const atlasElementRef = useRef<HTMLDivElement>(null);
   const atlasCanvasRef = useRef<HTMLDivElement>(null);
   const atlasSceneRef = useRef<HTMLDivElement>(null);
   const atlasImageInputRef = useRef<HTMLInputElement>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
+  const composerFormRef = useRef<HTMLFormElement>(null);
   const assistantFeedRef = useRef<HTMLDivElement>(null);
   const personalImageInputRef = useRef<HTMLInputElement>(null);
   const loadMoreRef = useRef<HTMLButtonElement>(null);
@@ -2349,6 +2547,22 @@ export default function Home() {
     if (!composerExpanded) return;
     requestAnimationFrame(() => assistantFeedRef.current?.scrollTo({ top: assistantFeedRef.current.scrollHeight, behavior: "smooth" }));
   }, [assistantMessages, composerExpanded, researchEvents]);
+
+  useEffect(() => {
+    if (!composerExpanded) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!composerFormRef.current?.contains(event.target as Node)) setComposerExpanded(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setComposerExpanded(false);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [composerExpanded]);
 
   useEffect(() => {
     if (embeddingJob?.status !== "running") return;
@@ -3256,6 +3470,11 @@ export default function Home() {
     setDynamicFacetSelections({}); setDynamicNumberFilters({}); setSelectedCollectionId(null);
   }
 
+  function showAllAtlasItems() {
+    resetAtlasFilters();
+    setAiItems(null); setAiStatus(""); setScope("catalogue"); setRenderWindow({ signature: "", limit: ATLAS_PAGE_SIZE });
+  }
+
   const changeAtlasZoom = useCallback((nextValue: number, anchor?: { x: number; y: number }) => {
     const atlas = atlasElementRef.current;
     const next = Math.min(ATLAS_MAX_ZOOM, Math.max(.25, Math.round(nextValue * 1000) / 1000));
@@ -3570,9 +3789,7 @@ export default function Home() {
       ...(selectedCollectionId ? [selectedCollectionId] : []),
     ])].slice(-24);
     const operation = captureWorkspaceOperation();
-    const budget = reasoningEffort === "low"
-      ? { maxDurationMs: 120_000, maxToolCalls: 32, maxItemsRead: 400, maxImageInspections: 18, maxAcquisitionJobs: 3, maxAcquiredItems: 120, maxCollectionWrites: 3 }
-      : { maxDurationMs: 180_000, maxToolCalls: 48, maxItemsRead: 600, maxImageInspections: 30, maxAcquisitionJobs: 4, maxAcquiredItems: 160, maxCollectionWrites: 4 };
+    const budget = MOSAIC_RESEARCH_BUDGETS[researchBudgetPreset];
     setAssistantBusy(true);
     setActiveResearchRun(null);
     setResearchEvents([]);
@@ -3594,6 +3811,7 @@ export default function Home() {
           constraints: activeMosaicResearchConstraints(researchFreshnessBoundary),
           budget,
           reasoningEffort,
+          provider: aiProvider,
           locale,
         }),
         signal: operation.signal,
@@ -3711,7 +3929,7 @@ export default function Home() {
       } else if (payload.action === "artifact" && payload.artifact) {
         const artifact = mosaicNormalizeArtifact(payload.artifact);
         setMosaicArtifacts((current) => [artifact, ...current.filter((item) => item.id !== artifact.id)]);
-        setArtifactsApiAvailable(true); setDrawer("studio");
+        setArtifactsApiAvailable(true); setDrawer(MOSAIC_STUDIO_ENABLED ? "studio" : "activity");
         if (payload.discoveryPlan && payload.jobs?.length) {
           setDiscoveryPlan(payload.discoveryPlan);
           setDiscoveryJobs(payload.jobs);
@@ -4157,7 +4375,7 @@ export default function Home() {
   ].filter(Boolean).length + dynamicFilterCount;
   const filterBadgeCount = advancedFilterCount + (sourceFilter !== "all" ? 1 : 0)
     + (showClothingFallback ? selectedSizes.length + (activeFilter !== "Tout" ? 1 : 0) : 0);
-  const assistantHasContext = Boolean(aiPrompt.trim() || promptImages.length || promptProductIds.length || promptCollectionIds.length);
+  const boardIsReduced = aiItems !== null || filterBadgeCount > 0 || scope !== "catalogue" || Boolean(selectedCollectionId);
   const assistantOpen = composerExpanded || (catalogStatus !== "loading…" && products.length === 0);
   const latestResearchEvent = researchEvents.at(-1);
   const latestAssistantMessage = [...assistantMessages].reverse().find((message) => message.role === "assistant");
@@ -4187,7 +4405,7 @@ export default function Home() {
           <button className={drawer === null ? "active" : ""} onClick={() => { setDrawer(null); setSelectedCollectionId(null); }}><Compass className="mosaicIcon" aria-hidden="true" /><span>{t("explore")}</span></button>
           <button className={drawer === "collections" ? "active" : ""} onClick={() => setDrawer("collections")}><FolderHeart className="mosaicIcon" aria-hidden="true" /><span>{t("collections")}</span><b>{mosaicCollections.length}</b></button>
           <button className={drawer === "activity" ? "active" : ""} onClick={() => setDrawer("activity")}><Clock3 className="mosaicIcon" aria-hidden="true" /><span>{t("activity")}</span>{activityAttentionCount > 0 && <b className="attention">{activityAttentionCount}</b>}</button>
-          <button className={drawer === "studio" ? "active" : ""} onClick={() => setDrawer("studio")}><Palette className="mosaicIcon" aria-hidden="true" /><span>{t("studio")}</span>{mosaicArtifacts.length > 0 && <b>{mosaicArtifacts.length}</b>}</button>
+          {MOSAIC_STUDIO_ENABLED && <button className={drawer === "studio" ? "active" : ""} onClick={() => setDrawer("studio")}><Palette className="mosaicIcon" aria-hidden="true" /><span>{t("studio")}</span>{mosaicArtifacts.length > 0 && <b>{mosaicArtifacts.length}</b>}</button>}
         </nav>
         <div className="mosaicLibrary"><small>{t("library")}</small>{atlasScopes.filter((item) => showClothingFallback || ["catalogue", "saved", "reference"].includes(item.id)).map((item) => <button key={item.id} className={scope === item.id ? "active" : ""} onClick={() => { setScope(item.id); setSelectedCollectionId(null); setDrawer(null); }}><span><MosaicScopeIcon scope={item.id} /></span>{item.id === "catalogue" ? t("allItems") : item.id === "saved" ? t("favorites") : item.id === "owned" ? t("wardrobe") : item.id === "reference" ? t("references") : t("outfits")}</button>)}</div>
         <button className="mosaicAdd" onClick={() => setDrawer("add")}><Plus className="mosaicIcon" aria-hidden="true" /> {t("add")}</button>
@@ -4206,6 +4424,7 @@ export default function Home() {
 
         <section className="boardPanel atlasBoardPanel mosaicBoardPanel">
           <form
+            ref={composerFormRef}
             className={`mosaicComposer${assistantOpen ? " expanded" : " compact"}${assistantDropActive ? " dropActive" : ""}`}
             onSubmit={(event) => { event.preventDefault(); setComposerExpanded(false); void askAtlasAssistant(); }}
             onDragEnter={(event) => { event.preventDefault(); setAssistantDropActive(true); }}
@@ -4213,9 +4432,6 @@ export default function Home() {
             onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setAssistantDropActive(false); }}
             onDrop={(event) => void dropOnAtlasAssistant(event)}
             onFocus={() => setComposerExpanded(true)}
-            onBlur={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget as Node | null) && !assistantHasContext && !assistantBusy) setComposerExpanded(false);
-            }}
           >
             {assistantOpen && assistantMessages.length === 0 && !activeResearchRun && <div className="mosaicComposerIntro"><span>{t("visualAssistant")}</span><h2>{t("whatExplore")}</h2><p>{t("assistantIntro")}</p></div>}
             {assistantOpen && (assistantMessages.length > 0 || assistantConversations.length > 0 || activeResearchRun) && <section className="mosaicConversation" aria-label={conversationText.conversation}>
@@ -4267,7 +4483,17 @@ export default function Home() {
               {!assistantOpen && aiStatus && <span className={`aiStatus atlasAiStatus${activeResearchRun ? ` research-${activeResearchRun.status}` : ""}`}><b>{activeResearchRun ? "✦" : ""}</b>{aiStatus}{activeResearchRun && assistantBusy && <button type="button" onClick={() => void cancelMosaicResearch()}>{researchText.stop}</button>}{activeResearchCanResume && <button type="button" onClick={() => void resumeMosaicResearch()}>{researchText.resume}</button>}{!assistantBusy && (aiItems || activeResearchRun && MOSAIC_TERMINAL_RESEARCH_STATUSES.has(activeResearchRun.status)) && <button type="button" onClick={() => { setAiItems(null); setAiStatus(""); setActiveResearchRun(null); setResearchEvents([]); }}>×</button>}</span>}
               {!assistantOpen && assistantFollowUps.map((followUp) => <button type="button" className="mosaicResearchFollowUp" key={followUp} onClick={() => prepareMosaicResearchFollowUp(followUp, activeResearchRun?.result ?? latestAssistantMessage?.result ?? undefined)}>{followUp}</button>)}
             </div>}
-            {assistantOpen && <div className="mosaicComposerFooter"><span>{t("constraints")}: {showClothingFallback ? `${selectedSizes.length ? selectedSizes.join(" / ") : t("allSizes")} · ` : ""}{sourceFilter === "all" ? t("allSources") : sourceFilter.replace("source:", "")}{dynamicFilterCount ? ` · ${dynamicFilterCount}` : ""}</span><label>{t("thinking")} <select value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as "low" | "medium")}><option value="low">{t("fast")}</option><option value="medium">{t("thorough")}</option></select></label></div>}
+            {assistantOpen && <div className="mosaicComposerFooter">
+              <span>{t("constraints")}: {showClothingFallback ? `${selectedSizes.length ? selectedSizes.join(" / ") : t("allSizes")} · ` : ""}{sourceFilter === "all" ? t("allSources") : sourceFilter.replace("source:", "")}{dynamicFilterCount ? ` · ${dynamicFilterCount}` : ""}</span>
+              <label>{t("aiProvider")} <select value={aiProvider} onChange={(event) => changeAiProvider(event.target.value as MosaicAiProviderId)}>
+                <option value="auto">{t("automatic")}{aiProviders ? ` · ${aiProviders.providers.find((provider) => provider.id === aiProviders.defaultProvider)?.label ?? aiProviders.defaultProvider}` : ""}</option>
+                {(aiProviders?.providers ?? [{ id: "codex", label: "Codex", configured: true, local: true, model: null, detail: "", connected: true, managedBy: "environment" as const, imageWorkflow: "native" as const }]).map((provider) => <option key={provider.id} value={provider.id} disabled={!provider.configured}>{provider.label}{provider.model ? ` · ${provider.model}` : ""}{provider.configured ? "" : ` · ${t("notConfigured")}`}</option>)}
+              </select></label>
+              <button type="button" className="mosaicAiSettingsButton" onClick={openAiProviderSettings} title={t("aiSettings")} aria-label={t("aiSettings")}><Settings2 className="mosaicIcon" aria-hidden="true" /></button>
+              <label>{t("thinking")} <select value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as "low" | "medium")}><option value="low">{t("fast")}</option><option value="medium">{t("thorough")}</option></select></label>
+              <label>{t("budget")} <select value={researchBudgetPreset} onChange={(event) => changeResearchBudgetPreset(event.target.value as MosaicResearchBudgetPreset)}><option value="quick">{t("quick")}</option><option value="balanced">{t("balanced")}</option><option value="deep">{t("deep")}</option></select></label>
+              <small className="mosaicBudgetSummary" title={`${MOSAIC_RESEARCH_BUDGETS[researchBudgetPreset].maxImageInspections} images · ${MOSAIC_RESEARCH_BUDGETS[researchBudgetPreset].maxAcquisitionJobs} acquisition jobs`}>{Math.round(MOSAIC_RESEARCH_BUDGETS[researchBudgetPreset].maxDurationMs / 60_000)} min · {MOSAIC_RESEARCH_BUDGETS[researchBudgetPreset].maxToolCalls} {t("tools")} · {MOSAIC_RESEARCH_BUDGETS[researchBudgetPreset].maxItemsRead} {t("items")}</small>
+            </div>}
           </form>
 
           <div className="mosaicBoardBar">
@@ -4301,7 +4527,7 @@ export default function Home() {
               <label className="mosaicAxisPill"><span>Y</span><select value={yAxis} onChange={(event) => setYAxis(event.target.value as AxisField)} aria-label="Y axis"><option value="pca">{t("similarity")}</option><option value="price">{t("price")}</option><option value="score">{t("score")}</option></select></label>
               <button type="button" className="mosaicSavedViewsButton" onClick={() => setDrawer("views")} title={t("savedViews")} aria-label={t("savedViews")}><Bookmark className="mosaicIcon" aria-hidden="true" /></button>
             </div>
-            <div className="mosaicBoardMeta"><span>{products.length} {t("items")}</span><button className="undoButton" disabled={!undoStack.length} onClick={() => void undoLastAction()} aria-label="Undo"><Undo2 className="mosaicIcon" aria-hidden="true" /></button></div>
+            <div className="mosaicBoardMeta"><span>{products.length} {t("items")}</span><button className="undoButton" disabled={!boardIsReduced} onClick={showAllAtlasItems} aria-label={t("showAll")} title={t("showAll")}><RotateCcw className="mosaicIcon" aria-hidden="true" /></button></div>
           </div>
 
         <div className="operationStack">
@@ -4391,7 +4617,7 @@ export default function Home() {
             <button onClick={() => setDrawer("collections")}><FolderHeart className="mosaicIcon" aria-hidden="true" /> {t("collection")}</button>
             <button onClick={() => { setPromptProductIds((current) => [...new Set([...current, ...selectedItems.map((item) => item.id)])].slice(-12)); setSelectedIds(new Set()); setComposerExpanded(true); requestAnimationFrame(() => composerInputRef.current?.focus()); }}><Sparkles className="mosaicIcon" aria-hidden="true" /> {t("askAi")}</button>
             <button onClick={() => { setCompareIds(new Set(selectedItems.slice(0, 4).map((item) => item.id))); setDrawer("compare"); }}><GitCompareArrows className="mosaicIcon" aria-hidden="true" /> {t("compare")}</button>
-            <button onClick={() => setDrawer("studio")}><Palette className="mosaicIcon" aria-hidden="true" /> {t("studio")}</button>
+            {MOSAIC_STUDIO_ENABLED && <button onClick={() => setDrawer("studio")}><Palette className="mosaicIcon" aria-hidden="true" /> {t("studio")}</button>}
           </div>
           <button className="mosaicTrayClear" onClick={() => setSelectedIds(new Set())} aria-label={t("clearSelection")}><X className="mosaicIcon" aria-hidden="true" /></button>
         </aside>
@@ -4412,7 +4638,27 @@ export default function Home() {
       {drawer && (
         <div className="drawerBackdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) setDrawer(null); }}>
           <aside ref={drawerRef} tabIndex={-1} className={`drawer drawer-${drawer}`} role="dialog" aria-modal="true" aria-labelledby="drawer-title">
-            <header><div><span className="eyebrow">MosAIc</span><h2 id="drawer-title">{drawer === "filters" ? t("filters") : drawer === "view" ? t("view") : drawer === "compare" ? t("compare") : drawer === "views" ? t("savedViews") : drawer === "collections" ? t("collections") : drawer === "activity" ? t("activity") : drawer === "studio" ? t("studio") : drawer === "add" ? t("addToCatalog") : showClothingFallback ? t("outfits") : t("details")}</h2></div><button ref={drawerCloseRef} className="drawerClose" onClick={() => setDrawer(null)} aria-label={t("closePreview")}><X className="mosaicIcon" aria-hidden="true" /></button></header>
+            <header><div><span className="eyebrow">MosAIc</span><h2 id="drawer-title">{drawer === "filters" ? t("filters") : drawer === "view" ? t("view") : drawer === "compare" ? t("compare") : drawer === "views" ? t("savedViews") : drawer === "collections" ? t("collections") : drawer === "activity" ? t("activity") : drawer === "studio" ? t("studio") : drawer === "add" ? t("addToCatalog") : drawer === "ai" ? t("aiSettings") : showClothingFallback ? t("outfits") : t("details")}</h2></div><button ref={drawerCloseRef} className="drawerClose" onClick={() => setDrawer(null)} aria-label={t("closePreview")}><X className="mosaicIcon" aria-hidden="true" /></button></header>
+
+            {drawer === "ai" && (() => {
+              const openRouter = aiProviders?.providers.find((provider) => provider.id === "openrouter");
+              const selectedModel = openRouter?.model ?? "";
+              return <div className="drawerBody mosaicAiSettings">
+                <p className="drawerHint">{t("aiSettingsIntro")}</p>
+                {(aiProviders?.providers ?? []).map((provider) => <article className="mosaicProviderCard" key={provider.id}>
+                  <span className={`mosaicProviderStatus ${provider.connected ? "connected" : ""}`} aria-hidden="true" />
+                  <div><strong>{provider.label}</strong><small>{provider.detail} · {provider.imageWorkflow === "native" ? t("nativeVision") : t("localClipVision")}</small>{provider.model && <code>{provider.model}</code>}</div>
+                  <b>{provider.configured ? t("ready") : provider.connected ? t("chooseModel") : t("notConfigured")}</b>
+                </article>)}
+                <section className="mosaicOpenRouterSettings">
+                  <header><div><span>OpenRouter</span><small>{openRouter?.managedBy === "environment" ? t("managedByEnvironment") : t("localCredential")}</small></div>{openRouter?.connected && openRouter.managedBy !== "environment" ? <button type="button" disabled={openRouterBusy} onClick={() => void disconnectOpenRouter()}>{t("disconnect")}</button> : null}</header>
+                  {!openRouter?.connected ? <button type="button" className="primaryButton mosaicConnectOpenRouter" disabled={openRouterBusy} onClick={() => void connectOpenRouter()}>{openRouterBusy ? t("connecting") : t("connectOpenRouter")}</button> : <label><span>{t("toolModel")}</span><select value={selectedModel} disabled={openRouterBusy || openRouter.managedBy === "environment"} onChange={(event) => void selectOpenRouterModel(event.target.value)}><option value="">{openRouterBusy ? t("loading") : t("chooseModel")}</option>{openRouterModels.map((model) => <option value={model.id} key={model.id}>{model.name} · {model.id}{model.supportsImages ? ` · ${t("nativeVision")}` : ""}</option>)}</select></label>}
+                  {openRouter?.connected && !openRouterModels.length && !openRouterBusy && <button type="button" onClick={() => void loadOpenRouterModels()}>{t("loadModels")}</button>}
+                  {openRouterError && <p className="mosaicProviderError" role="alert">{openRouterError}</p>}
+                  <small>{t("openRouterPrivacy")}</small>
+                </section>
+              </div>;
+            })()}
 
             {drawer === "filters" && (
               <div className="drawerBody mosaicFiltersDrawer">
@@ -4467,7 +4713,7 @@ export default function Home() {
               </div>
             )}
 
-            {drawer === "studio" && (
+            {MOSAIC_STUDIO_ENABLED && drawer === "studio" && (
               <div className="drawerBody mosaicStudioDrawer">
                 <div className="mosaicPrivacyNote"><span>⌁</span><div><strong>Studio local, privé par défaut</strong><p>Le brouillon enregistre uniquement les références choisies. Les aperçus visuels sont des approximations ; aucune image n’est envoyée à un fournisseur externe dans cette version.</p></div></div>
                 <form onSubmit={(event) => void createMosaicArtifact(event)}><label><span>Nom du brouillon</span><input value={artifactName} onChange={(event) => setArtifactName(event.target.value)} placeholder={showClothingFallback ? "Planche matières chaudes" : "Planche de recherche"} /></label><div className="mosaicStudioContext"><span>{selectedIds.size || promptProductIds.length} éléments</span><span>{promptImages.length + personalImages.length} images de référence</span>{aiPrompt.trim() && <span>Prompt joint</span>}</div><button className="primaryButton" disabled={artifactBusy}>{artifactBusy ? "Enregistrement…" : "Créer le brouillon"}</button></form>

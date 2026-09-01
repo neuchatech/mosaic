@@ -899,9 +899,33 @@ body:has(.compareDock) .toast { bottom: 61px; }
 }
 .mosaicContextChip { min-height: 25px; display: flex; align-items: center; gap: 5px; padding: 3px 4px 3px 7px; border: 1px solid #ddd5c9; border-radius: 999px; color: #6d6459; font-size: 7px; }
 .mosaicContextChip button { width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: #eee8de; cursor: pointer; }
-.mosaicComposerFooter { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #8b8276; font-size: 7px; }
+.mosaicComposerFooter { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; color: #8b8276; font-size: 7px; }
+.mosaicComposerFooter > span { min-width: 0; margin-right: auto; }
 .mosaicComposerFooter label { display: flex; align-items: center; gap: 5px; }
-.mosaicComposerFooter select { padding: 4px 5px; border: 1px solid #dbd3c8; border-radius: 5px; background: white; color: #625a50; font-size: 7px; }
+.mosaicComposerFooter select { max-width: 210px; padding: 4px 8px; border: 1px solid #dbd3c8; border-radius: 999px; background: white; color: #625a50; font-size: 7px; }
+.mosaicBudgetSummary { padding: 4px 8px; border-radius: 999px; background: #f3eee7; color: #776e62; font-size: 7px; white-space: nowrap; }
+.mosaicAiSettingsButton { width: 25px; height: 25px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 999px; background: #f0ebe3; color: #655d53; cursor: pointer; }
+.mosaicAiSettingsButton:hover { background: #e7dfd3; transform: rotate(12deg); }
+
+.mosaicAiSettings { display: grid; align-content: start; gap: 8px; }
+.mosaicProviderCard { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 11px; border-radius: 14px; background: #f2eee7; }
+.mosaicProviderCard > div { min-width: 0; display: grid; gap: 3px; }
+.mosaicProviderCard strong { font-size: 10px; }
+.mosaicProviderCard small { color: #837a6f; font-size: 7px; line-height: 1.35; }
+.mosaicProviderCard code { overflow: hidden; color: #675f55; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.mosaicProviderCard > b { color: #857b70; font-size: 7px; font-weight: 600; }
+.mosaicProviderStatus { width: 8px; height: 8px; border-radius: 50%; background: #b8afa3; box-shadow: 0 0 0 4px #ded8cf; }
+.mosaicProviderStatus.connected { background: #5d824f; box-shadow: 0 0 0 4px #dbe5d7; }
+.mosaicOpenRouterSettings { display: grid; gap: 10px; margin-top: 8px; padding: 14px; border-radius: 16px; background: white; box-shadow: 0 7px 28px #3023170d; }
+.mosaicOpenRouterSettings > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.mosaicOpenRouterSettings > header > div { display: grid; gap: 2px; }
+.mosaicOpenRouterSettings > header span, .mosaicOpenRouterSettings label > span { font-size: 9px; font-weight: 700; }
+.mosaicOpenRouterSettings > header small, .mosaicOpenRouterSettings > small { color: #887f73; font-size: 7px; line-height: 1.45; }
+.mosaicOpenRouterSettings button { min-height: 30px; padding: 0 11px; border: 0; border-radius: 999px; background: #eee8de; color: #5f574d; cursor: pointer; }
+.mosaicOpenRouterSettings .mosaicConnectOpenRouter { min-height: 38px; background: #2c2823; color: white; }
+.mosaicOpenRouterSettings label { display: grid; gap: 5px; }
+.mosaicOpenRouterSettings select { width: 100%; padding: 10px 12px; border: 0; border-radius: 12px; outline: 1px solid #ded6cb; background: #fbfaf6; color: #4f4840; font-size: 8px; }
+.mosaicProviderError { margin: 0; padding: 8px 10px; border-radius: 10px; background: #f9e8e5; color: #a33b31; font-size: 8px; line-height: 1.4; }
 
 .mosaicBoardBar {
   position: absolute; z-index: 18; top: 61px; right: 10px; left: 10px; min-width: 0;

@@ -28,11 +28,11 @@ Requirements:
 
 - Node.js 22.13 or newer
 - npm
-- Optional: a local Codex login for assistant and Vision features
+- Optional: Codex, a local OpenAI-compatible server, or OpenRouter for assistant features
 
 ```bash
-git clone <your-fork-or-repository-url> neuchatech-mosaic
-cd neuchatech-mosaic
+git clone https://github.com/neuchatech/wardrobe-atlas.git mosaic
+cd mosaic
 npm install
 npm run dev
 ```
@@ -43,18 +43,38 @@ The first launch creates an empty private workspace and database under `data/`. 
 
 All files under `data/` are ignored by Git. Back up `data/wardrobe-atlas.sqlite` with SQLite's backup command while the app is running; do not copy only the main database file when WAL files may be active.
 
-## Codex setup
+## AI setup
 
-MosAIc's deterministic board, filters, imports, and local services work without Codex. Assistant planning, visual scoring, and agent-guided acquisition use your local Codex installation—no application API key is stored in this repository.
+MosAIc's deterministic board, filters, imports, CLIP index, and local services work without an AI provider. The conversational research agent supports Codex, local OpenAI-compatible inference (including LM Studio), and OpenRouter. All three use the same durable runs and workspace-scoped MosAIc tools.
 
-1. Install and sign in to the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli).
+Copy the example configuration if you want to change the default provider:
+
+```bash
+cp .env.example .env
+```
+
+The assistant's provider menu shows only configured options as available. **Automatic** follows `MOSAIC_AI_PROVIDER`. The **Quick**, **Balanced**, and **Deep** presets bound time, tool calls, inspected items, images, acquisitions, and collection writes; they do not silently switch providers or models.
+
+Choose one provider:
+
+| Provider | Fastest setup | Best for |
+| --- | --- | --- |
+| **Codex** | Sign in to the Codex CLI, restart MosAIc, then select **Codex** in AI settings. | The most capable agentic research path. |
+| **OpenRouter** | Select **Connect OpenRouter** in AI settings and authorize the local callback. | Trying hosted tool- and vision-capable models without managing keys manually. |
+| **Local API** | Start an OpenAI-compatible server such as LM Studio, configure `.env`, then select **Local API**. | Private inference on your own hardware. |
+
+See [AI providers](docs/AI_PROVIDERS.md) for exact setup, model requirements, image support, and troubleshooting.
+
+### Codex
+
+1. Install and sign in to the official [Codex CLI](https://learn.chatgpt.com/docs/codex/cli).
 2. Open this repository as a trusted Codex project.
 3. Start a new Codex task from the repository root.
-4. Run `/mcp` and confirm that the project-scoped `mosaic` server is connected.
+4. Run `/mcp` and confirm that the project-scoped `mosaic` server is connected. See the official [MCP guide](https://learn.chatgpt.com/docs/extend/mcp) if project configuration is disabled locally.
 
 The repository includes `.codex/config.toml` and the project skill `.agents/skills/mosaic-research/SKILL.md`. A foreground Codex task uses explicit workspace tools (`list_workspaces`, schema, catalog, collections and imports); the app assistant launches a durable run with a stricter private tool set scoped to one workspace and budget. The skill detects which surface it is running in instead of assuming both expose identical tools.
 
-For Chrome-assisted extraction, install and authorize a browser in the ChatGPT desktop app, then start a fresh Work or Codex task and `@`-mention it. Browser access is explicit and never silently inherited by MosAIc's background agent: Codex CLI and IDE do not have the built-in browser. See [Chrome-assisted acquisition](docs/CHROME_ACQUISITION.md) and the official [Codex browser documentation](https://developers.openai.com/codex/app/browser).
+For Chrome-assisted extraction, install and authorize a browser in the ChatGPT desktop app, then start a fresh Work or Codex task and `@`-mention it. Browser access is explicit and never silently inherited by MosAIc's background agent: Codex CLI and IDE do not have the built-in browser. See [Chrome-assisted acquisition](docs/CHROME_ACQUISITION.md) and the official [Codex browser documentation](https://learn.chatgpt.com/docs/browser).
 
 ## Agentic research
 
@@ -65,7 +85,7 @@ context. The expanded composer shows a compact action recap and the final
 answer; it never exposes private chain-of-thought. You can continue with a
 follow-up, revisit an earlier conversation, or start a clean one.
 
-For each turn, Luna sees the
+For each turn, the selected model sees the
 workspace's real fields, facets, selected items, collections, available source
 capabilities, hard constraints, soft preferences, and a resource budget. It can
 choose and revise its own combination of structured queries, visual retrieval,
@@ -137,15 +157,26 @@ npm run lint
 npm test
 ```
 
+## Roadmap
+
+1. **Release and feedback** — publish V1, improve onboarding from real installs, and prioritize the workflows people actually use.
+2. **AI reliability** — add provider evals, clearer capability reporting, stronger recovery, and better cost and latency controls.
+3. **Broader discovery** — expand generic imports and adapters while keeping source behavior observable, bounded, and local-first.
+4. **MosAIc Studio** — turn saved selections into optional generated compositions and try-ons with explicit provider consent.
+5. **Monitoring and collaboration** — richer run history, portable workspace exports, and carefully scoped sharing without compromising the private local default.
+
+The longer-term notes and V1 boundary are tracked in [the roadmap](docs/ROADMAP.md).
+
 ## Architecture and safety
 
 - [Product contract](docs/V1_PRODUCT.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Agentic research architecture](docs/AGENTIC_RESEARCH.md)
+- [AI providers](docs/AI_PROVIDERS.md)
 - [Filter DSL](docs/FILTERS.md)
 - [Chrome-assisted acquisition](docs/CHROME_ACQUISITION.md)
 - [Generative Studio plan](docs/GENERATIVE_TRYON.md)
-- [Delivered roadmap](docs/ROADMAP.md)
+- [Roadmap](docs/ROADMAP.md)
 - [Security policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
 

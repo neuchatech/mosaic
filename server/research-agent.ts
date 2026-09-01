@@ -12,6 +12,7 @@ import {
   type AssistantConversation,
   type AssistantMessage,
   type ResearchAgentResult,
+  type ResearchAiProvider,
   type ResearchRequest,
   type ResearchRequestInput,
   type ResearchRun,
@@ -25,6 +26,14 @@ import { codexExecutable } from "./codex-bridge";
 import { catalogMediaPath } from "./media";
 import { buildResearchManifest } from "./research-context";
 import type { CatalogRepository } from "./repository";
+import {
+  aiProviderCatalog,
+  resolveAiProvider,
+  runOpenAiCompatibleResearchAgent,
+  type AiProviderCatalog,
+  type ResolvedAiProvider,
+} from "./ai-providers";
+import { OpenRouterConnectionService, type OpenRouterModel } from "./openrouter-auth";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const researchSchemaPath = resolve(projectRoot, "schemas/research-agent-result.json");
@@ -94,8 +103,11 @@ export type ResearchAgentRunner = (input: {
 
 export type ResearchAgentServiceOptions = {
   runner?: ResearchAgentRunner;
+  runnerForRun?: (run: ResearchRun) => ResearchAgentRunner;
+  environment?: Record<string, string | undefined>;
   idFactory?: () => string;
   now?: () => Date;
+  openRouter?: OpenRouterConnectionService;
 };
 
 export type ResearchChildJob = { kind: "discovery" | "acquisition"; id: string };
@@ -158,7 +170,39 @@ function parseCodexProgress(line: string): ResearchAgentProgress | null {
   return null;
 }
 
-export function researchAgentInstruction(run: ResearchRun): string {
+function compactResearchManifest(manifest: ResearchWorkspaceManifest): Record<string, unknown> {
+  return {
+    version: manifest.version,
+    workspace: manifest.workspace,
+    fields: manifest.fields.map((field) => ({
+      key: field.key,
+      label: field.label,
+      primitiveType: field.primitiveType,
+      unit: field.unit,
+      semanticRole: field.semanticRole,
+      facetable: field.facetable,
+      sortable: field.sortable,
+    })),
+    facetHints: manifest.facets.map((facet) => ({
+      fieldKey: facet.fieldKey,
+      coverage: facet.coverage,
+      cardinality: facet.cardinality,
+      values: facet.values.slice(0, 12),
+      min: facet.min,
+      max: facet.max,
+    })),
+    counts: manifest.counts,
+    selectedItems: manifest.selectedItems,
+    selectedCollections: manifest.selectedCollections,
+    sources: manifest.sources,
+    constraints: manifest.constraints,
+    budget: manifest.budget,
+    visualIndex: manifest.visualIndex,
+    conversation: manifest.conversation,
+  };
+}
+
+export function researchAgentInstruction(run: ResearchRun, options: { compactManifest?: boolean } = {}): string {
   const hard = run.request.constraints.filter((constraint) => constraint.strength === "hard");
   const soft = run.request.constraints.filter((constraint) => constraint.strength === "soft");
   return [
@@ -172,6 +216,7 @@ export function researchAgentInstruction(run: ResearchRun): string {
     "Use source capability metadata rather than assuming a particular shop or domain. Only invoke capabilities marked available; a conditional or unavailable capability is a recovery suggestion, not authority to pretend that it ran. Prefer a first-party API or connector when one is advertised and fits the outcome, then other reliable structured acquisition. Browser handoffs require a separately connected desktop task and cannot be performed by this background CLI agent. Unknown facts must remain unknown and every acquired fact should retain its source.",
     "Before importing or annotating, inspect the workspace's committed fields and observed facets. Reuse an existing category, enum value, unit, or attribute when it is semantically equivalent; preserve genuinely source-specific facts without inventing a near-duplicate taxonomy. Examples in this prompt describe possibilities, never a closed list of domains or strategies.",
     "Hard constraints are eligibility rules and may never be silently relaxed. Soft constraints are ranked preferences: optimize them together, explain meaningful compromises, and explore alternatives when the first retrieval signal is too narrow. A local visual ranking such as CLIP is a retrieval hint, not a verdict or a frozen candidate universe.",
+    `Reasoning mode is ${run.request.reasoningEffort}. The total runtime allowance is ${Math.round(run.request.budget.maxDurationMs / 1_000)} seconds and the complete run may use at most ${run.request.budget.maxToolCalls} tool calls, including validate_research_result. Reserve a final tool call for validation whenever possible. As the limit approaches, stop exploring and synthesize the best truthful partial result from confirmed evidence.`,
     "Work progressively. Start with enough workspace context to choose a strategy, inspect representative evidence, and expand only when it can change the answer. Avoid reading the entire workspace when bounded queries or samples suffice. Stop once the result is useful or the resource budget is exhausted; preserve partial useful work.",
     "For a discovery grounded in selected items, favorites, collections, or reference images, first inspect enough anchors to derive useful source queries. After a discovery reaches a terminal state, use its returned itemIds as the new candidate pool, inspect a bounded visual sheet or representative images when appearance matters, and return only candidates supported by that evidence. A terminal discovery schedules the local visual index automatically; do not claim CLIP is ready until its status confirms it.",
     "The manifest may contain earlier user and assistant messages from this workspace conversation. Treat them as conversational context, preserve relevant constraints and references, and answer the newest request directly. Do not redo completed work unless the follow-up asks for it or fresh evidence is required.",
@@ -181,7 +226,7 @@ export function researchAgentInstruction(run: ResearchRun): string {
     `Hard constraints:\n${JSON.stringify(hard)}`,
     `Soft preferences:\n${JSON.stringify(soft)}`,
     `Resource budget (enforced by the runtime and tools):\n${JSON.stringify(run.request.budget)}`,
-    `Workspace manifest:\n${JSON.stringify(run.manifest)}`,
+    `Workspace manifest:\n${JSON.stringify(options.compactManifest ? compactResearchManifest(run.manifest) : run.manifest)}`,
   ].join("\n\n");
 }
 
@@ -410,6 +455,19 @@ function validateResearchResult(
   });
 }
 
+export function assertResearchImageWorkflow(
+  provider: ResolvedAiProvider,
+  request: ResearchRequest,
+  manifest: ResearchWorkspaceManifest,
+): void {
+  if (!request.images.length || provider.supportsImages) return;
+  if (!manifest.visualIndex.localEmbeddingArtifactAvailable) {
+    throw new Error(
+      `${provider.id === "openrouter" ? "OpenRouter" : "The local AI provider"} cannot inspect attached images in this MosAIc configuration, and the local CLIP index is unavailable. Build the local visual index or use Codex for this image request.`,
+    );
+  }
+}
+
 function childJobsFromEvents(events: ResearchRunEvent[]): ResearchChildJob[] {
   const jobs = events.flatMap((event) => {
     const raw = event.data.childJobs;
@@ -425,7 +483,8 @@ function childJobsFromEvents(events: ResearchRunEvent[]): ResearchChildJob[] {
 }
 
 export class ResearchAgentService {
-  private readonly runner: ResearchAgentRunner;
+  private readonly runnerForRun: (run: ResearchRun) => ResearchAgentRunner;
+  private readonly environment: Record<string, string | undefined>;
   private readonly idFactory: () => string;
   private readonly now: () => Date;
   private readonly queue: string[] = [];
@@ -434,18 +493,25 @@ export class ResearchAgentService {
   private active: { id: string; controller: AbortController } | null = null;
   private draining = false;
   private cancellationHandler: ResearchCancellationHandler | null = null;
+  private readonly openRouter: OpenRouterConnectionService;
 
   constructor(
     private readonly repository: ResearchRunRepository,
     options: ResearchAgentServiceOptions = {},
   ) {
-    this.runner = options.runner ?? runCodexResearchAgent;
+    this.environment = options.environment ?? process.env;
+    this.openRouter = options.openRouter ?? new OpenRouterConnectionService({ environment: this.environment });
+    this.runnerForRun = options.runnerForRun
+      ?? (options.runner ? () => options.runner! : (run) => this.defaultRunner(run));
     this.idFactory = options.idFactory ?? (() => crypto.randomUUID());
     this.now = options.now ?? (() => new Date());
   }
 
   start(input: ResearchRequestInput): ResearchRun {
     const parsed = researchRequestSchema.parse(input);
+    const provider = resolveAiProvider(parsed.provider, parsed.model, this.environment, this.openRouter.credentials());
+    const manifestWithoutConversation = buildResearchManifest(parsed, this.repository);
+    assertResearchImageWorkflow(provider, parsed, manifestWithoutConversation);
     const conversation = parsed.conversationId
       ? this.repository.getAssistantConversation(parsed.conversationId, parsed.workspaceId)
       : this.repository.createAssistantConversation({
@@ -453,16 +519,21 @@ export class ResearchAgentService {
         title: conversationTitle(parsed.prompt),
       });
     if (!conversation) throw new Error("Unknown or cross-workspace assistant conversation.");
-    const request = researchRequestSchema.parse({ ...parsed, conversationId: conversation.id });
+    const request = researchRequestSchema.parse({
+      ...parsed,
+      conversationId: conversation.id,
+      provider: provider.id,
+      model: provider.model,
+    });
     const history = this.repository.listAssistantMessages(conversation.id, request.workspaceId, 24);
     const manifest = researchWorkspaceManifestSchema.parse({
-      ...buildResearchManifest(request, this.repository),
+      ...manifestWithoutConversation,
       conversation: conversationContext(conversation, history),
     });
     const run = this.repository.createResearchRun({
       id: this.idFactory(),
       workspaceId: request.workspaceId,
-      model: "gpt-5.6-luna",
+      model: provider.model,
       reasoningEffort: request.reasoningEffort,
       request,
       manifest,
@@ -501,6 +572,51 @@ export class ResearchAgentService {
     this.emit(run);
     void this.drain();
     return run;
+  }
+
+  providers(): AiProviderCatalog {
+    return aiProviderCatalog(this.environment, this.openRouter.credentials());
+  }
+
+  beginOpenRouterConnection(callbackUrl: string): { authorizationUrl: string; state: string; expiresAt: string } {
+    return this.openRouter.begin(callbackUrl);
+  }
+
+  async completeOpenRouterConnection(input: { state: string; code: string }): Promise<AiProviderCatalog> {
+    await this.openRouter.complete(input);
+    return this.providers();
+  }
+
+  async openRouterModels(): Promise<OpenRouterModel[]> {
+    return this.openRouter.models();
+  }
+
+  async selectOpenRouterModel(model: string): Promise<AiProviderCatalog> {
+    await this.openRouter.selectModel(model);
+    return this.providers();
+  }
+
+  async disconnectOpenRouter(): Promise<AiProviderCatalog> {
+    await this.openRouter.disconnect();
+    return this.providers();
+  }
+
+  private defaultRunner(run: ResearchRun): ResearchAgentRunner {
+    // Runs created before provider selection existed parse with provider=auto.
+    // They were all Codex runs, so keep their resume path stable even if the
+    // user's new automatic default now points at LM Studio or OpenRouter.
+    const requestedProvider = run.request.provider === "auto" ? "codex" : run.request.provider;
+    const provider = resolveAiProvider(
+      requestedProvider as ResearchAiProvider,
+      run.model,
+      this.environment,
+      this.openRouter.credentials(),
+    );
+    if (provider.id === "codex") return runCodexResearchAgent;
+    return (input) => runOpenAiCompatibleResearchAgent(input, {
+      provider: provider as ResolvedAiProvider,
+      instruction: researchAgentInstruction(input.run, { compactManifest: true }),
+    });
   }
 
   get(id: string, workspaceId?: string): ResearchRun | null {
@@ -669,7 +785,7 @@ export class ResearchAgentService {
         const controller = new AbortController();
         this.active = { id, controller };
         try {
-          const result = await this.runner({
+          const result = await this.runnerForRun(running)({
             run: running,
             signal: controller.signal,
             onEvent: (event) => {

@@ -44,13 +44,17 @@ vector remains usable. The compact pass grows and packs item rectangles around
 the projected coordinates; every filtered query recomputes the projection and
 packing for its own subset instead of leaving holes from the full catalog.
 
-## Assistant planning
+## Assistant research
 
 The composer sends text plus bounded URL, image, item, and collection context to
-the local assistant planner. Luna returns an ordered plan with at most 12 typed
-steps. A heuristic planner covers the same contract when Codex is unavailable.
-Every network-facing step declares a count, and dependency references may point
-only to earlier steps.
+a durable workspace-scoped research run. Codex, a local OpenAI-compatible
+model, or OpenRouter can choose and revise a strategy through the same private
+MCP tool surface. The application—not the provider—enforces workspace scope,
+hard constraints, budgets, source capabilities, and final result validation.
+
+The older typed planner remains as a compatibility path. Its plans contain at
+most 12 ordered steps, every network-facing step declares a count, and
+dependency references may point only to earlier steps.
 
 Supported primitives are:
 

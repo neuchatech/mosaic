@@ -134,6 +134,19 @@ const researchApiRequestSchema = researchRequestObjectSchema.omit({ images: true
   images: artifactRequestImagesSchema,
 });
 
+const openRouterConnectSchema = z.object({
+  callbackUrl: z.string().url().max(2_000),
+});
+
+const openRouterCallbackSchema = z.object({
+  state: z.string().trim().min(16).max(200),
+  code: z.string().trim().min(1).max(2_000),
+});
+
+const openRouterModelSchema = z.object({
+  model: z.string().trim().min(1).max(240),
+});
+
 function assistantFieldsWhere(
   fields: z.infer<typeof assistantFieldConstraintsSchema> | undefined,
 ): FilterExpression | undefined {
@@ -1391,6 +1404,54 @@ export function createApp(
     }
   });
 
+  app.get("/api/ai/providers", (context) => context.json(research.providers()));
+
+  app.post("/api/ai/openrouter/connect", async (context) => {
+    const parsed = openRouterConnectSchema.safeParse(await context.req.json());
+    if (!parsed.success) return context.json({ error: "invalid OpenRouter callback", issues: parsed.error.issues }, 400);
+    try {
+      return context.json(research.beginOpenRouterConnection(parsed.data.callbackUrl));
+    } catch (error) {
+      return context.json({ error: error instanceof Error ? error.message : "OpenRouter connection could not start" }, 400);
+    }
+  });
+
+  app.post("/api/ai/openrouter/callback", async (context) => {
+    const parsed = openRouterCallbackSchema.safeParse(await context.req.json());
+    if (!parsed.success) return context.json({ error: "invalid OpenRouter callback", issues: parsed.error.issues }, 400);
+    try {
+      return context.json({ providers: await research.completeOpenRouterConnection(parsed.data) });
+    } catch (error) {
+      return context.json({ error: error instanceof Error ? error.message : "OpenRouter connection failed" }, 409);
+    }
+  });
+
+  app.get("/api/ai/openrouter/models", async (context) => {
+    try {
+      return context.json({ models: await research.openRouterModels() });
+    } catch (error) {
+      return context.json({ error: error instanceof Error ? error.message : "OpenRouter models unavailable" }, 409);
+    }
+  });
+
+  app.put("/api/ai/openrouter/settings", async (context) => {
+    const parsed = openRouterModelSchema.safeParse(await context.req.json());
+    if (!parsed.success) return context.json({ error: "invalid OpenRouter model", issues: parsed.error.issues }, 400);
+    try {
+      return context.json({ providers: await research.selectOpenRouterModel(parsed.data.model) });
+    } catch (error) {
+      return context.json({ error: error instanceof Error ? error.message : "OpenRouter model could not be saved" }, 409);
+    }
+  });
+
+  app.delete("/api/ai/openrouter/connection", async (context) => {
+    try {
+      return context.json({ providers: await research.disconnectOpenRouter() });
+    } catch (error) {
+      return context.json({ error: error instanceof Error ? error.message : "OpenRouter connection could not be removed" }, 409);
+    }
+  });
+
   app.get("/api/research/runs", (context) => {
     const workspaceId = context.req.query("workspaceId") ?? DEFAULT_CLOTHING_WORKSPACE_ID;
     if (!repository.getWorkspace(workspaceId)) return context.json({ error: "workspace not found" }, 404);
@@ -1496,7 +1557,7 @@ export function createApp(
         workspaceId: run.workspaceId,
         kind: "research",
         title: (run.result?.title ?? run.request.prompt.slice(0, 120)) || "AI research",
-        source: run.model,
+        source: `${run.request.provider} · ${run.model}`,
         status: run.status,
         progress: terminal ? 1 : Math.min(.95, completed / run.request.budget.maxToolCalls),
         total: run.request.budget.maxToolCalls,

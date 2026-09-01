@@ -122,7 +122,7 @@ async function waitForArtifactStatus(repository: CatalogRepository, artifactId: 
 }
 
 test("discover -> enrich -> mood board persists a queued continuation then fills the draft", async (t) => {
-  const { db, repository } = memoryRepository();
+  const { repository } = memoryRepository();
   const discovery = fakeDiscovery(repository);
   const acquisition = fakeAcquisition(repository);
   const app = createApp(repository, acquisition, discovery);
@@ -186,7 +186,7 @@ test("discover -> enrich -> mood board persists a queued continuation then fills
 });
 
 test("every upstream discovery is launched before one bounded enrichment and artifact", async (t) => {
-  const { db, repository } = memoryRepository();
+  const { repository } = memoryRepository();
   const discovery = fakeDiscovery(repository);
   const acquisition = fakeAcquisition(repository);
   const originalCodexPath = process.env.CODEX_CLI_PATH;
@@ -251,7 +251,7 @@ test("every upstream discovery is launched before one bounded enrichment and art
 });
 
 test("a failed persisted enrichment can be retried and completes its artifact", async (t) => {
-  const { db, repository } = memoryRepository();
+  const { repository } = memoryRepository();
   const discovery = fakeDiscovery(repository);
   let allowDetails = false;
   const acquisition = new AcquisitionService(repository, {
@@ -307,7 +307,7 @@ test("a failed persisted enrichment can be retried and completes its artifact", 
 });
 
 test("unsupported post-discovery outcomes are rejected before any discovery job starts", async (t) => {
-  const { db, repository } = memoryRepository();
+  const { repository } = memoryRepository();
   const discovery = fakeDiscovery(repository);
   const acquisition = fakeAcquisition(repository);
   const app = createApp(repository, acquisition, discovery);
@@ -344,7 +344,7 @@ test("unsupported post-discovery outcomes are rejected before any discovery job 
 });
 
 test("import_urls -> compare uses the successfully imported products", async (t) => {
-  const { db, repository } = memoryRepository();
+  const { repository } = memoryRepository();
   const app = createApp(repository);
   const originalCodexPath = process.env.CODEX_CLI_PATH;
   process.env.CODEX_CLI_PATH = "/definitely/missing/codex";
