@@ -43,7 +43,7 @@ Optional developer mode is under **Settings > Browser > Enable full CDP
 access**. It grants broader browser control and always requires an explicit
 approval; it is not required for normal supervised extraction.
 
-These steps follow the current official [Codex browser](https://developers.openai.com/codex/app/browser)
+These steps follow the current official [Codex browser](https://learn.chatgpt.com/docs/browser)
 and [browser extension](https://learn.chatgpt.com/docs/chrome-extension)
 guidance. Browser permissions and safety confirmations still apply after setup.
 

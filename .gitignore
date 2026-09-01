@@ -42,6 +42,10 @@ yarn-error.log*
 /.playwright-cli/
 *.tsbuildinfo
 
+# local release/marketing exports
+/MosAIc-cover.png
+/MosAIc-teaser-4x5.mp4
+
 # local catalog, user media, model cache, and collector output
 /data/**
 !/data/.gitkeep

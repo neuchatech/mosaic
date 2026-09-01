@@ -1,6 +1,9 @@
-# Neuchatech MosAIc — delivered roadmap
+# Neuchatech MosAIc roadmap
 
-The current release covers the complete local visual-research loop.
+V1 covers the complete local visual-research loop: collect, normalize, map,
+filter, compare, select, and revisit visual items with an optional agentic
+assistant. The next work is deliberately outcome-led rather than a promise of
+specific dates.
 
 ## Foundation
 
@@ -27,8 +30,40 @@ The current release covers the complete local visual-research loop.
 - Guarded public imports, contained local media, and read-only scoped Vision agents.
 - English, French, German, Italian, and Spanish UI with automatic locale detection.
 
-## Next directions
+## 1. Release and feedback
 
-The generative try-on and visual-composition plan lives in [GENERATIVE_TRYON.md](./GENERATIVE_TRYON.md). It preserves local drafts and requires explicit consent before any personal photo is sent to a configured remote provider.
+- Publish V1 and make the first ten minutes excellent on a clean machine.
+- Turn real install and research failures into focused fixes and fixtures.
+- Keep the repository, upgrade path, and release notes easy to trust.
+
+## 2. AI reliability
+
+- Add repeatable evals across Codex, OpenRouter, and local tool-capable models.
+- Make provider capabilities, progress, recovery, cost, and latency clearer.
+- Improve long-run continuation without hiding partial or failed work.
+
+## 3. Broader discovery
+
+- Expand generic structured imports and high-value shop adapters.
+- Improve source quality, deduplication, enrichment, and visual verification.
+- Keep acquisition bounded, inspectable, and respectful of each source.
+
+## 4. MosAIc Studio
+
+- Create optional visual compositions and try-ons from people, references, and
+  selected items.
+- Store drafts locally and require explicit consent before personal media is
+  sent to any remote provider.
+- Keep Studio outside the V1 surface until it is genuinely useful. The design
+  notes live in [GENERATIVE_TRYON.md](./GENERATIVE_TRYON.md).
+
+## 5. Monitoring and collaboration
+
+- Add richer run history, diagnostics, and portable workspace exports.
+- Explore carefully scoped sharing and collaboration while retaining a private
+  local-first default.
+- Make collections and research trails reusable without coupling workspaces.
+
+## Extension rule
 
 New shops should be added through recorded offline fixtures and an adapter under `collector/adapters/`. The collector core, catalog, and UI should not gain shop-specific selectors.

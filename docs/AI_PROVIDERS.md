@@ -11,6 +11,17 @@ Codex remains the default and uses the existing local CLI login. The app starts
 an ephemeral, read-only Codex run with a private MCP server scoped to one
 research run and workspace.
 
+Quick setup:
+
+1. Install and authenticate the official [Codex CLI](https://learn.chatgpt.com/docs/codex/cli).
+2. Clone MosAIc, run `npm install`, and start it with `npm run dev`.
+3. Open AI settings in the MosAIc composer and select **Codex**.
+4. For foreground Codex tasks, run `/mcp` from the repository and confirm the
+   project-scoped `mosaic` server is connected. The checked-in
+   `.codex/config.toml` supplies that configuration; the official
+   [MCP guide](https://learn.chatgpt.com/docs/extend/mcp) explains how project
+   MCP configuration is loaded.
+
 ```bash
 MOSAIC_AI_PROVIDER=codex
 MOSAIC_CODEX_MODEL=gpt-5.6-luna
@@ -43,9 +54,11 @@ An API key is normally unnecessary for loopback LM Studio. If another local
 server requires one, set `MOSAIC_LOCAL_AI_API_KEY`.
 
 Small models can technically emit tool calls but may be unreliable across a
-long research run. Prefer a model explicitly trained for tool use. MosAIc
-validates the final result and asks the model to correct invalid structured
-output up to three times before failing truthfully.
+long research run. Prefer a model explicitly trained for tool use. Before
+launching MosAIc, verify that `http://127.0.0.1:1234/v1/models` lists the exact
+model ID you configured. MosAIc validates the final result and asks the model
+to correct invalid structured output up to three times before failing
+truthfully.
 
 ## OpenRouter
 
@@ -107,6 +120,23 @@ The UI remembers the provider selection locally. **Automatic** uses
 `MOSAIC_AI_PROVIDER`, falling back to the first configured provider. API keys
 are never returned by `/api/ai/providers` or stored in the browser.
 
+## Research depth and graceful completion
+
+The composer exposes three provider-independent budgets:
+
+- **Quick** for a small, focused answer with a short deadline and few tool calls.
+- **Balanced** for normal research, comparisons, imports, and visual retrieval.
+- **Deep** for wider discovery, slower local models, or multi-stage research.
+
+Each preset is a hard envelope around elapsed time, tool calls, inspected
+items, images, acquisition jobs, imported items, and collection writes. The
+selected reasoning mode and remaining allowance are included in the model's
+instructions so it can plan accordingly. As a run approaches its limit,
+MosAIc removes unavailable tools and gives the model one final tool-free turn
+to summarize verified results instead of ending with an avoidable budget
+error. The server still validates the final structured result and never turns
+an unfinished action into a false success.
+
 ## Compatibility contract
 
 An OpenAI-compatible provider must support:
@@ -115,6 +145,11 @@ An OpenAI-compatible provider must support:
 - `tools` with JSON-schema function definitions;
 - assistant `tool_calls` and `tool` result messages;
 - enough context for the workspace manifest and relevant tool results.
+
+Use a model with native tool calling. Image input is optional for text-only
+research, but required when you attach reference images and expect the model
+itself to inspect them. Local CLIP can still retrieve visually similar catalog
+items without sending those images to a remote model.
 
 Codex receives explicitly attached references through its native image input.
 OpenRouter does the same when its model metadata advertises the `image` input
